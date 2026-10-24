@@ -195,9 +195,7 @@ func TestLauncherStatusBar(t *testing.T) {
 	if got := status(); !strings.HasPrefix(got, "  SELECT  3 projects · 2 groups · 2 selected ") {
 		t.Errorf("status bar = %q", got)
 	}
-	for range 2 {
-		m.Update(key("down")) // api
-	}
+	m.Update(key("down")) // api
 	if got := status(); !strings.HasSuffix(got, " api  14:32") {
 		t.Errorf("status bar = %q", got)
 	}

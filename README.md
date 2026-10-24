@@ -184,7 +184,7 @@ saves the one you pick. `runr theme` lists them and `runr theme <name>` sets one
 | `env_file` | no | A `.env` file, relative to `dir` (absolute and `~` paths work too) |
 | `depends_on` | no | Projects that must be ready before this one starts |
 | `ready_log` | no | Regular expression ([Go syntax](https://pkg.go.dev/regexp/syntax)); the project is ready once an output line matches. Colors are stripped before matching. Without it, a project is ready as soon as it has started. |
-| `color` | no | Color of the name in the TUI: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, their `bright-` variants (`bright-red`, …), an ANSI number `0`–`255`, or a hex code `#f80` / `#ff8800`. Projects without one get a color from a fixed palette. |
+| `color` | no | Color of the name in the TUI: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, their `bright-` variants (`bright-red`, …), an ANSI number `0`–`255`, or a hex code `#f80` / `#ff8800`. Projects without one get a color from a fixed palette, in name order, so a project has the same color in the launcher and every session. |
 | `display_name` | no | Label shown in the TUI instead of the project name |
 
 Names of projects and groups may contain letters, digits, `.`, `_` and `-` (starting with a
@@ -203,11 +203,14 @@ runr checks the config when it loads it and before every save:
 ## The launcher
 
 `runr` without arguments lists your groups and projects. Select some and press `enter` to
-start them in the running view, or manage the registry with in-TUI forms.
+start them in the running view, or manage the registry with in-TUI forms. Groups are shown as
+cards with a colored dot per member, side by side as far as the terminal is wide; projects
+are listed below them with their color, directory, branch, command and dependencies.
 
 | Key | Action |
 |---|---|
-| `↑` `↓`, `home` `end` | Move |
+| `↑` `↓`, `home` `end` | Move: through the group cards row by row, then down the project list |
+| `←` `→` | Move between the group cards in a row |
 | `space` | Select / unselect; on a group, selects all its projects (or unselects them if all are selected) |
 | `enter` | Start the selection, or the item under the cursor if nothing is selected |
 | `n` | New project |

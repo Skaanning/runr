@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -302,6 +303,24 @@ func TestShowAll(t *testing.T) {
 	}
 	if c, err = Load(path); err != nil || c.Settings.ShowAll() {
 		t.Errorf("show_all = false lost on save (err %v)", err)
+	}
+}
+
+func TestColorOf(t *testing.T) {
+	c := &Config{Projects: map[string]*Project{
+		"web": {}, "api": {Color: "#ff8800"}, "db": {}, "auth": {},
+	}}
+	// Projects without a color get the default colors in name order: auth, db, web.
+	for name, want := range map[string]string{"api": "#ff8800", "auth": "cyan", "db": "magenta", "web": "yellow"} {
+		if got := c.ColorOf(name); got != want {
+			t.Errorf("ColorOf(%s) = %q, want %q", name, got, want)
+		}
+	}
+	for i := range len(DefaultColors) + 1 {
+		c.Projects[fmt.Sprintf("x%02d", i)] = &Project{}
+	}
+	if got := c.ColorOf("x10"); got != DefaultColors[(3+10)%len(DefaultColors)] {
+		t.Errorf("ColorOf(x10) = %q, want the colors to repeat", got)
 	}
 }
 

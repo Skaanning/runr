@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Skaanning/runr/internal/config"
@@ -34,6 +35,7 @@ type launcherModel struct {
 	selected map[string]bool
 	missing  map[string]bool // projects whose dir does not exist
 	cursor   int             // index into items
+	cardCol  int             // column of the card the cursor left the cards from, downwards
 	top      int             // first row shown, see rows
 	notice   string          // shown instead of the help line until the next key
 	form     *editForm       // open project or group form, or nil
@@ -173,10 +175,8 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
-		case "up":
-			m.cursor = max(m.cursor-1, 0)
-		case "down":
-			m.cursor = max(min(m.cursor+1, len(m.items)-1), 0)
+		case "up", "down", "left", "right":
+			m.move(msg.String())
 		case "home":
 			m.cursor = 0
 		case "end":
@@ -650,16 +650,23 @@ func (m *launcherModel) render() string {
 	if m.width < minWidth || m.height < minHeight {
 		return "terminal too small"
 	}
-	body := m.height - 4
-	rows, cursorRow := m.rows()
-	switch {
-	case cursorRow < m.top:
-		m.top = cursorRow
-		if m.top == 1 {
-			m.top = 0 // keep the "Groups" heading in view
+	var header []string
+	if m.showWordmark() {
+		header = m.wordmarkRows()
+	} else {
+		left := " " + m.st.badge
+		if m.form != nil {
+			left += "  " + m.st.bold.Render(m.form.title)
 		}
-	case cursorRow >= m.top+body:
-		m.top = cursorRow - body + 1
+		header = []string{left, m.st.rule.Render(strings.Repeat("─", m.width))}
+	}
+	body := m.height - len(header) - 2
+	rows, first, last := m.rows()
+	switch {
+	case first < m.top:
+		m.top = first
+	case last >= m.top+body:
+		m.top = max(last-body+1, first)
 	}
 	m.top = max(min(m.top, len(rows)-body), 0)
 
@@ -695,12 +702,9 @@ func (m *launcherModel) render() string {
 	}
 
 	var b strings.Builder
-	left := " " + m.st.badge
-	if m.form != nil {
-		left += "  " + m.st.bold.Render(m.form.title)
+	for _, r := range header {
+		b.WriteString(ansi.Truncate(r, m.width, "…") + "\n")
 	}
-	b.WriteString(ansi.Truncate(left, m.width, "…"))
-	b.WriteString("\n" + m.st.rule.Render(strings.Repeat("─", m.width)) + "\n")
 	for r := range body {
 		if i := m.top + r; i < len(rows) {
 			b.WriteString(ansi.Truncate(rows[i], m.width, "…"))
@@ -728,16 +732,12 @@ func (m *launcherModel) statusBar() string {
 	case m.ask != nil:
 		b.mode, b.color = strings.ToUpper(m.ask.action), m.st.pal.ansi[ansiBlue]
 	}
-	b.info = m.st.faint.Render(count(len(m.cfg.Projects), "project") + " · " + count(len(m.cfg.Groups), "group"))
+	b.info = m.st.faint.Render(m.registrySize())
 	if n := len(m.selected); n > 0 {
 		b.info += m.st.faint.Render(" · ") + fmt.Sprintf("%d selected", n)
 	}
 	if it, ok := m.current(); ok && !it.group {
-		style := m.st.bold
-		if c := m.cfg.Projects[it.name].Color; c != "" {
-			style = style.Foreground(m.st.color(c))
-		}
-		b.project = style.Render(it.name)
+		b.project = m.st.bold.Foreground(m.st.color(m.cfg.ColorOf(it.name))).Render(it.name)
 		if g, ok := m.git.get(it.name); ok {
 			b.project += m.st.faint.Render(" · ") + gitLabel(m.st, g, gitWidth(g))
 		}
@@ -753,90 +753,94 @@ func count(n int, noun string) string {
 	return fmt.Sprintf("%d %ss", n, noun)
 }
 
-// rows renders the list with section headings and returns the row of the
-// cursor.
-func (m *launcherModel) rows() (rows []string, cursorRow int) {
+// rows renders the group cards and the project list with section headings,
+// and returns the first and last row to keep in view for the cursor: its
+// card or row, and the heading above it if it's the first in its section.
+func (m *launcherModel) rows() (rows []string, first, last int) {
 	if len(m.items) == 0 {
 		return []string{
 			"",
 			"  No projects yet. Press n to add one, or run:",
 			"",
 			"    runr add <name> --dir <path> -- <command>",
-		}, 0
+		}, 0, 0
 	}
-	nameWidth, dirWidth, gitCol := 0, 0, 0
-	for _, it := range m.items {
-		nameWidth = max(nameWidth, ansi.StringWidth(it.name))
-		if !it.group {
-			dirWidth = max(dirWidth, ansi.StringWidth(config.DisplayPath(m.cfg.Projects[it.name].Dir)))
-			if g, ok := m.git.get(it.name); ok {
-				gitCol = max(gitCol, gitWidth(g))
+	indent := strings.Repeat(" ", listIndent)
+	groups := m.groupCount()
+	if groups > 0 {
+		rows = append(rows, indent+m.st.heading.Render("Groups"))
+		cards, cursorRow := m.cardRows()
+		if cursorRow >= 0 {
+			first, last = len(rows)+cursorRow, len(rows)+cursorRow+2
+			if cursorRow == 0 {
+				first = 0
 			}
+		}
+		rows = append(rows, cards...)
+	}
+	if groups == len(m.items) {
+		return rows, first, last
+	}
+	if groups > 0 {
+		rows = append(rows, "")
+	}
+	heading := len(rows)
+	rows = append(rows, indent+m.st.heading.Render("Projects"))
+
+	nameWidth, dirWidth, gitCol := 0, 0, 0
+	for _, it := range m.items[groups:] {
+		nameWidth = max(nameWidth, ansi.StringWidth(it.name))
+		dirWidth = max(dirWidth, ansi.StringWidth(config.DisplayPath(m.cfg.Projects[it.name].Dir)))
+		if g, ok := m.git.get(it.name); ok {
+			gitCol = max(gitCol, gitWidth(g))
 		}
 	}
 	nameWidth, dirWidth, gitCol = min(nameWidth, 24), min(dirWidth, 32), min(gitCol, maxGitWidth)
-
-	heading := ""
-	for i, it := range m.items {
-		if h := map[bool]string{true: "Groups", false: "Projects"}[it.group]; h != heading {
-			if heading != "" {
-				rows = append(rows, "")
+	for i, it := range m.items[groups:] {
+		if groups+i == m.cursor {
+			first, last = len(rows), len(rows)
+			if i == 0 {
+				first = heading
 			}
-			heading = h
-			rows = append(rows, "  "+m.st.faint.Render(h))
 		}
-		if i == m.cursor {
-			cursorRow = len(rows)
-		}
-		rows = append(rows, m.itemRow(it, i == m.cursor, nameWidth, dirWidth, gitCol))
+		rows = append(rows, m.projectRow(it.name, groups+i == m.cursor, nameWidth, dirWidth, gitCol))
 	}
-	return rows, cursorRow
+	return rows, first, last
 }
 
-func (m *launcherModel) itemRow(it launcherItem, current bool, nameWidth, dirWidth, gitCol int) string {
-	marker, nameStyle := "  ", m.st.plain
+// projectRow renders a project: checkbox, color dot and name, directory, git
+// label, command and dependencies.
+func (m *launcherModel) projectRow(name string, current bool, nameWidth, dirWidth, gitCol int) string {
+	marker, nameStyle := strings.Repeat(" ", listIndent), lipgloss.NewStyle()
 	if current {
-		marker, nameStyle = "▸ ", m.st.bold
+		marker, nameStyle = " ▸ ", m.st.bold
 	}
-	members := m.members(it)
-	check := "[ ]"
-	switch n := m.countSelected(members); {
-	case len(members) > 0 && n == len(members):
-		check = "[x]"
-	case n > 0:
-		check = "[-]"
-	}
-	row := " " + marker + check + " " + nameStyle.Render(pad(ansi.Truncate(it.name, nameWidth, "…"), nameWidth)) + "  "
-	if it.group {
-		if len(members) == 0 {
-			return row + m.st.faint.Render("(empty)")
-		}
-		return row + m.st.faint.Render(strings.Join(members, ", "))
-	}
+	color := m.st.color(m.cfg.ColorOf(name))
+	row := marker + m.checkbox([]string{name}) + " " + lipgloss.NewStyle().Foreground(color).Render("●") + " " +
+		nameStyle.Foreground(color).Render(pad(ansi.Truncate(name, nameWidth, "…"), nameWidth)) + "  "
 
-	p := m.cfg.Projects[it.name]
+	p := m.cfg.Projects[name]
 	dir := pad(ansi.Truncate(config.DisplayPath(p.Dir), dirWidth, "…"), dirWidth)
-	if m.missing[it.name] {
+	if m.missing[name] {
 		dir = m.st.err.Render(dir)
 	} else {
 		dir = m.st.faint.Render(dir)
 	}
-	details := p.Cmd
-	if len(p.DependsOn) > 0 {
-		details += " · needs " + strings.Join(p.DependsOn, ", ")
-	}
-	if m.missing[it.name] {
-		details = "dir does not exist"
-	}
 	row += dir + "  "
 	if gitCol > 0 {
 		label := ""
-		if g, ok := m.git.get(it.name); ok {
+		if g, ok := m.git.get(name); ok {
 			label = gitLabel(m.st, g, gitCol)
 		}
 		row += pad(label, gitCol) + "  "
 	}
-	return row + m.st.faint.Render(details)
+	switch {
+	case m.missing[name]:
+		return row + m.st.faint.Render("dir does not exist")
+	case len(p.DependsOn) > 0:
+		return row + p.Cmd + m.st.faint.Render(" · needs "+strings.Join(p.DependsOn, ", "))
+	}
+	return row + p.Cmd
 }
 
 func (m *launcherModel) help() string {
@@ -856,8 +860,12 @@ func (m *launcherModel) help() string {
 			return ansi.Truncate(" "+m.st.err.Render("✗ "+oneLine(errs[0].Error())), m.width, "…")
 		}
 	}
+	move := "↑↓"
+	if m.groupCount() > 1 {
+		move = "↑↓←→"
+	}
 	keys := [][2]string{
-		{"↑↓", "move"}, {"space", "select"}, {"enter", "start"},
+		{move, "move"}, {"space", "select"}, {"enter", "start"},
 		{"n", "new"}, {"e", "edit"}, {"g", "group"}, {"d", "delete"},
 	}
 	if it, ok := m.current(); ok && !it.group {

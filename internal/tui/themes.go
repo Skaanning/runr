@@ -32,7 +32,8 @@ func ThemeAbout(name string) string {
 
 // truecolor builds a palette from hex colors. The tints are mixed from them
 // as in the mock-ups: rules are the accent mixed 40% into the background,
-// toasts 18% of red, search matches 35% of yellow.
+// toasts 18% of red, search matches 35% of yellow, and the wordmark's
+// gradient goes from the accent to magenta in thirds.
 func truecolor(fg, bg, dim, accent, selection string, ansi [16]string) palette {
 	p := palette{
 		fg: hex(fg), bg: hex(bg), dim: hex(dim), accent: hex(accent), selection: hex(selection),
@@ -43,6 +44,7 @@ func truecolor(fg, bg, dim, accent, selection string, ansi [16]string) palette {
 	p.rule = mix(p.accent, p.bg, 0.4)
 	p.alert = mix(p.ansi[ansiRed], p.bg, 0.18)
 	p.match = mix(p.ansi[ansiYellow], p.bg, 0.35)
+	p.gradient = [2]color.Color{mix(p.accent, p.ansi[ansiMagenta], 0.66), mix(p.accent, p.ansi[ansiMagenta], 0.33)}
 	return p
 }
 

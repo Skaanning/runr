@@ -179,7 +179,8 @@ var ColorNames = []string{
 // ThemeNames are the UI's color themes; the first is the default.
 var ThemeNames = []string{"terminal", "catppuccin", "tokyo-night", "gruvbox", "nord"}
 
-// DefaultColors are assigned in order to projects without a configured color.
+// DefaultColors are assigned in name order to projects without a configured
+// color, see Config.ColorOf.
 var DefaultColors = []string{
 	"cyan", "magenta", "yellow", "green", "blue",
 	"bright-red", "bright-cyan", "bright-magenta", "bright-yellow", "bright-green",

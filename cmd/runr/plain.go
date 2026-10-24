@@ -122,16 +122,10 @@ func newPlainPrinter(w io.Writer, cfg *config.Config, projects []string, colors 
 	}
 	p.width = max(p.width, len("runr"))
 
-	next := 0
 	for _, name := range projects {
 		proj := cfg.Projects[name]
-		c := proj.Color
-		if c == "" {
-			c = config.DefaultColors[next%len(config.DefaultColors)]
-			next++
-		}
 		// Named colors come from the theme, converted for the terminal.
-		fg := colors.profile.Convert(tui.ProjectColor(cfg.Settings.Theme(), c, colors.dark))
+		fg := colors.profile.Convert(tui.ProjectColor(cfg.Settings.Theme(), cfg.ColorOf(name), colors.dark))
 		p.labels[name] = p.paint(strings.Join(ansi.Style{}.ForegroundColor(fg), ";"), pad(proj.Label(name), p.width))
 	}
 	p.noticeP = p.paint("1", pad("runr", p.width))

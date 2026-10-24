@@ -7,7 +7,6 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/Skaanning/runr/internal/config"
 	"github.com/Skaanning/runr/internal/supervisor"
 )
 
@@ -42,17 +41,6 @@ func (s *styles) stateIcon(state supervisor.State, spin string) string {
 	default: // Pending
 		return s.faint.Render("○")
 	}
-}
-
-// projectColor returns a project's configured color, or the next default
-// color for projects without one.
-func projectColor(p *config.Project, next *int) string {
-	c := p.Color
-	if c == "" {
-		c = config.DefaultColors[*next%len(config.DefaultColors)]
-		*next++
-	}
-	return c
 }
 
 // hint renders a key hint like "enter start", with the key as a keycap

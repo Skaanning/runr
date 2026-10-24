@@ -47,21 +47,25 @@ func TestLauncherList(t *testing.T) {
 	cfg := launcherConfig(t)
 	m := newTestLauncher(t, cfg)
 	dir := cfg.Projects["db"].Dir
-	got := launcherScreen(m)[2:10]
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 15})
+	got := launcherScreen(m)[2:13]
 	want := []string{
-		"  Groups",
-		" ▸ [ ] backend  db, api",
-		"   [ ] empty    (empty)",
+		"   Groups",
+		"   ╭─ backend ──────────────────────── 2 ─╮  ╭─ empty ────────────────────────── 0 ─╮",
+		"   │ [ ] ● db  ● api                      │  │ [ ] (empty)                          │",
+		"   ╰──────────────────────────────────────╯  ╰──────────────────────────────────────╯",
 		"",
-		"  Projects",
-		"   [ ] api      " + pad(ansi.Truncate(dir, 32, "…"), 32) + "  go run ./cmd/server · needs db",
-		"   [ ] db       " + pad(ansi.Truncate(dir, 32, "…"), 32) + "  go run .",
-		"   [ ] web      " + ansi.Truncate(dir+"/gone", 32, "…") + "  dir does not exist",
+		"   Projects",
+		"   [ ] ● api  " + pad(ansi.Truncate(dir, 32, "…"), 32) + "  go run ./cmd/server · needs db",
+		"   [ ] ● db   " + pad(ansi.Truncate(dir, 32, "…"), 32) + "  go run .",
+		"   [ ] ● web  " + ansi.Truncate(dir+"/gone", 32, "…") + "  dir does not exist",
+		"",
+		"",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("list:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	if help := launcherScreen(m)[13]; help != "  ↑↓  move  space  select  enter  start  n  new  e  edit  g  group  d  delete  t  theme  q  quit" {
+	if help := launcherScreen(m)[14]; help != "  ↑↓←→  move  space  select  enter  start  n  new  e  edit  g  group  d  delete  t  theme  q  quit" {
 		t.Fatalf("help = %q", help)
 	}
 }
@@ -73,24 +77,24 @@ func TestLauncherSelection(t *testing.T) {
 		t.Fatalf("selection = %q", got)
 	}
 	rows := launcherScreen(m)
-	if !strings.Contains(rows[3], "[x] backend") || !strings.Contains(rows[7], "[x] api") || !strings.Contains(rows[len(rows)-2], "2 selected") {
+	if !strings.Contains(rows[4], "│ [x] ● db  ● api ") || !strings.Contains(rows[8], "[x] ● api") || !strings.Contains(rows[len(rows)-2], "2 selected") {
 		t.Fatalf("rows:\n%s", strings.Join(rows, "\n"))
 	}
 
 	// Unselecting a member leaves the group partly selected.
-	m.Update(key("down"))
-	m.Update(key("down"))
-	m.Update(key("space")) // api
+	m.Update(key("down")) // api
+	m.Update(key("space"))
 	if got := m.selection(); !slices.Equal(got, []string{"db"}) {
 		t.Fatalf("selection = %q", got)
 	}
-	if !strings.Contains(launcherScreen(m)[3], "[-] backend") {
-		t.Fatalf("row = %q", launcherScreen(m)[3])
+	if !strings.Contains(launcherScreen(m)[4], "│ [-] ● db") {
+		t.Fatalf("row = %q", launcherScreen(m)[4])
 	}
 
-	m.Update(key("up"))
+	m.Update(key("up"))    // backend
+	m.Update(key("right")) // empty
 	m.Update(key("space")) // empty group: nothing to select
-	m.Update(key("up"))
+	m.Update(key("left"))
 	m.Update(key("space")) // partly selected group → select all
 	if got := m.selection(); !slices.Equal(got, []string{"backend"}) {
 		t.Fatalf("selection = %q", got)
@@ -107,7 +111,7 @@ func TestLauncherEnter(t *testing.T) {
 	if msg := cmd().(startMsg); !slices.Equal(msg.names, []string{"backend"}) {
 		t.Fatalf("names = %q", msg.names)
 	}
-	for range 5 {
+	for range 3 {
 		m.Update(key("down"))
 	}
 	m.Update(key("space")) // web
@@ -150,13 +154,13 @@ func TestLauncherScrolls(t *testing.T) {
 	for range 11 {
 		m.Update(key("down"))
 	}
-	if got := launcherScreen(m)[5]; !strings.HasPrefix(got, " ▸ [ ] l") {
+	if got := launcherScreen(m)[5]; !strings.HasPrefix(got, " ▸ [ ] ● l") {
 		t.Fatalf("last body row = %q", got)
 	}
 	for range 11 {
 		m.Update(key("up"))
 	}
-	if got := launcherScreen(m)[2]; got != "  Projects" {
+	if got := launcherScreen(m)[2]; got != "   Projects" {
 		t.Fatalf("first body row = %q", got)
 	}
 }

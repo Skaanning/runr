@@ -318,3 +318,20 @@ func (c *Config) RemoveProject(name string) (groups, dependents []string) {
 	}
 	return groups, dependents
 }
+
+// ColorOf returns the color of a project: its configured one, or else one of
+// DefaultColors. The projects without a color get them in name order, so a
+// project has the same color in the launcher, every session and --plain
+// output, until projects without a color are added or removed.
+func (c *Config) ColorOf(name string) string {
+	if p := c.Projects[name]; p != nil && p.Color != "" {
+		return p.Color
+	}
+	i := 0
+	for other, p := range c.Projects {
+		if p.Color == "" && other < name {
+			i++
+		}
+	}
+	return DefaultColors[i%len(DefaultColors)]
+}

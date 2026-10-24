@@ -248,7 +248,7 @@ func TestLauncherKeysOpenForms(t *testing.T) {
 		}
 		m.Update(key("esc"))
 	}
-	for range 3 {
+	for range 2 {
 		m.Update(key("down")) // db
 	}
 	m.Update(key("space"))

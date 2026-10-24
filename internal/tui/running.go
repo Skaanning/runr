@@ -78,7 +78,6 @@ type runningModel struct {
 
 	entries    []*sidebarEntry
 	byName     map[string]*sidebarEntry
-	nextColor  int
 	labelWidth int
 	selected   int // index into entries, then idle
 	sideTop    int // first sidebar entry shown
@@ -143,7 +142,7 @@ func (m *runningModel) entry(name string) *sidebarEntry {
 	e := &sidebarEntry{info: supervisor.ProcessInfo{Name: name}, label: name}
 	if p := m.cfg.Projects[name]; p != nil {
 		e.label = p.Label(name)
-		e.color = projectColor(p, &m.nextColor)
+		e.color = m.cfg.ColorOf(name)
 		e.style = lipgloss.NewStyle().Foreground(m.st.color(e.color))
 	}
 	m.entries = append(m.entries, e)

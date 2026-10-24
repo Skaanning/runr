@@ -42,7 +42,10 @@ type palette struct {
 	rule      color.Color // separator lines
 	alert     color.Color // background of toasts about failures
 	match     color.Color // background of search matches
-	ansi      [16]color.Color
+	// gradient are the colors between the accent and magenta, for the
+	// launcher's wordmark.
+	gradient [2]color.Color
+	ansi     [16]color.Color
 }
 
 // theme is a palette for dark and one for light terminal backgrounds.
@@ -66,16 +69,18 @@ var terminalANSI = [16]color.Color{
 var terminalTheme = theme{
 	dark: palette{
 		accent:    ansi.BasicColor(ansiCyan),
-		selection: ansi.IndexedColor(236), // #303030
-		rule:      ansi.IndexedColor(23),  // #005f5f
-		alert:     ansi.IndexedColor(52),  // #5f0000
+		selection: ansi.IndexedColor(236),                                        // #303030
+		rule:      ansi.IndexedColor(23),                                         // #005f5f
+		alert:     ansi.IndexedColor(52),                                         // #5f0000
+		gradient:  [2]color.Color{ansi.IndexedColor(74), ansi.IndexedColor(140)}, // #5fafd7, #af87d7
 		ansi:      terminalANSI,
 	},
 	light: palette{
 		accent:    ansi.BasicColor(ansiCyan),
-		selection: ansi.IndexedColor(254), // #e4e4e4
-		rule:      ansi.IndexedColor(152), // #afd7d7
-		alert:     ansi.IndexedColor(224), // #ffd7d7
+		selection: ansi.IndexedColor(254),                                       // #e4e4e4
+		rule:      ansi.IndexedColor(152),                                       // #afd7d7
+		alert:     ansi.IndexedColor(224),                                       // #ffd7d7
+		gradient:  [2]color.Color{ansi.IndexedColor(31), ansi.IndexedColor(97)}, // #0087af, #875faf
 		ansi:      terminalANSI,
 	},
 	about: "the terminal's own colors",
@@ -100,6 +105,8 @@ type styles struct {
 	ok, warn, err      lipgloss.Style // green, yellow, red
 	rule               lipgloss.Style
 	accent             lipgloss.Style
+	heading            lipgloss.Style // section headings in the launcher
+	wordmark           [4]lipgloss.Style
 	badge              string         // " runr " in the header
 	onAccent           color.Color    // text on the accent and other pill colors
 	keycap             lipgloss.Style // the key of a hint; zero: bold keys
@@ -187,6 +194,13 @@ func (s *styles) build() {
 	}
 
 	s.accent = lipgloss.NewStyle().Foreground(p.accent)
+	s.heading = s.accent.Bold(true)
+	s.wordmark = [4]lipgloss.Style{s.accent, s.accent, s.accent, s.accent}
+	if tints {
+		for i, c := range []color.Color{p.gradient[0], p.gradient[1], p.ansi[ansiMagenta]} {
+			s.wordmark[i+1] = lipgloss.NewStyle().Foreground(c)
+		}
+	}
 	s.onAccent = p.bg
 	if s.onAccent == nil {
 		s.onAccent = p.ansi[ansiBlack]
