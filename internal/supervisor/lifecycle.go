@@ -118,11 +118,13 @@ func (s *Supervisor) stop(m *managed) {
 	})
 }
 
-// kill force-kills m if it is alive, or cancels it if it is waiting.
+// kill force-kills m if it is alive, or cancels it if it is waiting. Blocked
+// projects keep their state: there is nothing to kill, and Blocked explains
+// why they never ran.
 func (s *Supervisor) kill(m *managed) {
 	m.restartPending = false
 	if !m.info.State.Alive() {
-		if m.info.State == Waiting || m.info.State == Blocked {
+		if m.info.State == Waiting {
 			s.stop(m)
 		}
 		return

@@ -384,3 +384,22 @@ func TestStripANSI(t *testing.T) {
 		}
 	}
 }
+
+func TestCloseKeepsBlockedState(t *testing.T) {
+	cfg := config.New()
+	dir := t.TempDir()
+	cfg.Projects["db"] = &config.Project{Dir: dir, Cmd: "exit 1", ReadyLog: "never"}
+	cfg.Projects["api"] = &config.Project{Dir: dir, Cmd: "true", DependsOn: []string{"db"}}
+	s := New(cfg, Options{BaseEnv: []string{"PATH=" + os.Getenv("PATH")}})
+	r := record(s)
+
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "api", Blocked)
+	s.Close()
+	<-r.closed
+	if got := r.states("api"); !reflect.DeepEqual(got, []State{Waiting, Blocked}) {
+		t.Errorf("api states = %v (Close must not cancel blocked projects)", got)
+	}
+}

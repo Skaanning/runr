@@ -218,3 +218,19 @@ func TestValidColor(t *testing.T) {
 		}
 	}
 }
+
+func TestColorCode(t *testing.T) {
+	tests := map[string]string{
+		"black":        "0",
+		"cyan":         "6",
+		"bright-red":   "9",
+		"bright-white": "15",
+		"208":          "208",
+		"#ff8800":      "#ff8800",
+	}
+	for in, want := range tests {
+		if got := ColorCode(in); got != want {
+			t.Errorf("ColorCode(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

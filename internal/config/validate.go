@@ -187,3 +187,15 @@ func ValidColor(s string) bool {
 	}
 	return hexColorPattern.MatchString(s)
 }
+
+// ColorCode converts a valid project color to the form terminal styling
+// libraries understand: an ANSI color index ("cyan" → "6", "bright-red" → "9",
+// "208" → "208") or a hex code, returned unchanged.
+func ColorCode(color string) string {
+	for i, n := range ColorNames {
+		if color == n {
+			return strconv.Itoa(i)
+		}
+	}
+	return color
+}

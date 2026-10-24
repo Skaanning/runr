@@ -1,14 +1,94 @@
 package main
 
-import "github.com/spf13/cobra"
+import (
+	"fmt"
+	"io"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+
+	"github.com/spf13/cobra"
+
+	"runr/internal/config"
+)
 
 func newUpCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "up <name...>",
-		Short: "Start groups and/or projects",
-		Args:  cobra.MinimumNArgs(1),
+	var plain bool
+	cmd := &cobra.Command{
+		Use:               "up <name...>",
+		Short:             "Start groups and/or projects",
+		Long:              "Start the given groups and/or projects, plus everything they depend on.",
+		Args:              cobra.MinimumNArgs(1),
+		ValidArgsFunction: completeProjectsAndGroups,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return notImplemented("up")
+			s, err := loadStore()
+			if err != nil {
+				return err
+			}
+			projects, err := prepareUp(s.cfg, args, cmd.ErrOrStderr())
+			if err != nil {
+				return err
+			}
+			if !plain {
+				return notImplemented("up without --plain (the TUI)")
+			}
+
+			sigs := make(chan os.Signal, 2)
+			signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+			defer signal.Stop(sigs)
+			return runPlain(cmd.OutOrStdout(), s.cfg, args, projects, sigs, colorEnabled(cmd.OutOrStdout()))
 		},
 	}
+	// Plain interleaved output, for debugging and non-interactive use.
+	cmd.Flags().BoolVar(&plain, "plain", false, "print interleaved output instead of opening the TUI")
+	_ = cmd.Flags().MarkHidden("plain")
+	return cmd
+}
+
+// prepareUp validates the config and checks that every project that would be
+// started can be: names resolve and working directories exist. It returns
+// the resolved projects in start order.
+func prepareUp(cfg *config.Config, names []string, stderr io.Writer) ([]string, error) {
+	warnings, err := cfg.Validate()
+	if err != nil {
+		return nil, err
+	}
+	projects, err := cfg.Resolve(names...)
+	if err != nil {
+		return nil, err
+	}
+	if len(projects) == 0 {
+		return nil, fmt.Errorf("nothing to start: %s contains no projects", strings.Join(names, ", "))
+	}
+
+	inSet := map[string]bool{}
+	for _, name := range projects {
+		inSet[name] = true
+	}
+	var missing []string
+	for _, w := range warnings {
+		if !inSet[w.Name] {
+			continue
+		}
+		if w.Field == "dir" {
+			missing = append(missing, w.String())
+		} else {
+			fmt.Fprintf(stderr, "warning: %s\n", w)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("cannot start:\n  %s", strings.Join(missing, "\n  "))
+	}
+	return projects, nil
+}
+
+// completeProjectsAndGroups offers every project and group name.
+func completeProjectsAndGroups(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+	s, err := loadStore()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	names := append(sortedNames(s.cfg.Groups), sortedNames(s.cfg.Projects)...)
+	return names, cobra.ShellCompDirectiveNoFileComp
 }
