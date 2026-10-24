@@ -28,6 +28,11 @@ type fakeGit struct {
 	switches  []string                    // "root branch" for each Switch call
 	switchOut string                      // output of Switch
 	switchErr error                       // returned by Switch
+
+	pulls    []string                  // root of each Pull call
+	pullOut  string                    // output of Pull
+	pullErr  error                     // returned by Pull
+	pulledTo map[string]gitinfo.Status // by root: status after a successful Pull
 }
 
 func (f *fakeGit) FindAll(_ context.Context, dirs map[string]string) gitinfo.Repos {
@@ -66,6 +71,14 @@ func (f *fakeGit) Switch(_ context.Context, repo gitinfo.Repo, b gitinfo.Branch)
 		f.status[repo.Root] = s
 	}
 	return f.switchOut, f.switchErr
+}
+
+func (f *fakeGit) Pull(_ context.Context, repo gitinfo.Repo) (string, error) {
+	f.pulls = append(f.pulls, repo.Root)
+	if s, ok := f.pulledTo[repo.Root]; ok && f.pullErr == nil {
+		f.status[repo.Root] = s
+	}
+	return f.pullOut, f.pullErr
 }
 
 func testGit() *fakeGit {

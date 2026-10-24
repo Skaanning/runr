@@ -45,7 +45,7 @@ type Error struct {
 }
 
 func (e *Error) Error() string {
-	msg := firstLine(e.Stderr)
+	msg := errorLine(e.Stderr)
 	switch {
 	case errors.Is(e.Err, context.DeadlineExceeded):
 		msg = "timed out"
@@ -60,6 +60,19 @@ func (e *Error) Unwrap() error { return e.Err }
 func firstLine(s string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
 	return strings.TrimSpace(line)
+}
+
+// errorLine returns the line of git's output that says what went wrong: the
+// first "fatal:" or "error:" line, skipping progress and hints, or else the
+// first line.
+func errorLine(s string) string {
+	for line := range strings.Lines(s) {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "fatal:") || strings.HasPrefix(line, "error:") {
+			return line
+		}
+	}
+	return firstLine(s)
 }
 
 // run runs git in dir and returns its standard output. extraEnv is added to
@@ -117,24 +130,53 @@ var repoEnv = []string{
 // configured their own SSH command through the environment.
 func gitEnv(base []string) []string {
 	env := make([]string, 0, len(base)+2)
-	customSSH := false
 	for _, kv := range base {
 		key, _, _ := strings.Cut(kv, "=")
-		switch {
-		case isRepoEnv(key):
-			continue
-		case key == "GIT_SSH_COMMAND" || key == "GIT_SSH":
-			customSSH = true
-		case key == "GIT_TERMINAL_PROMPT":
+		if isRepoEnv(key) || key == "GIT_TERMINAL_PROMPT" {
 			continue
 		}
 		env = append(env, kv)
 	}
 	env = append(env, "GIT_TERMINAL_PROMPT=0")
-	if !customSSH {
-		env = append(env, "GIT_SSH_COMMAND=ssh -o BatchMode=yes")
+	if !customSSH(base) {
+		env = append(env, "GIT_SSH_COMMAND="+batchSSH("ssh"))
 	}
 	return env
+}
+
+// customSSH reports whether env chooses the SSH command git runs.
+func customSSH(env []string) bool {
+	for _, kv := range env {
+		key, _, _ := strings.Cut(kv, "=")
+		if key == "GIT_SSH_COMMAND" || key == "GIT_SSH" {
+			return true
+		}
+	}
+	return false
+}
+
+// batchSSH returns cmd with BatchMode on if it runs OpenSSH's ssh, so that
+// ssh can't prompt. Other programs may not understand -o and get cmd
+// unchanged.
+func batchSSH(cmd string) string {
+	if sshProgram(cmd) != "ssh" {
+		return cmd
+	}
+	return cmd + " -o BatchMode=yes"
+}
+
+// sshProgram returns the base name of the program a command line runs,
+// without ".exe".
+func sshProgram(cmd string) string {
+	cmd = strings.TrimSpace(cmd)
+	var prog string
+	if q := cmd[:min(1, len(cmd))]; q == `"` || q == "'" {
+		prog, _, _ = strings.Cut(cmd[1:], q)
+	} else if f := strings.Fields(cmd); len(f) > 0 {
+		prog = f[0]
+	}
+	prog = prog[strings.LastIndexAny(prog, `/\`)+1:]
+	return strings.TrimSuffix(strings.ToLower(prog), ".exe")
 }
 
 func isRepoEnv(key string) bool {

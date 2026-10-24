@@ -58,6 +58,23 @@ func (s Status) CheckSafe() error {
 	return nil
 }
 
+// CheckPull returns why runr refuses to pull in a work tree in this state,
+// or nil: the checks of CheckSafe, and a branch with an upstream to pull from.
+func (s Status) CheckPull() error {
+	if err := s.CheckSafe(); err != nil {
+		return err
+	}
+	switch {
+	case s.Detached:
+		return errors.New("HEAD is detached, not on a branch")
+	case s.Upstream == "":
+		return fmt.Errorf("%s has no upstream branch", s.Branch)
+	case s.UpstreamGone:
+		return fmt.Errorf("the upstream branch %s no longer exists", s.Upstream)
+	}
+	return nil
+}
+
 // ShortCommit returns the abbreviated HEAD commit id.
 func (s Status) ShortCommit() string {
 	return s.Commit[:min(7, len(s.Commit))]

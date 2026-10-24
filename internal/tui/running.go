@@ -85,7 +85,8 @@ type runningModel struct {
 	input      textinput.Model
 	matchInfo  string // position of the current match, e.g. "3/17"
 
-	picker *picker // open picker (start another, branches), or nil
+	picker  *picker   // open picker (start another, branches), or nil
+	confirm *question // open question in the help line, or nil
 
 	git       *gitTracker // nil: git is not installed
 	gitAction string      // git action running in the background, e.g. "git switch"
@@ -247,6 +248,10 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 		return m.showBranches(msg)
 	case switchedMsg:
 		return m.switched(msg)
+	case pullCheckMsg:
+		m.confirmPull(msg)
+	case pulledMsg:
+		return m.pulled(msg)
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case interruptMsg:
@@ -293,6 +298,8 @@ func (m *runningModel) handleEvents(events []supervisor.Event) {
 func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	m.notice = ""
 	switch {
+	case m.confirm != nil:
+		return m.handleConfirmKey(msg)
 	case m.picker != nil:
 		return m.handlePickerKey(msg)
 	case m.editing:
@@ -342,6 +349,8 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 	case "b":
 		return m.openBranches()
+	case "p":
+		return m.openPull()
 	case "r":
 		m.restart()
 	case "s":
@@ -376,6 +385,23 @@ func (m *runningModel) handlePickerKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 	default:
 		return m.picker.update(msg)
+	}
+	return nil
+}
+
+// handleConfirmKey handles keys while a question is open: enter or y
+// answers yes; esc, n or q cancel.
+func (m *runningModel) handleConfirmKey(msg tea.KeyPressMsg) tea.Cmd {
+	c := m.confirm
+	switch msg.String() {
+	case "ctrl+c":
+		m.confirm = nil
+		return m.interrupt()
+	case "esc", "n", "q":
+		m.confirm = nil
+	case "enter", "y":
+		m.confirm = nil
+		return c.yes()
 	}
 	return nil
 }
@@ -585,6 +611,7 @@ func (m *runningModel) report(err error) {
 
 // interrupt starts a graceful shutdown, or forces it if one is running.
 func (m *runningModel) interrupt() tea.Cmd {
+	m.confirm = nil
 	if !m.stopping {
 		m.stopping = true
 		done := m.sess.StopAll()
@@ -814,6 +841,12 @@ func (m *runningModel) sidebarRow(i, width, gitCol int) string {
 }
 
 func (m *runningModel) help() string {
+	if m.confirm != nil {
+		// The hints stay visible; the question is cut short when narrow.
+		hints := "  " + hintList([][2]string{{"enter", m.confirm.action}, {"esc", "cancel"}})
+		width := max(m.width-ansi.StringWidth(hints)-1, 1)
+		return ansi.Truncate(" "+boldStyle.Render(ansi.Truncate(m.confirm.prompt, width, "…"))+hints, m.width, "…")
+	}
 	if m.notice != "" {
 		return ansi.Truncate(" "+warnStyle.Render(m.notice), m.width, "…")
 	}
@@ -838,7 +871,7 @@ func (m *runningModel) help() string {
 	keys := [][2]string{{"↑↓", "select"}, {"tab", view}, {"r", "restart"}, {"s", stop}, {"+", "start"}}
 	if e := m.selectedEntry(); e != nil {
 		if _, ok := m.git.get(e.info.Name); ok {
-			keys = append(keys, [2]string{"b", "branch"})
+			keys = append(keys, [2]string{"b", "branch"}, [2]string{"p", "pull"})
 		}
 	}
 	keys = append(keys, [][2]string{

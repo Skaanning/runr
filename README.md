@@ -209,7 +209,8 @@ either all of them interleaved (the combined view) or just the selected one.
 | `r` | Restart the selected process |
 | `s` | Stop the selected process, or start it (with its dependencies) if it isn't running |
 | `+` | Start another registered project or group (type to filter, `enter` to start, `esc` to close) |
-| `b` | Switch the selected project's git repository to another branch (refused while it has uncommitted changes to tracked files, conflicts, or a merge/rebase in progress); processes are not restarted |
+| `b` | Switch the selected project's git repository to another branch (see [Git](#git)) |
+| `p` | Pull the selected project's git repository (`git pull --ff-only`), after confirming |
 | `/` | Search the output; `enter` jumps to the newest match, `esc` cancels |
 | `n` / `N` | Next newer / older match |
 | `esc` | Clear the search |
@@ -223,6 +224,50 @@ uppercase letter makes it case-sensitive.
 
 runr adds its own lines to each process's log, such as `starting: <cmd>`,
 `waiting for db`, `ready` and `crashed (exit code 1)`, so you can see what happened when.
+
+## Git
+
+When `git` is installed, the sidebar and the launcher show the branch of the repository
+each project's `dir` is in, with markers:
+
+```
+ ▸ ● api     feat/login * ↓2
+   ● web     main ↑1
+   ✗ worker  (a1b2c3d) !
+```
+
+| Marker | Meaning |
+|---|---|
+| `*` | uncommitted changes to tracked files (staged or unstaged) |
+| `↑n` / `↓n` | commits ahead of / behind the upstream, as of the last fetch or pull |
+| `!` | a merge, rebase, cherry-pick, revert or `git am` in progress, or unresolved conflicts |
+| `(a1b2c3d)` | detached HEAD |
+| `?` (faint) | the state can't be read, e.g. git refuses the directory ("dubious ownership") |
+
+Projects outside a repository show nothing. The state is read every 5 seconds and after
+each action; runr never fetches on its own.
+
+`b` (switch branch) and `p` (pull) act on the selected project's repository, and only in
+the simple cases — anything that needs a decision is left to you:
+
+- Both are refused up front while the repository has uncommitted changes to tracked files,
+  unresolved conflicts, or an operation in progress. Untracked files don't count, but git
+  still refuses to overwrite them.
+- `b` lists local branches and remote branches without a local one (most recent first);
+  picking a remote branch creates a local branch that tracks it.
+- `p` fast-forwards the current branch from its upstream and fails if the branch has
+  diverged — runr never merges, rebases, stashes or resets. It is refused on a detached
+  HEAD or a branch without an upstream.
+- If other projects in the session are in the same repository, the picker or the
+  confirmation says so, since they change too.
+- git's output goes to the selected project's log, and a short summary or error to the
+  bottom line. Running processes are not restarted; press `r` if your dev server doesn't
+  reload by itself.
+- git never prompts: it gets no input, credential prompts are off and `ssh` runs in
+  batch mode, so a pull that needs a password or passphrase fails instead of hanging — use
+  an SSH agent or a credential helper. A `GIT_SSH_COMMAND` of your own is used as is; a
+  `core.sshCommand` too, with `-o BatchMode=yes` added when it runs `ssh`. Each git command
+  times out after 60 seconds.
 
 ## How processes are run
 

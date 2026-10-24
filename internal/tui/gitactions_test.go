@@ -17,7 +17,7 @@ func newGitModel(t *testing.T) (*runningModel, *fakeSession, *fakeGit) {
 	t.Helper()
 	m, sess := newTestModel(t, 120, 14)
 	f := testGit()
-	f.status["/r/app"] = gitinfo.Status{Branch: "main", Commit: "0123456789"}
+	f.status["/r/app"] = gitinfo.Status{Branch: "main", Commit: "0123456789", Upstream: "origin/main"}
 	f.branches = map[string][]gitinfo.Branch{"/r/app": {
 		{Name: "main", Current: true, Upstream: "origin/main", Date: "3 days ago"},
 		{Name: "feat/login", Upstream: "origin/feat/login", Date: "2 hours ago"},
@@ -43,7 +43,7 @@ func follow(t *testing.T, m *runningModel, cmd tea.Cmd) {
 		return
 	}
 	switch msg := cmd().(type) {
-	case branchesMsg, switchedMsg:
+	case branchesMsg, switchedMsg, pullCheckMsg, pulledMsg:
 		_, next := m.Update(msg)
 		follow(t, m, next)
 	case tea.BatchMsg:
@@ -201,6 +201,167 @@ func TestSwitchBranchGuards(t *testing.T) {
 	press(t, m, "b")
 	if m.notice != "git is not installed" {
 		t.Errorf("no git: notice %q", m.notice)
+	}
+}
+
+func TestPull(t *testing.T) {
+	m, sess, f := newGitModel(t)
+	if got := helpRow(m); !strings.Contains(got, "b branch  p pull") {
+		t.Errorf("help = %q", got)
+	}
+
+	press(t, m, "p")
+	if m.confirm == nil {
+		t.Fatalf("no confirmation; notice %q", m.notice)
+	}
+	if got, want := helpRow(m), " pull origin/main into api (main)? also updates Worker (same repository)  enter pull  esc cancel"; got != want {
+		t.Errorf("confirmation = %q\nwant           %q", got, want)
+	}
+	m.width = 40
+	if got := helpRow(m); got != " pull origin/ma…  enter pull  esc cancel" {
+		t.Errorf("narrow confirmation = %q", got)
+	}
+	m.width = 120
+	if len(f.pulls) != 0 {
+		t.Fatal("pulled before confirming")
+	}
+
+	f.pullOut = "Updating 0123456..fedcba9\nFast-forward\n f | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n"
+	f.pulledTo = map[string]gitinfo.Status{"/r/app": {Branch: "main", Commit: "fedcba9876", Upstream: "origin/main"}}
+	_, cmd := m.Update(key("enter"))
+	if m.confirm != nil || m.gitAction != "git pull" || m.notice != "pulling api…" {
+		t.Errorf("while pulling: confirm %v, action %q, notice %q", m.confirm != nil, m.gitAction, m.notice)
+	}
+	follow(t, m, cmd)
+
+	if !slices.Equal(f.pulls, []string{"/r/app"}) {
+		t.Errorf("pulls = %v", f.pulls)
+	}
+	if m.notice != "pulled api: main 0123456 → fedcba9 (also Worker)" || m.gitAction != "" {
+		t.Errorf("notice %q, action %q", m.notice, m.gitAction)
+	}
+	wantLog := []string{
+		"$ git pull --ff-only --no-rebase",
+		"Updating 0123456..fedcba9",
+		"Fast-forward",
+		" f | 2 +-",
+		" 1 file changed, 1 insertion(+), 1 deletion(-)",
+		"pulled main 0123456 → fedcba9",
+	}
+	if got := sess.notes["api"]; !slices.Equal(got, wantLog) {
+		t.Errorf("api log = %q", got)
+	}
+	if got := sess.notes["worker"]; !slices.Equal(got, []string{"pulled main 0123456 → fedcba9 (git pull run for api, same repository)"}) {
+		t.Errorf("worker log = %q", got)
+	}
+	if sess.notes["db"] != nil {
+		t.Error("db's log got the output of another repository")
+	}
+	if !m.git.busy {
+		t.Error("git state not refreshed after the pull")
+	}
+}
+
+func TestPullUpToDate(t *testing.T) {
+	m, sess, f := newGitModel(t)
+	f.pullOut = "Already up to date.\n"
+	press(t, m, "p")
+	press(t, m, "y")
+	if m.notice != "api is already up to date" {
+		t.Errorf("notice %q", m.notice)
+	}
+	if got := sess.notes["api"]; !slices.Equal(got, []string{"$ git pull --ff-only --no-rebase", "Already up to date.", "already up to date"}) {
+		t.Errorf("api log = %q", got)
+	}
+	if sess.notes["worker"] != nil {
+		t.Error("nothing changed, but the other project in the repository got a line")
+	}
+}
+
+func TestPullRefusedUpFront(t *testing.T) {
+	m, _, f := newGitModel(t)
+	for _, tt := range []struct {
+		s    gitinfo.Status
+		want string
+	}{
+		{gitinfo.Status{Branch: "main", Upstream: "origin/main", Changed: true}, "can't pull: there are uncommitted changes to tracked files"},
+		{gitinfo.Status{Branch: "main", Upstream: "origin/main", Operation: gitinfo.Rebase}, "can't pull: a rebase is in progress"},
+		{gitinfo.Status{Branch: "main"}, "can't pull: main has no upstream branch"},
+		{gitinfo.Status{Commit: "0123456789", Detached: true}, "can't pull: HEAD is detached, not on a branch"},
+	} {
+		f.status["/r/app"] = tt.s
+		press(t, m, "p")
+		if m.confirm != nil || m.notice != tt.want {
+			t.Errorf("%+v: confirmation %v, notice %q", tt.s, m.confirm != nil, m.notice)
+		}
+	}
+	if len(f.pulls) != 0 {
+		t.Error("pulled anyway")
+	}
+}
+
+func TestPullCheckedAgainBeforePulling(t *testing.T) {
+	m, sess, f := newGitModel(t)
+	press(t, m, "p")
+	f.status["/r/app"] = gitinfo.Status{Branch: "main", Upstream: "origin/main", Changed: true} // edited meanwhile
+	press(t, m, "enter")
+	if len(f.pulls) != 0 || len(sess.notes) != 0 {
+		t.Errorf("pulled: %v, notes %v", f.pulls, sess.notes)
+	}
+	if m.notice != "can't pull: there are uncommitted changes to tracked files" || m.gitAction != "" {
+		t.Errorf("notice %q, action %q", m.notice, m.gitAction)
+	}
+}
+
+func TestPullFailure(t *testing.T) {
+	m, sess, f := newGitModel(t)
+	f.pullOut = "hint: Diverging branches can't be fast-forwarded, you need to either:\nfatal: Not possible to fast-forward, aborting.\n"
+	f.pullErr = &gitinfo.Error{Args: gitinfo.PullArgs(), Stderr: f.pullOut, Err: errors.New("exit status 128")}
+	press(t, m, "p")
+	press(t, m, "enter")
+
+	if want := "git pull: fatal: Not possible to fast-forward, aborting. (output in the log)"; m.notice != want {
+		t.Errorf("notice = %q", m.notice)
+	}
+	if got := sess.notes["api"]; len(got) != 4 || got[0] != "$ git pull --ff-only --no-rebase" || got[3] != "git pull failed" {
+		t.Errorf("log = %q", got)
+	}
+	if sess.notes["worker"] != nil {
+		t.Error("a failed pull was noted for the other projects in the repository")
+	}
+	if !m.git.busy {
+		t.Error("git state not refreshed after the failed pull")
+	}
+}
+
+func TestPullConfirmationKeys(t *testing.T) {
+	m, sess, f := newGitModel(t)
+	for _, k := range []string{"esc", "n", "q"} {
+		press(t, m, "p")
+		press(t, m, "x") // ignored
+		if m.confirm == nil {
+			t.Fatalf("%s: confirmation closed by another key", k)
+		}
+		press(t, m, k)
+		if m.confirm != nil || m.stopping {
+			t.Errorf("%s: confirmation %v, stopping %v", k, m.confirm != nil, m.stopping)
+		}
+	}
+	if len(f.pulls) != 0 {
+		t.Error("pulled after cancelling")
+	}
+
+	m.gitAction = "git switch"
+	press(t, m, "p")
+	if m.confirm != nil || m.notice != "git switch is still running" {
+		t.Errorf("busy: confirmation %v, notice %q", m.confirm != nil, m.notice)
+	}
+	m.gitAction = ""
+
+	press(t, m, "p")
+	m.Update(key("ctrl+c")) // its command waits for everything to stop
+	if m.confirm != nil || !m.stopping || sess.stopAll != 1 {
+		t.Errorf("ctrl+c: confirmation %v, stopping %v", m.confirm != nil, m.stopping)
 	}
 }
 

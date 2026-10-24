@@ -31,7 +31,28 @@ type (
 		output  string
 		err     error
 	}
+	pullCheckMsg struct { // the repository was checked before asking to pull
+		project string
+		repo    gitinfo.Repo
+		status  gitinfo.Status
+		err     error // reading failed, or the preflight refused
+	}
+	pulledMsg struct { // a pull finished
+		project       string
+		repo          gitinfo.Repo
+		ran           bool // git pull ran; false if the preflight refused
+		before, after gitinfo.Status
+		output        string
+		err           error
+	}
 )
+
+// question is a yes/no question shown in the help line.
+type question struct {
+	prompt string
+	action string // what enter does, e.g. "pull"
+	yes    func() tea.Cmd
+}
 
 // gitTarget returns the repository of a project for a git action. If there
 // is none, or another action is running, it sets a notice saying why.
@@ -75,13 +96,23 @@ func (m *runningModel) labels(names []string) string {
 }
 
 // preflight reads the current state of repo and returns why runr won't
-// switch branches or pull there, or nil.
+// switch branches there, or nil.
 func preflight(reader GitReader, repo gitinfo.Repo) error {
 	s, err := reader.Status(context.Background(), repo)
 	if err != nil {
 		return err
 	}
 	return s.CheckSafe()
+}
+
+// pullPreflight reads the current state of repo and returns it, with why
+// runr won't pull there, or nil.
+func pullPreflight(reader GitReader, repo gitinfo.Repo) (gitinfo.Status, error) {
+	s, err := reader.Status(context.Background(), repo)
+	if err != nil {
+		return s, err
+	}
+	return s, s.CheckPull()
 }
 
 // openBranches checks the selected project's repository and reads its
@@ -192,6 +223,104 @@ func (m *runningModel) switched(msg switchedMsg) tea.Cmd {
 		m.notice += " (also " + m.labels(others) + ")"
 		for _, name := range others {
 			_ = m.sess.Note(name, fmt.Sprintf("switched to %s (git switch run for %s, same repository)", branch, label))
+		}
+	}
+	return m.git.refresh(m.gitDirs())
+}
+
+// openPull checks the selected project's repository in the background; the
+// confirmation opens when it is done.
+func (m *runningModel) openPull() tea.Cmd {
+	e := m.selectedEntry()
+	if e == nil || m.stopping {
+		return nil
+	}
+	repo, ok := m.gitTarget(e.info.Name)
+	if !ok {
+		return nil
+	}
+	reader, name := m.git.reader, e.info.Name
+	return func() tea.Msg {
+		msg := pullCheckMsg{project: name, repo: repo}
+		msg.status, msg.err = pullPreflight(reader, repo)
+		return msg
+	}
+}
+
+// confirmPull asks whether to pull, naming the other projects in the session
+// that the pull updates too.
+func (m *runningModel) confirmPull(msg pullCheckMsg) {
+	if msg.err != nil {
+		m.notice = "can't pull: " + msg.err.Error()
+		return
+	}
+	if m.stopping || m.picker != nil || m.editing {
+		return // something else took over the screen meanwhile
+	}
+	prompt := fmt.Sprintf("pull %s into %s (%s)?", msg.status.Upstream, m.entry(msg.project).label, msg.status.Branch)
+	if others := m.sharing(msg.project, msg.repo.Root); len(others) > 0 {
+		prompt += " also updates " + m.labels(others) + " (same repository)"
+	}
+	m.notice = ""
+	m.confirm = &question{
+		prompt: prompt, action: "pull",
+		yes: func() tea.Cmd { return m.pull(msg.project, msg.repo) },
+	}
+}
+
+// pull checks the repository again and pulls in the background.
+func (m *runningModel) pull(project string, repo gitinfo.Repo) tea.Cmd {
+	if m.gitAction != "" {
+		m.notice = m.gitAction + " is still running"
+		return nil
+	}
+	m.gitAction = "git pull"
+	m.notice = fmt.Sprintf("pulling %s…", m.entry(project).label)
+	reader := m.git.reader
+	return func() tea.Msg {
+		msg := pulledMsg{project: project, repo: repo}
+		if msg.before, msg.err = pullPreflight(reader, repo); msg.err != nil {
+			return msg
+		}
+		msg.ran = true
+		msg.output, msg.err = reader.Pull(context.Background(), repo)
+		msg.after, _ = reader.Status(context.Background(), repo) // only used to report what changed
+		return msg
+	}
+}
+
+// pulled reports the outcome of a pull in the help line and in the logs of
+// the projects in the repository, then refreshes the git state.
+func (m *runningModel) pulled(msg pulledMsg) tea.Cmd {
+	m.gitAction = ""
+	if !msg.ran {
+		m.notice = "can't pull: " + msg.err.Error()
+		return nil
+	}
+	label := m.entry(msg.project).label
+	lines := append([]string{"$ git " + strings.Join(gitinfo.PullArgs(), " ")}, outputLines(msg.output)...)
+	if msg.err != nil {
+		_ = m.sess.Note(msg.project, append(lines, "git pull failed")...)
+		m.notice = msg.err.Error() + " (output in the log)"
+		return m.git.refresh(m.gitDirs())
+	}
+	before, after := msg.before.ShortCommit(), msg.after.ShortCommit()
+	switch {
+	case after == before:
+		_ = m.sess.Note(msg.project, append(lines, "already up to date")...)
+		m.notice = fmt.Sprintf("%s is already up to date", label)
+	case after == "": // the state couldn't be read afterwards
+		_ = m.sess.Note(msg.project, append(lines, "pulled "+msg.before.Upstream)...)
+		m.notice = fmt.Sprintf("pulled %s into %s", msg.before.Upstream, label)
+	default:
+		change := fmt.Sprintf("%s %s → %s", msg.before.Branch, before, after)
+		_ = m.sess.Note(msg.project, append(lines, "pulled "+change)...)
+		m.notice = fmt.Sprintf("pulled %s: %s", label, change)
+		if others := m.sharing(msg.project, msg.repo.Root); len(others) > 0 {
+			m.notice += " (also " + m.labels(others) + ")"
+			for _, name := range others {
+				_ = m.sess.Note(name, fmt.Sprintf("pulled %s (git pull run for %s, same repository)", change, label))
+			}
 		}
 	}
 	return m.git.refresh(m.gitDirs())
