@@ -71,14 +71,14 @@ func TestSidebarStatusColumn(t *testing.T) {
 
 func TestStatusColumnDroppedBeforeGit(t *testing.T) {
 	for _, tt := range []struct {
-		width int
-		row   string // the db row
+		width, row int
+		want       string // the db row
 	}{
-		{120, "│ ▌● db      4m02s ▁▁▁▁▁▁▁▁ main         ││"},
-		{96, "│ ▌● db      4m02s main          ││"}, // the sparkline goes first
-		{80, "│ ▌● db     main           ││"},       // no room for both: the uptime goes
-		{56, "│ ▌● db      4m02s ││"},               // no room for the git column alone
-		{50, "│ ▌● db      ││"},                     // nor for the uptime
+		{120, 1, "│ ▌● db      4m02s ▁▁▁▁▁▁▁▁ main            ││"},
+		{80, 1, "│ ▌● db      4m02s main          ││"}, // the sparkline goes first
+		{56, 1, "│ ▌● db     main       ││"},           // then the uptime
+		{48, 2, " ▌ ● db      4m02s │"},                // no room for the git column alone (no panes)
+		{40, 2, " ▌ ● db     │"},                       // nor for the uptime
 	} {
 		m, _ := newTestModel(t, tt.width, 12)
 		m.git = newGitTracker(testGit())
@@ -86,8 +86,8 @@ func TestStatusColumnDroppedBeforeGit(t *testing.T) {
 		m.Update(eventsMsg{events: []supervisor.Event{supervisor.StateEvent{Info: supervisor.ProcessInfo{
 			Name: "db", State: supervisor.Running, StartedAt: testNow().Add(-4*time.Minute - 2*time.Second),
 		}}}})
-		if got := screen(m)[1]; !strings.HasPrefix(got, tt.row) {
-			t.Errorf("width %d: %q, want prefix %q", tt.width, got, tt.row)
+		if got := screen(m)[tt.row]; !strings.HasPrefix(got, tt.want) {
+			t.Errorf("width %d: %q, want prefix %q", tt.width, got, tt.want)
 		}
 	}
 }

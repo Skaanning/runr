@@ -234,7 +234,7 @@ func TestRunningNewProjectFromEvents(t *testing.T) {
 		line("frontend-application", "hi"),
 	}})
 	got := screen(m)
-	if !strings.HasPrefix(got[4], "│  ⠋ frontend-appli… ││") {
+	if !strings.HasPrefix(got[4], "│  ⠋ frontend-applicati… ││") {
 		t.Fatalf("sidebar row = %q", got[4])
 	}
 	if !strings.Contains(got[1], "││ frontend-applic… hi") {

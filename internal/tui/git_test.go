@@ -109,10 +109,10 @@ func TestRunningSidebarGit(t *testing.T) {
 
 	want := []string{
 		"  runr   backend                                ● 1  ⠋ 2   combined · following",
-		"──────────────────────────┬─────────────────────────────────────────────────────",
-		" ▌ ● db     main          │ api    hello",
-		"   ○ api    feat/lo… * ↓2 │",
-		"   ○ Worker feat/lo… * ↓2 │",
+		"────────────────────────────────┬───────────────────────────────────────────────",
+		" ▌ ● db     ▁▁▁▁▁▁▁▁ main       │ api    hello",
+		"   ○ api    ▁▁▁▁▁▁▁▂ feat… * ↓2 │",
+		"   ○ Worker ▁▁▁▁▁▁▁▁ feat… * ↓2 │",
 	}
 	if got := screen(m)[:5]; !slices.Equal(got, want) {
 		t.Fatalf("screen:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -125,8 +125,8 @@ func TestRunningSidebarGitWidths(t *testing.T) {
 		row   string // the api row
 	}{
 		{120, "   ○ api    ▁▁▁▁▁▁▁▁ feat/login * ↓2 │"},
-		{75, "   ○ api    feat/l… * ↓2 │"},
-		{60, "   ○ api    │"}, // no room: the column is dropped, names stay whole
+		{75, "   ○ api    ▁▁▁▁▁▁▁▁ fe… * ↓2 │"},
+		{60, "   ○ api    feat/… * ↓2 │"}, // no room for the sparkline
 	}
 	for _, tt := range tests {
 		m, _ := newTestModel(t, tt.width, 7)

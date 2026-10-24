@@ -739,12 +739,12 @@ func (m *runningModel) logWidth() int {
 
 // sidebarLayout returns the width of the sidebar's content (without borders
 // or the divider) and the width of its git column, 0 if hidden. The sidebar
-// takes at most a third of the screen; when narrow, the sparkline is
+// takes at most two fifths of the screen; when narrow, the sparkline is
 // dropped first, then the status column, then the git column is narrowed
 // and dropped, before names are truncated.
 func (m *runningModel) sidebarLayout() sidebarCols {
 	base := m.sidebarPrefix() + m.labelWidth + 1 // marker and icon + label + " "
-	limit := max(m.width/3, 12)
+	limit := max(m.width*2/5, 12)
 	want := 0 // widest git label
 	for _, e := range m.entries {
 		if g, ok := m.git.get(e.info.Name); ok {

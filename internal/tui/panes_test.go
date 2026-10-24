@@ -30,14 +30,14 @@ func newPaneModel(t *testing.T, width, height int) (*runningModel, *fakeSession)
 func TestPaneLayout(t *testing.T) {
 	m, _ := newPaneModel(t, 72, 10)
 	want := []string{
-		"╭─ processes ──────╮╭─ logs · combined ──────────────────── following ─╮",
-		"│ ▌● db            ││ db     starting: db                              │",
-		"│  ⠋ api           ││ api    listening on :8080                        │",
-		"│  ✗ Worker exit 1 ││                                                  │",
-		"│                  ││                                                  │",
-		"│                  ││                                                  │",
-		"│                  ││                                                  │",
-		"╰──────────────────╯╰──────────────────────────────────────────────────╯",
+		"╭─ processes ───────────────╮╭─ logs · combined ─────────── following ─╮",
+		"│ ▌● db            ▁▁▁▁▁▁▁▁ ││ db     starting: db                     │",
+		"│  ⠋ api           ▁▁▁▁▁▁▁▂ ││ api    listening on :8080               │",
+		"│  ✗ Worker exit 1 ▁▁▁▁▁▁▁▁ ││                                         │",
+		"│                           ││                                         │",
+		"│                           ││                                         │",
+		"│                           ││                                         │",
+		"╰───────────────────────────╯╰─────────────────────────────────────────╯",
 		"  FOLLOW  backend  ● 1 ⠋ 1 ✗ 1                               db  14:32",
 		"  ↑↓  select  tab  view  r  restart  s  stop  +  start  q  quit",
 	}
@@ -47,7 +47,7 @@ func TestPaneLayout(t *testing.T) {
 }
 
 func TestPaneModesAndBorders(t *testing.T) {
-	m, sess := newPaneModel(t, 72, 10)
+	m, sess := newPaneModel(t, 90, 10)
 	logBorder := func() string {
 		_, after, _ := strings.Cut(strings.Split(m.render(), "\n")[0], "╮")
 		return strings.TrimPrefix(after, "\x1b[m")
