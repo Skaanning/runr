@@ -18,6 +18,7 @@ type pickerItem struct {
 
 // picker is a filterable list of items, shown in place of the log.
 type picker struct {
+	title  string                   // shown in the pane's border, e.g. "switch branch · api"
 	action string                   // what enter does, e.g. "start"; also the input's prompt
 	note   string                   // shown under the input, if set
 	empty  string                   // shown when there are no items

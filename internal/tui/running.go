@@ -39,6 +39,8 @@ const (
 	maxPrefixWidth = 16               // widest label in front of combined log lines
 	minWidth       = 30
 	minHeight      = 5
+	paneMinWidth   = 50 // below this, or paneMinHeight, the view has no panes
+	paneMinHeight  = 10
 )
 
 type (
@@ -92,13 +94,14 @@ type runningModel struct {
 	gitAction string      // git action running in the background, e.g. "git switch"
 
 	width, height int
+	now           func() time.Time // for the clock
 
 	stopping bool
 	forced   bool
 }
 
 func newRunningModel(sess Session, cfg *config.Config, names []string, st *styles) *runningModel {
-	m := &runningModel{sess: sess, cfg: cfg, st: st, titles: names, byName: map[string]*sidebarEntry{}}
+	m := &runningModel{sess: sess, cfg: cfg, st: st, titles: names, byName: map[string]*sidebarEntry{}, now: time.Now}
 	for _, info := range sess.Processes() {
 		m.entry(info.Name).info = info
 	}
@@ -156,7 +159,7 @@ func (m *runningModel) showSingle(name string) {
 }
 
 func (m *runningModel) Init() tea.Cmd {
-	return tea.Batch(m.waitEvents(), m.git.refresh(m.gitDirs()), tea.RequestBackgroundColor)
+	return tea.Batch(m.waitEvents(), m.git.refresh(m.gitDirs()), tea.RequestBackgroundColor, clockTick(m, m.now()))
 }
 
 // gitDirs returns the directories of the projects in the sidebar.
@@ -234,6 +237,10 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 		m.st.setProfile(msg.Profile)
 	case tea.BackgroundColorMsg:
 		m.st.setDark(msg.IsDark())
+	case clockMsg:
+		if msg.owner == m {
+			return clockTick(m, m.now())
+		}
 	case eventsMsg:
 		m.lastBatch = time.Now()
 		m.handleEvents(msg.events)
@@ -346,7 +353,7 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		var cmd tea.Cmd
 		m.picker, cmd = newPicker(m.st, &picker{
-			action: "start", empty: "everything is running", items: m.pickerItems(),
+			title: "start", action: "start", empty: "everything is running", items: m.pickerItems(),
 			pick: func(it pickerItem) tea.Cmd { m.startPicked(it); return nil },
 		})
 		return cmd
@@ -648,18 +655,36 @@ func (m *runningModel) selectEntry(i int) {
 	m.layout()
 }
 
-// sidebarWidth is the width of the sidebar column, without the divider.
-func (m *runningModel) sidebarWidth() int {
-	w, _ := m.sidebarLayout()
-	return w
+// panes reports whether the view is drawn as two panes with a status bar;
+// small terminals get a header, rules and a divider instead.
+func (m *runningModel) panes() bool {
+	return m.width >= paneMinWidth && m.height >= paneMinHeight
 }
 
-// sidebarLayout returns the sidebar width (without the divider) and the width
-// of its git column, 0 if hidden. The sidebar takes at most a third of the
-// screen; the git column is narrowed and then dropped before names are
-// truncated.
+// sidebarPrefix is the width of the selection marker and the state icon in
+// front of a sidebar label: " ▌● " in a pane, " ▌ ● " without.
+func (m *runningModel) sidebarPrefix() int {
+	if m.panes() {
+		return 4
+	}
+	return 5
+}
+
+// logWidth is the width of the log column.
+func (m *runningModel) logWidth() int {
+	sw, _ := m.sidebarLayout()
+	if m.panes() {
+		return m.width - sw - 2 - 3 // the sidebar's borders, "│ " and "│"
+	}
+	return m.width - sw - 2 // "│ "
+}
+
+// sidebarLayout returns the width of the sidebar's content (without borders
+// or the divider) and the width of its git column, 0 if hidden. The sidebar
+// takes at most a third of the screen; the git column is narrowed and then
+// dropped before names are truncated.
 func (m *runningModel) sidebarLayout() (width, gitCol int) {
-	names := 5 + m.namesWidth() + 1 // " ▌ ● " + label and exit code + " "
+	names := m.sidebarPrefix() + m.namesWidth() + 1 // marker and icon + label and exit code + " "
 	limit := max(m.width/3, 12)
 	want := 0 // widest git label
 	for _, e := range m.entries {
@@ -692,7 +717,8 @@ func exitCode(info supervisor.ProcessInfo) string {
 	return ""
 }
 
-// bodyHeight is the number of rows between the header and the help line.
+// bodyHeight is the number of log rows: all but the header (or top border),
+// the rule (bottom border), the status bar (rule) and the help line.
 func (m *runningModel) bodyHeight() int {
 	return max(m.height-4, 0)
 }
@@ -700,9 +726,9 @@ func (m *runningModel) bodyHeight() int {
 // layout updates sizes and scroll positions after a change.
 func (m *runningModel) layout() {
 	h := m.bodyHeight()
-	m.combined.setSize(m.width-m.sidebarWidth()-2, h)
+	m.combined.setSize(m.logWidth(), h)
 	if m.single != nil {
-		m.single.setSize(m.width-m.sidebarWidth()-2, h)
+		m.single.setSize(m.logWidth(), h)
 	}
 	switch {
 	case m.selected < m.sideTop:
@@ -774,9 +800,12 @@ func (m *runningModel) render() string {
 	sw, gitCol := m.sidebarLayout()
 	var logRows []string
 	if m.picker != nil {
-		logRows = m.picker.view(m.width-sw-2, m.bodyHeight())
+		logRows = m.picker.view(m.logWidth(), m.bodyHeight())
 	} else {
 		logRows = m.view().view()
+	}
+	if m.panes() {
+		return m.renderPanes(sw, gitCol, logRows)
 	}
 
 	var b strings.Builder
@@ -799,7 +828,7 @@ func (m *runningModel) render() string {
 }
 
 func (m *runningModel) header() string {
-	left := " " + m.st.badge.Render(" runr ") + "  " + m.st.bold.Render(strings.Join(m.titles, " + "))
+	left := " " + m.st.badge + "  " + m.st.bold.Render(strings.Join(m.titles, " + "))
 	name := "combined"
 	if m.single != nil {
 		e := m.entry(m.singleFor)
@@ -825,7 +854,7 @@ func (m *runningModel) header() string {
 		states[i] = e.info.State
 	}
 	// The counts go first when narrow, then the right side.
-	if counts := m.st.stateCounts(states); counts != "" {
+	if counts := m.st.stateCounts(states, "  "); counts != "" {
 		if line, ok := spread(left, counts+"   "+right, m.width); ok {
 			return line
 		}
@@ -844,6 +873,103 @@ func spread(left, right string, width int) (string, bool) {
 		return "", false
 	}
 	return left + strings.Repeat(" ", gap) + right, true
+}
+
+// renderPanes draws the processes and logs panes, the status bar and the
+// help line.
+func (m *runningModel) renderPanes(sw, gitCol int, logRows []string) string {
+	side := m.st.accent
+	title, note, border := m.logPane()
+	logW := m.width - sw - 2
+
+	var b strings.Builder
+	b.WriteString(paneTop(sw+2, m.st.accent.Bold(true).Render("processes"), "", side))
+	b.WriteString(paneTop(logW, title, note, border))
+	b.WriteByte('\n')
+	for r := range m.bodyHeight() {
+		b.WriteString(side.Render("│"))
+		b.WriteString(m.sidebarRow(m.sideTop+r, sw, gitCol))
+		b.WriteString(side.Render("│"))
+		b.WriteString(border.Render("│"))
+		b.WriteByte(' ')
+		b.WriteString(pad(logRows[r], logW-3))
+		b.WriteString(border.Render("│"))
+		b.WriteByte('\n')
+	}
+	b.WriteString(paneBottom(sw+2, side))
+	b.WriteString(paneBottom(logW, border))
+	b.WriteByte('\n')
+	b.WriteString(m.statusBar())
+	b.WriteByte('\n')
+	b.WriteString(m.help())
+	return b.String()
+}
+
+// logPane returns the log pane's title, the note on the right of its top
+// border, and its border style: dim while following, yellow while paused,
+// accent while searching or picking.
+func (m *runningModel) logPane() (title, note string, border lipgloss.Style) {
+	v := m.view()
+	border = m.st.faint
+	switch {
+	case m.picker != nil || m.editing || m.search.active():
+		border = m.st.accent
+	case !v.following():
+		border = m.st.warn
+	}
+	if m.picker != nil {
+		return m.st.bold.Render(m.picker.title), "", border
+	}
+
+	title = m.st.bold.Render("logs") + m.st.faint.Render(" · combined")
+	if m.single != nil {
+		e := m.entry(m.singleFor)
+		title = m.st.bold.Render("logs") + m.st.faint.Render(" · ") + e.style.Render(e.label)
+	}
+	switch {
+	case m.forced:
+		note = m.st.warn.Render("killing…")
+	case m.stopping:
+		note = m.st.warn.Render(fmt.Sprintf("stopping… %d left · ctrl+c to force", m.alive()))
+	case v.following():
+		note = m.st.faint.Render("following")
+	default:
+		note = m.st.warn.Render("paused")
+		if n := v.below(); n > 0 {
+			note += m.st.faint.Render(fmt.Sprintf(" · %d more below", n))
+		}
+	}
+	return title, note, border
+}
+
+// statusBar renders the mode, the session with its state counts, and the
+// selected project with its git state.
+func (m *runningModel) statusBar() string {
+	b := statusBar{mode: "FOLLOW", color: m.st.pal.accent, title: strings.Join(m.titles, " + "), clock: m.now().Format("15:04")}
+	switch {
+	case m.stopping:
+		b.mode, b.color = "STOPPING", m.st.pal.ansi[ansiRed]
+	case m.picker != nil:
+		b.mode, b.color = strings.ToUpper(m.picker.action), m.st.pal.ansi[ansiBlue]
+	case m.confirm != nil:
+		b.mode, b.color = strings.ToUpper(m.confirm.action), m.st.pal.ansi[ansiBlue]
+	case m.editing || m.search.active():
+		b.mode, b.color = "SEARCH", m.st.pal.ansi[ansiMagenta]
+	case !m.view().following():
+		b.mode, b.color = "PAUSED", m.st.pal.ansi[ansiYellow]
+	}
+	states := make([]supervisor.State, len(m.entries))
+	for i, e := range m.entries {
+		states[i] = e.info.State
+	}
+	b.info = m.st.stateCounts(states, " ")
+	if e := m.selectedEntry(); e != nil {
+		b.project = e.style.Bold(true).Render(e.label)
+		if g, ok := m.git.get(e.info.Name); ok {
+			b.project += m.st.faint.Render(" · ") + gitLabel(m.st, g, gitWidth(g))
+		}
+	}
+	return m.st.statusBar(b, m.width)
 }
 
 // alive counts the processes that still have to exit.
@@ -877,12 +1003,15 @@ func (m *runningModel) sidebarRow(i, width, gitCol int) string {
 		}
 	}
 	code := exitCode(e.info)
-	labelWidth := width - 5 - 1 // " ▌ ● " and the right margin
+	labelWidth := width - m.sidebarPrefix() - 1 // marker and icon, and the right margin
 	if code != "" {
 		labelWidth -= len(code) + 1
 	}
 	label := ansi.Truncate(e.label, labelWidth, "…")
 	row := " " + marker + " " + m.st.stateIcon(e.info.State) + " " + style.Render(label)
+	if m.panes() {
+		row = " " + marker + m.st.stateIcon(e.info.State) + " " + style.Render(label)
+	}
 	if code != "" {
 		row += " " + m.st.err.Render(code)
 	}

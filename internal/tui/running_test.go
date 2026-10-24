@@ -233,11 +233,11 @@ func TestRunningNewProjectFromEvents(t *testing.T) {
 		line("frontend-application", "hi"),
 	}})
 	got := screen(m)
-	if !strings.HasSuffix(got[5], "◐ frontend-appl… │") {
-		t.Fatalf("sidebar row = %q", got[5])
+	if !strings.HasPrefix(got[4], "│  ◐ frontend-appli… ││") {
+		t.Fatalf("sidebar row = %q", got[4])
 	}
-	if !strings.HasSuffix(got[2], "│ frontend-applic… hi") {
-		t.Fatalf("log row = %q", got[2])
+	if !strings.Contains(got[1], "││ frontend-applic… hi") {
+		t.Fatalf("log row = %q", got[1])
 	}
 }
 
@@ -333,8 +333,13 @@ func emit(sess *fakeSession, project, text string) supervisor.Event {
 func logRows(m *runningModel) []string {
 	var out []string
 	rows := screen(m)
-	for _, r := range rows[2 : len(rows)-2] {
-		_, text, _ := strings.Cut(r, "│")
+	body, divider := rows[2:len(rows)-2], "│"
+	if m.panes() {
+		body, divider = rows[1:len(rows)-3], "││"
+	}
+	for _, r := range body {
+		_, text, _ := strings.Cut(r, divider)
+		text = strings.TrimSuffix(text, "│")
 		if text = strings.TrimSpace(text); text != "" {
 			out = append(out, text)
 		}
@@ -353,8 +358,8 @@ func TestRunningSingleView(t *testing.T) {
 	if got := strings.Join(logRows(m), ","); got != "a,c,c2" {
 		t.Fatalf("single view = %q", got)
 	}
-	if got := screen(m)[0]; !strings.HasSuffix(got, "db · following") {
-		t.Fatalf("header = %q", got)
+	if got := screen(m)[0]; !strings.Contains(got, "─ logs · db ─") || !strings.HasSuffix(got, " following ─╮") {
+		t.Fatalf("top border = %q", got)
 	}
 	if got := screen(m)[len(screen(m))-1]; !strings.Contains(got, "tab  all") {
 		t.Fatalf("help = %q", got)
@@ -369,8 +374,8 @@ func TestRunningSingleView(t *testing.T) {
 	if got := strings.Join(logRows(m), ","); got != "b,x" {
 		t.Fatalf("api view = %q", got)
 	}
-	if got := screen(m)[0]; !strings.HasSuffix(got, "api · following") {
-		t.Fatalf("header = %q", got)
+	if got := screen(m)[0]; !strings.Contains(got, "─ logs · api ─") {
+		t.Fatalf("top border = %q", got)
 	}
 
 	m.Update(key("tab"))
@@ -468,6 +473,12 @@ func typeText(m *runningModel, text string) {
 	for _, r := range text {
 		m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
+}
+
+// statusRow returns the status bar of the pane layout.
+func statusRow(m *runningModel) string {
+	rows := screen(m)
+	return rows[len(rows)-2]
 }
 
 func helpRow(m *runningModel) string {
@@ -650,11 +661,11 @@ func TestPickerStartsProject(t *testing.T) {
 		t.Fatal("picker still open")
 	}
 	got := screen(m)
-	if !strings.HasPrefix(got[0], "  runr   backend + worker ") {
-		t.Fatalf("header = %q", got[0])
+	if got := statusRow(m); !strings.HasPrefix(got, "  FOLLOW  backend + worker ") {
+		t.Fatalf("status bar = %q", got)
 	}
-	if !strings.HasPrefix(got[4], " ▌ ○ Worker") {
-		t.Fatalf("sidebar row = %q, want the new project selected", got[4])
+	if !strings.HasPrefix(got[3], "│ ▌○ Worker") {
+		t.Fatalf("sidebar row = %q, want the new project selected", got[3])
 	}
 }
 
@@ -665,8 +676,8 @@ func TestPickerStartsGroup(t *testing.T) {
 	if got := strings.Join(sess.calls, ","); got != "start jobs" {
 		t.Fatalf("calls = %q", got)
 	}
-	if got := screen(m)[0]; !strings.HasPrefix(got, "  runr   backend + jobs ") {
-		t.Fatalf("header = %q", got)
+	if got := statusRow(m); !strings.HasPrefix(got, "  FOLLOW  backend + jobs ") {
+		t.Fatalf("status bar = %q", got)
 	}
 	if m.selected != 0 {
 		t.Fatal("starting a group changed the selection")
@@ -681,8 +692,8 @@ func TestPickerStartsGroup(t *testing.T) {
 		t.Fatalf("item = %q", got)
 	}
 	m.Update(key("enter"))
-	if got := screen(m)[0]; !strings.HasPrefix(got, "  runr   backend + jobs ") {
-		t.Fatalf("header = %q", got)
+	if got := statusRow(m); !strings.HasPrefix(got, "  FOLLOW  backend + jobs ") {
+		t.Fatalf("status bar = %q", got)
 	}
 }
 
@@ -697,8 +708,8 @@ func TestPickerMissingDir(t *testing.T) {
 	if got := helpRow(m); !strings.HasPrefix(got, ` cannot start: project "docs": dir: `) {
 		t.Fatalf("help = %q", got)
 	}
-	if !strings.HasPrefix(screen(m)[0], "  runr   backend ") {
-		t.Fatalf("header = %q", screen(m)[0])
+	if !strings.HasPrefix(statusRow(m), "  FOLLOW  backend ") {
+		t.Fatalf("status bar = %q", statusRow(m))
 	}
 }
 

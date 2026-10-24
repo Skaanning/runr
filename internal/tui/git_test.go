@@ -275,7 +275,7 @@ func TestLauncherShowsGit(t *testing.T) {
 
 	rows := strings.Split(ansi.Strip(m.render()), "\n")
 	var api string
-	for _, r := range rows {
+	for _, r := range rows[:len(rows)-2] { // not the status bar
 		if strings.Contains(r, " api ") {
 			api = r
 		}

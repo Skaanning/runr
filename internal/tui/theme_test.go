@@ -63,10 +63,10 @@ func TestStateCounts(t *testing.T) {
 		supervisor.Crashed, supervisor.Blocked, // ✗
 		supervisor.Stopped, // not counted
 	}
-	if got := ansi.Strip(st.stateCounts(states)); got != "● 2  ◐ 4  ✗ 2" {
+	if got := ansi.Strip(st.stateCounts(states, "  ")); got != "● 2  ◐ 4  ✗ 2" {
 		t.Errorf("counts = %q", got)
 	}
-	if got := ansi.Strip(st.stateCounts([]supervisor.State{supervisor.Crashed, supervisor.Stopped})); got != "✗ 1" {
+	if got := ansi.Strip(st.stateCounts([]supervisor.State{supervisor.Crashed, supervisor.Stopped}, "  ")); got != "✗ 1" {
 		t.Errorf("counts = %q, want zeros left out", got)
 	}
 }

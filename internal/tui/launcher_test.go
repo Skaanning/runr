@@ -72,7 +72,7 @@ func TestLauncherSelection(t *testing.T) {
 		t.Fatalf("selection = %q", got)
 	}
 	rows := launcherScreen(m)
-	if !strings.Contains(rows[3], "[x] backend") || !strings.Contains(rows[7], "[x] api") || !strings.HasSuffix(rows[0], "2 selected") {
+	if !strings.Contains(rows[3], "[x] backend") || !strings.Contains(rows[7], "[x] api") || !strings.Contains(rows[len(rows)-2], "2 selected") {
 		t.Fatalf("rows:\n%s", strings.Join(rows, "\n"))
 	}
 
@@ -184,8 +184,8 @@ func TestAppStartsRunningView(t *testing.T) {
 	if app.running == nil || cmd == nil {
 		t.Fatal("running view not started")
 	}
-	if got := screen(app.running)[0]; !strings.HasPrefix(got, "  runr   backend ") {
-		t.Fatalf("header = %q (size not passed on?)", got)
+	if got := statusRow(app.running); !strings.HasPrefix(got, "  FOLLOW  backend ") {
+		t.Fatalf("status bar = %q (size not passed on?)", got)
 	}
 	app.Update(key("q")) // keys now go to the running view
 	if sess.stopAll != 1 {

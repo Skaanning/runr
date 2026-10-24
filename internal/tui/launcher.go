@@ -5,6 +5,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
@@ -46,10 +47,11 @@ type launcherModel struct {
 	gitAction string      // git action running in the background, e.g. "git switch"
 
 	width, height int
+	now           func() time.Time // for the clock
 }
 
 func newLauncherModel(cfg *config.Config, save SaveFunc, st *styles) *launcherModel {
-	m := &launcherModel{cfg: cfg, st: st, save: save, selected: map[string]bool{}}
+	m := &launcherModel{cfg: cfg, st: st, save: save, selected: map[string]bool{}, now: time.Now}
 	m.reload()
 	return m
 }
@@ -79,7 +81,7 @@ func (m *launcherModel) reload() {
 }
 
 func (m *launcherModel) Init() tea.Cmd {
-	return tea.Batch(m.git.refresh(m.gitDirs()), tea.RequestBackgroundColor)
+	return tea.Batch(m.git.refresh(m.gitDirs()), tea.RequestBackgroundColor, clockTick(m, m.now()))
 }
 
 func (m *launcherModel) gitDirs() map[string]string {
@@ -108,6 +110,11 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.st.setProfile(msg.Profile)
 	case tea.BackgroundColorMsg:
 		m.st.setDark(msg.IsDark())
+	case clockMsg:
+		if msg.owner == m {
+			return m, clockTick(m, m.now())
+		}
+		return m, nil
 	case interruptMsg:
 		return m, tea.Quit
 	case branchesMsg:
@@ -628,15 +635,11 @@ func (m *launcherModel) render() string {
 	}
 
 	var b strings.Builder
-	right := ""
-	if n := len(m.selected); n > 0 {
-		right = fmt.Sprintf("%d selected ", n)
-	}
-	left := " " + m.st.badge.Render(" runr ")
+	left := " " + m.st.badge
 	if m.form != nil {
 		left += "  " + m.st.bold.Render(m.form.title)
 	}
-	b.WriteString(left + strings.Repeat(" ", max(m.width-ansi.StringWidth(left)-len(right), 1)) + right)
+	b.WriteString(ansi.Truncate(left, m.width, "…"))
 	b.WriteString("\n" + m.st.rule.Render(strings.Repeat("─", m.width)) + "\n")
 	for r := range body {
 		if i := m.top + r; i < len(rows) {
@@ -644,9 +647,50 @@ func (m *launcherModel) render() string {
 		}
 		b.WriteByte('\n')
 	}
-	b.WriteString(m.st.rule.Render(strings.Repeat("─", m.width)) + "\n")
+	b.WriteString(m.statusBar() + "\n")
 	b.WriteString(m.help())
 	return b.String()
+}
+
+// statusBar renders what the launcher is doing, how many projects and groups
+// there are, and the project under the cursor with its git state.
+func (m *launcherModel) statusBar() string {
+	b := statusBar{mode: "SELECT", color: m.st.pal.accent, clock: m.now().Format("15:04")}
+	switch {
+	case m.form != nil:
+		b.mode = strings.ToUpper(m.form.title)
+	case m.confirm != nil:
+		b.mode, b.color = "DELETE", m.st.pal.ansi[ansiRed]
+	case m.output != nil:
+		b.mode, b.color = "FAILED", m.st.pal.ansi[ansiRed]
+	case m.picker != nil:
+		b.mode, b.color = strings.ToUpper(m.picker.action), m.st.pal.ansi[ansiBlue]
+	case m.ask != nil:
+		b.mode, b.color = strings.ToUpper(m.ask.action), m.st.pal.ansi[ansiBlue]
+	}
+	b.info = m.st.faint.Render(count(len(m.cfg.Projects), "project") + " · " + count(len(m.cfg.Groups), "group"))
+	if n := len(m.selected); n > 0 {
+		b.info += m.st.faint.Render(" · ") + fmt.Sprintf("%d selected", n)
+	}
+	if it, ok := m.current(); ok && !it.group {
+		style := m.st.bold
+		if c := m.cfg.Projects[it.name].Color; c != "" {
+			style = style.Foreground(m.st.color(c))
+		}
+		b.project = style.Render(it.name)
+		if g, ok := m.git.get(it.name); ok {
+			b.project += m.st.faint.Render(" · ") + gitLabel(m.st, g, gitWidth(g))
+		}
+	}
+	return m.st.statusBar(b, m.width)
+}
+
+// count returns "1 project", "2 projects".
+func count(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // rows renders the list with section headings and returns the row of the

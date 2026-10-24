@@ -89,7 +89,9 @@ type styles struct {
 	plain, bold, faint lipgloss.Style
 	ok, warn, err      lipgloss.Style // green, yellow, red
 	rule               lipgloss.Style
-	badge              lipgloss.Style // " runr " in the header
+	accent             lipgloss.Style
+	badge              string         // " runr " in the header
+	onAccent           color.Color    // text on the accent and other pill colors
 	keycap             lipgloss.Style // the key of a hint; zero: bold keys
 	keycaps            bool
 	hintGap            string // between hints
@@ -145,13 +147,10 @@ func (s *styles) build() {
 		s.rule = lipgloss.NewStyle().Foreground(p.rule)
 	}
 
-	onAccent := p.bg
-	if onAccent == nil {
-		onAccent = p.ansi[ansiBlack]
-	}
-	s.badge = lipgloss.NewStyle().Bold(true).Background(p.accent).Foreground(onAccent)
-	if s.profile < colorprofile.ANSI {
-		s.badge = lipgloss.NewStyle().Bold(true).Reverse(true)
+	s.accent = lipgloss.NewStyle().Foreground(p.accent)
+	s.onAccent = p.bg
+	if s.onAccent == nil {
+		s.onAccent = p.ansi[ansiBlack]
 	}
 
 	s.keycaps = p.selection != nil && tints
@@ -164,6 +163,8 @@ func (s *styles) build() {
 		s.hintGap = " "
 		s.selBar = ansi.Style{}.BackgroundColor(p.selection).String()
 	}
+
+	s.badge = s.pill(" runr ", p.accent)
 
 	if p.dim != nil {
 		s.system = ansi.Style{}.ForegroundColor(p.dim).Italic(true).String()

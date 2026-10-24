@@ -193,7 +193,7 @@ func branchPicker(st *styles, msg branchesMsg, label string, others []string, pi
 		note += " · " + strings.Join(others, ", ") + " share the repository and switch too"
 	}
 	return newPicker(st, &picker{
-		action: "switch", note: note, empty: "no branches", items: items,
+		title: "switch branch · " + label, action: "switch", note: note, empty: "no branches", items: items,
 		pick: func(it pickerItem) tea.Cmd { return pick(byName[it.name]) },
 	})
 }

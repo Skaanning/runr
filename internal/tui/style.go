@@ -73,9 +73,10 @@ func (s *styles) fitHints(parts []string, width int) string {
 	return ansi.Truncate(line, width, "…")
 }
 
-// stateCounts renders the header's counts of running (or done), starting or
-// stopping, and failed processes, leaving out zeros: "● 2  ◐ 1  ✗ 1".
-func (s *styles) stateCounts(states []supervisor.State) string {
+// stateCounts renders the counts of running (or done), starting or
+// stopping, and failed processes, leaving out zeros: "● 2  ◐ 1  ✗ 1" with
+// sep "  ".
+func (s *styles) stateCounts(states []supervisor.State, sep string) string {
 	var ok, busy, failed int
 	for _, st := range states {
 		switch st {
@@ -97,5 +98,5 @@ func (s *styles) stateCounts(states []supervisor.State) string {
 			parts = append(parts, c.style(c.icon+" "+strconv.Itoa(c.n)))
 		}
 	}
-	return strings.Join(parts, "  ")
+	return strings.Join(parts, sep)
 }
