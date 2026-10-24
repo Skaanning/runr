@@ -228,3 +228,18 @@ func ExpandHome(path string) (string, error) {
 	}
 	return filepath.Join(home, path[1:]), nil
 }
+
+// DisplayPath shortens paths under the home directory to ~/... for output.
+func DisplayPath(path string) string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return path
+	}
+	if path == home {
+		return "~"
+	}
+	if rel, ok := strings.CutPrefix(path, home+string(filepath.Separator)); ok {
+		return "~" + string(filepath.Separator) + rel
+	}
+	return path
+}

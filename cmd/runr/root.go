@@ -1,9 +1,16 @@
 package main
 
 import (
-	"fmt"
+	"errors"
+	"io"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/spf13/cobra"
+
+	"runr/internal/supervisor"
+	"runr/internal/tui"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...".
@@ -20,7 +27,7 @@ func newRootCmd() *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return notImplemented("launcher")
+			return runLauncher(cmd)
 		},
 	}
 
@@ -35,6 +42,40 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
-func notImplemented(what string) error {
-	return fmt.Errorf("%s: not implemented yet", what)
+// runLauncher opens the launcher; whatever the user starts from it runs in
+// the same program.
+func runLauncher(cmd *cobra.Command) error {
+	if !isTerminal(cmd.InOrStdin()) || !isTerminal(cmd.OutOrStdout()) {
+		return errors.New("the launcher needs a terminal; use runr up <name> instead")
+	}
+	s, err := loadStore()
+	if err != nil {
+		return err
+	}
+	if _, err := s.cfg.Validate(); err != nil {
+		return err
+	}
+
+	sigs := make(chan os.Signal, 2)
+	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(sigs)
+
+	var sup *supervisor.Supervisor
+	start := func(names []string) (tui.Session, error) {
+		if _, err := prepareUp(s.cfg, names, io.Discard); err != nil {
+			return nil, err
+		}
+		sup = supervisor.New(s.cfg, supervisor.Options{})
+		if err := sup.Start(names...); err != nil {
+			sup.Close()
+			sup = nil
+			return nil, err
+		}
+		return sup, nil
+	}
+	err = tui.RunLauncher(s.cfg, start, sigs)
+	if sup != nil {
+		finish(cmd.ErrOrStderr(), sup)
+	}
+	return err
 }

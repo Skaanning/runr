@@ -70,3 +70,9 @@ func TestSummarize(t *testing.T) {
 		t.Fatalf("summarize = %q, want empty", got)
 	}
 }
+
+func TestLauncherNeedsTerminal(t *testing.T) {
+	testEnv(t)
+	_, _, err := run(t)
+	wantErr(t, err, "the launcher needs a terminal")
+}

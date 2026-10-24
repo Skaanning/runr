@@ -18,6 +18,7 @@ var (
 	boldStyle  = lipgloss.NewStyle().Bold(true)
 	faintStyle = lipgloss.NewStyle().Faint(true)
 	warnStyle  = lipgloss.NewStyle().Foreground(yellow)
+	errStyle   = lipgloss.NewStyle().Foreground(red)
 	ruleStyle  = lipgloss.NewStyle().Faint(true)
 )
 

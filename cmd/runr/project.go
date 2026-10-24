@@ -96,21 +96,6 @@ func normalizeDir(dir string) (string, error) {
 	return filepath.Abs(dir)
 }
 
-// displayPath shortens paths under the home directory to ~/... for output.
-func displayPath(path string) string {
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return path
-	}
-	if path == home {
-		return "~"
-	}
-	if rel, ok := strings.CutPrefix(path, home+string(filepath.Separator)); ok {
-		return "~" + string(filepath.Separator) + rel
-	}
-	return path
-}
-
 // splitNameAndCommand parses "<name> -- <cmd...>" or "<name> [<cmd>]".
 func splitNameAndCommand(cmd *cobra.Command, args []string) (name, command string, err error) {
 	dash := cmd.ArgsLenAtDash()
@@ -179,7 +164,7 @@ func newAddCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Added project %q\n  dir: %s\n  cmd: %s\n", name, displayPath(p.Dir), p.Cmd)
+			fmt.Fprintf(cmd.OutOrStdout(), "Added project %q\n  dir: %s\n  cmd: %s\n", name, config.DisplayPath(p.Dir), p.Cmd)
 			printWarnings(cmd.ErrOrStderr(), warnings, name)
 			return nil
 		},
@@ -321,7 +306,7 @@ func newLsCmd() *cobra.Command {
 			fmt.Fprintln(tw, "PROJECT\tDIR\tCMD\tDEPENDS ON")
 			for _, name := range sortedNames(s.cfg.Projects) {
 				p := s.cfg.Projects[name]
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name, displayPath(p.Dir), p.Cmd, strings.Join(p.DependsOn, ", "))
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name, config.DisplayPath(p.Dir), p.Cmd, strings.Join(p.DependsOn, ", "))
 			}
 			tw.Flush()
 

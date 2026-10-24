@@ -59,6 +59,13 @@ func runTUI(stderr io.Writer, cfg *config.Config, names []string, sigs <-chan os
 	if err == nil {
 		err = tui.Run(sup, cfg, names, sigs)
 	}
+	finish(stderr, sup)
+	return err
+}
+
+// finish shuts a supervisor down after the TUI has exited and reports
+// projects that ended crashed or blocked.
+func finish(stderr io.Writer, sup *supervisor.Supervisor) {
 	final := sup.Processes()
 	sup.Close() // kills anything still alive if the TUI failed
 	for range sup.Events() {
@@ -66,7 +73,6 @@ func runTUI(stderr io.Writer, cfg *config.Config, names []string, sigs <-chan os
 	if s := summarize(final); s != "" {
 		fmt.Fprintf(stderr, "runr: %s\n", s)
 	}
-	return err
 }
 
 // summarize describes the projects that ended crashed or blocked, or

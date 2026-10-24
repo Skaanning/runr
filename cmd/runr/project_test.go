@@ -293,8 +293,8 @@ func TestDisplayPath(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			continue
 		}
-		if got := displayPath(in); got != want {
-			t.Errorf("displayPath(%q) = %q, want %q", in, got, want)
+		if got := config.DisplayPath(in); got != want {
+			t.Errorf("config.DisplayPath(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

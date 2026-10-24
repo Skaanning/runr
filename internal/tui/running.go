@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"os"
 	"slices"
 	"sort"
 	"strconv"
@@ -807,25 +806,4 @@ func hintList(keys [][2]string) string {
 		parts[i] = boldStyle.Render(k[0]) + " " + faintStyle.Render(k[1])
 	}
 	return strings.Join(parts, "  ")
-}
-
-// Run shows the running view until the user quits and every process has
-// stopped. names are the groups and projects that were started, shown in
-// the header. Signals received on sigs are handled like Ctrl+C.
-func Run(sess Session, cfg *config.Config, names []string, sigs <-chan os.Signal) error {
-	p := tea.NewProgram(newRunningModel(sess, cfg, names), tea.WithoutSignalHandler())
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		for {
-			select {
-			case <-sigs:
-				p.Send(interruptMsg{})
-			case <-done:
-				return
-			}
-		}
-	}()
-	_, err := p.Run()
-	return err
 }
