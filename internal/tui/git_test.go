@@ -124,7 +124,7 @@ func TestRunningSidebarGitWidths(t *testing.T) {
 		width int
 		row   string // the api row
 	}{
-		{120, "   ○ api    feat/login * ↓2 │"},
+		{120, "   ○ api    ▁▁▁▁▁▁▁▁ feat/login * ↓2 │"},
 		{75, "   ○ api    feat/l… * ↓2 │"},
 		{60, "   ○ api    │"}, // no room: the column is dropped, names stay whole
 	}
@@ -148,7 +148,7 @@ func TestRunningWithoutGit(t *testing.T) {
 	if m.git != nil || m.Init() == nil {
 		t.Fatal("the model should work without a git tracker")
 	}
-	if c := m.sidebarLayout(); c.git != 0 || c.width != 5+6+1 {
+	if c := m.sidebarLayout(); c.git != 0 || c.width != 5+6+1+sparkCells+1 {
 		t.Errorf("layout = %+v", c)
 	}
 }

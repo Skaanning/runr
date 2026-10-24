@@ -50,12 +50,12 @@ func TestSidebarStatusColumn(t *testing.T) {
 	m, _ := newTestModel(t, 100, 12)
 	aliveEvents(m)
 	want := []string{
-		"│ ▌● db        4m02s ││",
-		"│  ⠋ api         45s ││",
-		"│  ✗ Worker exit 127 ││",
-		"│  ⊘ web     blocked ││",
-		"│  ✗ cron    crashed ││",
-		"│  ■ docs            ││",
+		"│ ▌● db        4m02s ▁▁▁▁▁▁▁▁ ││",
+		"│  ⠋ api         45s ▁▁▁▁▁▁▁▁ ││",
+		"│  ✗ Worker exit 127 ▁▁▁▁▁▁▁▁ ││",
+		"│  ⊘ web     blocked ▁▁▁▁▁▁▁▁ ││",
+		"│  ✗ cron    crashed ▁▁▁▁▁▁▁▁ ││",
+		"│  ■ docs            ▁▁▁▁▁▁▁▁ ││",
 	}
 	for i, w := range want {
 		if got := screen(m)[1+i]; !strings.HasPrefix(got, w) {
@@ -64,7 +64,7 @@ func TestSidebarStatusColumn(t *testing.T) {
 	}
 	// Uptimes count on.
 	m.now = func() time.Time { return testNow().Add(time.Minute) }
-	if got := screen(m)[1]; !strings.HasPrefix(got, "│ ▌● db        5m02s ││") {
+	if got := screen(m)[1]; !strings.HasPrefix(got, "│ ▌● db        5m02s ▁▁▁▁▁▁▁▁ ││") {
 		t.Errorf("a minute later: %q", got)
 	}
 }
@@ -74,10 +74,11 @@ func TestStatusColumnDroppedBeforeGit(t *testing.T) {
 		width int
 		row   string // the db row
 	}{
-		{120, "│ ▌● db      4m02s main            ││"},
-		{80, "│ ▌● db     main           ││"}, // no room for both: the uptime goes
-		{56, "│ ▌● db      4m02s ││"},         // no room for the git column alone
-		{50, "│ ▌● db      ││"},               // nor for the uptime
+		{120, "│ ▌● db      4m02s ▁▁▁▁▁▁▁▁ main         ││"},
+		{96, "│ ▌● db      4m02s main          ││"}, // the sparkline goes first
+		{80, "│ ▌● db     main           ││"},       // no room for both: the uptime goes
+		{56, "│ ▌● db      4m02s ││"},               // no room for the git column alone
+		{50, "│ ▌● db      ││"},                     // nor for the uptime
 	} {
 		m, _ := newTestModel(t, tt.width, 12)
 		m.git = newGitTracker(testGit())

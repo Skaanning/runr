@@ -64,6 +64,7 @@ type sidebarEntry struct {
 	info  supervisor.ProcessInfo
 	label string
 	style lipgloss.Style // label color
+	rate  outputRate     // the project's output lines per second
 }
 
 // runningModel is the running view: a sidebar of processes next to either
@@ -238,15 +239,19 @@ func (m *runningModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // wantTick returns how often the view needs redrawing without other
-// events: often while a spinner turns, every second while uptimes count,
-// never when nothing changes.
+// events: often while a spinner turns, every second while uptimes count or
+// sparklines move, never when nothing changes.
 func (m *runningModel) wantTick() time.Duration {
 	every := time.Duration(0)
+	now := m.now().Unix()
 	for _, e := range m.entries {
 		switch e.info.State {
 		case supervisor.Starting, supervisor.Waiting, supervisor.Stopping:
 			return animateEvery
 		case supervisor.Running:
+			every = uptimeEvery
+		}
+		if e.rate.recent(now) {
 			every = uptimeEvery
 		}
 	}
@@ -343,13 +348,16 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 func (m *runningModel) handleEvents(events []supervisor.Event) {
 	var lines, single []supervisor.LogLine
 	states := false
+	sec := m.now().Unix()
 	for _, e := range events {
 		switch e := e.(type) {
 		case supervisor.StateEvent:
 			m.entry(e.Info.Name).info = e.Info
 			states = true
 		case supervisor.LineEvent:
-			m.entry(e.Line.Project)
+			if entry := m.entry(e.Line.Project); !e.Line.Stream.Runr() {
+				entry.rate.add(sec, 1)
+			}
 			lines = append(lines, e.Line) // sanitized when shown
 			// Events can arrive slightly out of Seq order, so only lines
 			// covered by the snapshot are skipped.
@@ -731,9 +739,9 @@ func (m *runningModel) logWidth() int {
 
 // sidebarLayout returns the width of the sidebar's content (without borders
 // or the divider) and the width of its git column, 0 if hidden. The sidebar
-// takes at most a third of the screen; when narrow, the status column is
-// dropped first, then the git column is narrowed and dropped, before names
-// are truncated.
+// takes at most a third of the screen; when narrow, the sparkline is
+// dropped first, then the status column, then the git column is narrowed
+// and dropped, before names are truncated.
 func (m *runningModel) sidebarLayout() sidebarCols {
 	base := m.sidebarPrefix() + m.labelWidth + 1 // marker and icon + label + " "
 	limit := max(m.width/3, 12)
@@ -749,29 +757,41 @@ func (m *runningModel) sidebarLayout() sidebarCols {
 			status = max(status, len(text), statusWidth)
 		}
 	}
-	withGit := func(names int) (sidebarCols, bool) {
-		gw := min(want, maxGitWidth, limit-names-1)
-		return sidebarCols{width: names + gw + 1, git: gw}, gw > 0 && gw >= min(want, minGitWidth)
-	}
-	if status > 0 {
-		if c, ok := withGit(base + status + 1); ok {
+	// Column sets from most to least complete.
+	for _, o := range []struct{ spark, status, git bool }{
+		{true, true, true}, {false, true, true}, {false, false, true},
+		{true, true, false}, {false, true, false},
+	} {
+		c, names := sidebarCols{}, base
+		if o.spark {
+			c.spark = sparkCells
+			names += sparkCells + 1
+		}
+		if o.status && status > 0 {
 			c.status = status
+			names += status + 1
+		}
+		if o.git {
+			c.git = min(want, maxGitWidth, limit-names-1)
+			if c.git <= 0 || c.git < min(want, minGitWidth) {
+				continue
+			}
+			c.width = names + c.git + 1
 			return c
 		}
-	}
-	if c, ok := withGit(base); ok {
-		return c
-	}
-	if status > 0 && base+status+1 <= limit {
-		return sidebarCols{width: base + status + 1, status: status}
+		if names <= limit {
+			c.width = names
+			return c
+		}
 	}
 	return sidebarCols{width: max(min(base, limit), 12)}
 }
 
 // sidebarCols is the sidebar's layout: its width without borders or the
-// divider, and the widths of its status and git columns, 0 if hidden.
+// divider, and the widths of its status, sparkline and git columns, 0 if
+// hidden.
 type sidebarCols struct {
-	width, status, git int
+	width, status, spark, git int
 }
 
 // statusText returns what the status column shows for a process: its
@@ -1099,20 +1119,31 @@ func (m *runningModel) sidebarRow(i int, cols sidebarCols) string {
 	if cols.status > 0 {
 		labelWidth -= cols.status + 1
 	}
+	if cols.spark > 0 {
+		labelWidth -= cols.spark + 1
+	}
 	label := ansi.Truncate(e.label, labelWidth, "…")
 	icon := m.st.stateIcon(e.info.State, spinner(m.now()))
 	row := " " + marker + " " + icon + " " + style.Render(label)
 	if m.panes() {
 		row = " " + marker + icon + " " + style.Render(label)
 	}
+	row = pad(row, m.sidebarPrefix()+labelWidth)
 	if cols.status > 0 {
 		text, failed := statusText(e.info, m.now())
-		row = pad(row, width-cols.status-1) + strings.Repeat(" ", cols.status-len(text))
+		row += " " + strings.Repeat(" ", cols.status-len(text))
 		if failed {
 			row += m.st.err.Render(text)
 		} else {
 			row += m.st.faint.Render(text)
 		}
+	}
+	if cols.spark > 0 {
+		style := e.style
+		if e.info.State == supervisor.Crashed {
+			style = m.st.err
+		}
+		row += " " + m.st.sparkline(&e.rate, m.now().Unix(), style)
 	}
 	if cols.git > 0 {
 		row = pad(row, width)
