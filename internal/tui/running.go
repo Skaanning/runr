@@ -19,6 +19,10 @@ import (
 type Session interface {
 	Processes() []supervisor.ProcessInfo
 	Events() <-chan supervisor.Event
+	Logs() *supervisor.Logs
+	Start(names ...string) error
+	Stop(name string) error
+	Restart(name string) error
 	StopAll() <-chan struct{}
 	KillAll()
 }
@@ -49,8 +53,8 @@ type sidebarEntry struct {
 	style lipgloss.Style // label color
 }
 
-// runningModel is the running view: a sidebar of processes and their
-// combined log output.
+// runningModel is the running view: a sidebar of processes next to either
+// their combined log output or the output of the selected process.
 type runningModel struct {
 	sess  Session
 	cfg   *config.Config
@@ -63,8 +67,12 @@ type runningModel struct {
 	selected   int
 	sideTop    int // first sidebar entry shown
 
-	log       *logView
+	combined  *logView // always kept up to date, so switching back is instant
+	single    *logView // the selected process's output; nil in the combined view
+	singleFor string   // project shown in single
+	snapSeq   uint64   // newest line in the snapshot single was built from
 	lastBatch time.Time
+	notice    string // result of the last action, shown until the next key
 
 	width, height int
 
@@ -78,7 +86,7 @@ func newRunningModel(sess Session, cfg *config.Config, title string) *runningMod
 		m.entry(info.Name).info = info
 	}
 	limit := cfg.Settings.ScrollbackLines() * max(len(m.entries), 1)
-	m.log = newLogView(limit, m.formatCombined)
+	m.combined = newLogView(limit, m.formatCombined)
 	return m
 }
 
@@ -95,12 +103,33 @@ func (m *runningModel) entry(name string) *sidebarEntry {
 	m.entries = append(m.entries, e)
 	m.byName[name] = e
 	m.labelWidth = max(m.labelWidth, ansi.StringWidth(e.label))
-	if m.log != nil { // added after startup
-		m.log.limit += m.cfg.Settings.ScrollbackLines()
-		m.log.invalidate()
+	if m.combined != nil { // added after startup
+		m.combined.limit += m.cfg.Settings.ScrollbackLines()
+		m.combined.invalidate()
 		m.layout()
 	}
 	return e
+}
+
+// view returns the log view on screen.
+func (m *runningModel) view() *logView {
+	if m.single != nil {
+		return m.single
+	}
+	return m.combined
+}
+
+// showSingle switches to the output of one project. The view starts from
+// the supervisor's buffer; events for lines already in it are skipped.
+func (m *runningModel) showSingle(name string) {
+	lines := m.sess.Logs().Lines(name)
+	m.single = newLogView(m.cfg.Settings.ScrollbackLines(), m.formatSingle)
+	m.single.append(lines...)
+	m.singleFor, m.snapSeq = name, 0
+	for _, l := range lines {
+		m.snapSeq = max(m.snapSeq, l.Seq)
+	}
+	m.layout()
 }
 
 func (m *runningModel) Init() tea.Cmd {
@@ -176,7 +205,7 @@ func (m *runningModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *runningModel) handleEvents(events []supervisor.Event) {
-	var lines []supervisor.LogLine
+	var lines, single []supervisor.LogLine
 	for _, e := range events {
 		switch e := e.(type) {
 		case supervisor.StateEvent:
@@ -184,14 +213,23 @@ func (m *runningModel) handleEvents(events []supervisor.Event) {
 		case supervisor.LineEvent:
 			m.entry(e.Line.Project)
 			lines = append(lines, e.Line) // sanitized when shown
+			// Events can arrive slightly out of Seq order, so only lines
+			// covered by the snapshot are skipped.
+			if m.single != nil && e.Line.Project == m.singleFor && e.Line.Seq > m.snapSeq {
+				single = append(single, e.Line)
+			}
 		}
 	}
 	if len(lines) > 0 {
-		m.log.append(lines...)
+		m.combined.append(lines...)
+	}
+	if len(single) > 0 {
+		m.single.append(single...)
 	}
 }
 
 func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
+	m.notice = ""
 	switch msg.String() {
 	case "ctrl+c":
 		return m.interrupt()
@@ -203,18 +241,71 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.selectEntry(m.selected - 1)
 	case "down":
 		m.selectEntry(m.selected + 1)
+	case "tab":
+		if m.single != nil {
+			m.single = nil
+			m.layout()
+		} else if e := m.selectedEntry(); e != nil {
+			m.showSingle(e.info.Name)
+		}
+	case "r":
+		m.restart()
+	case "s":
+		m.stopOrStart()
 	case "pgup":
-		m.log.pageUp()
+		m.view().pageUp()
 	case "pgdown":
-		m.log.pageDown()
+		m.view().pageDown()
 	case "g", "home":
-		m.log.scrollTop()
+		m.view().scrollTop()
 	case "G", "end":
-		m.log.scrollBottom()
+		m.view().scrollBottom()
 	case "f":
-		m.log.toggleFollow()
+		m.view().toggleFollow()
 	}
 	return nil
+}
+
+func (m *runningModel) selectedEntry() *sidebarEntry {
+	if m.selected < len(m.entries) {
+		return m.entries[m.selected]
+	}
+	return nil
+}
+
+func (m *runningModel) restart() {
+	e := m.selectedEntry()
+	if e == nil || m.stopping {
+		return
+	}
+	m.report(m.sess.Restart(e.info.Name))
+}
+
+// stopOrStart stops the selected project if it is running or waiting to
+// run, and starts it (with its dependencies) otherwise.
+func (m *runningModel) stopOrStart() {
+	e := m.selectedEntry()
+	if e == nil || m.stopping {
+		return
+	}
+	switch {
+	case e.info.State == supervisor.Stopping:
+	case canStop(e.info.State):
+		m.report(m.sess.Stop(e.info.Name))
+	default:
+		m.report(m.sess.Start(e.info.Name))
+	}
+}
+
+// canStop reports whether s stops a project in this state (else it starts it).
+func canStop(s supervisor.State) bool {
+	return s.Alive() || s == supervisor.Waiting
+}
+
+func (m *runningModel) report(err error) {
+	if err != nil {
+		m.notice = err.Error()
+	}
 }
 
 // interrupt starts a graceful shutdown, or forces it if one is running.
@@ -236,6 +327,9 @@ func (m *runningModel) interrupt() tea.Cmd {
 
 func (m *runningModel) selectEntry(i int) {
 	m.selected = max(min(i, len(m.entries)-1), 0)
+	if e := m.selectedEntry(); m.single != nil && e != nil && e.info.Name != m.singleFor {
+		m.showSingle(e.info.Name)
+	}
 	m.layout()
 }
 
@@ -254,7 +348,10 @@ func (m *runningModel) bodyHeight() int {
 // layout updates sizes and scroll positions after a change.
 func (m *runningModel) layout() {
 	h := m.bodyHeight()
-	m.log.setSize(m.width-m.sidebarWidth()-2, h)
+	m.combined.setSize(m.width-m.sidebarWidth()-2, h)
+	if m.single != nil {
+		m.single.setSize(m.width-m.sidebarWidth()-2, h)
+	}
 	switch {
 	case m.selected < m.sideTop:
 		m.sideTop = m.selected
@@ -284,6 +381,17 @@ func (m *runningModel) formatCombined(line supervisor.LogLine, width int) []stri
 	return rows
 }
 
+// formatSingle renders a line of the single-process view.
+func (m *runningModel) formatSingle(line supervisor.LogLine, width int) []string {
+	rows := wrap(sanitize(line.Text), width)
+	if line.Stream == supervisor.System {
+		for i, row := range rows {
+			rows[i] = faintStyle.Render(row)
+		}
+	}
+	return rows
+}
+
 func (m *runningModel) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
@@ -299,7 +407,7 @@ func (m *runningModel) render() string {
 		return "terminal too small"
 	}
 	sw := m.sidebarWidth()
-	logRows := m.log.view()
+	logRows := m.view().view()
 
 	var b strings.Builder
 	b.WriteString(m.header())
@@ -322,17 +430,22 @@ func (m *runningModel) render() string {
 
 func (m *runningModel) header() string {
 	left := " " + boldStyle.Render("runr") + " · " + m.title
+	name := "combined"
+	if m.single != nil {
+		e := m.entry(m.singleFor)
+		name = e.style.Render(e.label)
+	}
 	var right string
-	switch {
+	switch v := m.view(); {
 	case m.forced:
 		right = warnStyle.Render("killing…")
 	case m.stopping:
-		right = warnStyle.Render("stopping… ctrl+c to force")
-	case m.log.following():
-		right = "combined · following"
+		right = warnStyle.Render(fmt.Sprintf("stopping… %d left · ctrl+c to force", m.alive()))
+	case v.following():
+		right = name + " · following"
 	default:
-		right = "combined · " + warnStyle.Render("paused")
-		if n := m.log.below(); n > 0 {
+		right = name + " · " + warnStyle.Render("paused")
+		if n := v.below(); n > 0 {
 			right += faintStyle.Render(fmt.Sprintf(" · %d more below", n))
 		}
 	}
@@ -342,6 +455,17 @@ func (m *runningModel) header() string {
 		return ansi.Truncate(left, m.width, "…")
 	}
 	return left + strings.Repeat(" ", gap) + right
+}
+
+// alive counts the processes that still have to exit.
+func (m *runningModel) alive() int {
+	n := 0
+	for _, e := range m.entries {
+		if e.info.State.Alive() {
+			n++
+		}
+	}
+	return n
 }
 
 func (m *runningModel) sidebarRow(i, width int) string {
@@ -372,9 +496,20 @@ func (m *runningModel) sidebarRow(i, width int) string {
 }
 
 func (m *runningModel) help() string {
+	if m.notice != "" {
+		return ansi.Truncate(" "+warnStyle.Render(m.notice), m.width, "…")
+	}
+	view, stop := "view", "start"
+	if m.single != nil {
+		view = "all"
+	}
+	if e := m.selectedEntry(); e != nil && canStop(e.info.State) {
+		stop = "stop"
+	}
+	// Hints are dropped from the end of the middle when narrow.
 	keys := [][2]string{
-		{"↑↓", "select"}, {"pgup/pgdn", "scroll"}, {"g/G", "top/bottom"},
-		{"f", "follow"}, {"q", "quit"},
+		{"↑↓", "select"}, {"tab", view}, {"r", "restart"}, {"s", stop},
+		{"pgup/pgdn", "scroll"}, {"g/G", "top/bottom"}, {"f", "follow"}, {"q", "quit"},
 	}
 	if m.stopping {
 		keys = [][2]string{{"ctrl+c", "force quit"}}

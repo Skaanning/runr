@@ -17,13 +17,20 @@ import (
 type fakeSession struct {
 	procs    []supervisor.ProcessInfo
 	events   chan supervisor.Event
+	logs     *supervisor.Logs
 	stopDone chan struct{}
 	stopAll  int
 	killAll  int
+	calls    []string // Start/Stop/Restart calls, e.g. "stop api"
+	err      error    // returned by Start/Stop/Restart
 }
 
 func newFakeSession(names ...string) *fakeSession {
-	f := &fakeSession{events: make(chan supervisor.Event, maxBatch+1000), stopDone: make(chan struct{})}
+	f := &fakeSession{
+		events:   make(chan supervisor.Event, maxBatch+1000),
+		logs:     supervisor.NewLogs(100),
+		stopDone: make(chan struct{}),
+	}
 	for _, n := range names {
 		f.procs = append(f.procs, supervisor.ProcessInfo{Name: n})
 	}
@@ -31,9 +38,19 @@ func newFakeSession(names ...string) *fakeSession {
 }
 
 func (f *fakeSession) Processes() []supervisor.ProcessInfo { return f.procs }
-func (f *fakeSession) Events() <-chan supervisor.Event     { return f.events }
-func (f *fakeSession) StopAll() <-chan struct{}            { f.stopAll++; return f.stopDone }
-func (f *fakeSession) KillAll()                            { f.killAll++ }
+func (f *fakeSession) Logs() *supervisor.Logs              { return f.logs }
+func (f *fakeSession) Start(names ...string) error {
+	f.calls = append(f.calls, "start "+strings.Join(names, " "))
+	return f.err
+}
+func (f *fakeSession) Stop(name string) error { f.calls = append(f.calls, "stop "+name); return f.err }
+func (f *fakeSession) Restart(name string) error {
+	f.calls = append(f.calls, "restart "+name)
+	return f.err
+}
+func (f *fakeSession) Events() <-chan supervisor.Event { return f.events }
+func (f *fakeSession) StopAll() <-chan struct{}        { f.stopAll++; return f.stopDone }
+func (f *fakeSession) KillAll()                        { f.killAll++ }
 
 func testConfig() *config.Config {
 	return &config.Config{Projects: map[string]*config.Project{
@@ -108,7 +125,7 @@ func TestRunningLayout(t *testing.T) {
 		"   ✗ Worker 1   │ Worker error: queue not found",
 		"                │",
 		"────────────────┴───────────────────────────────────────────",
-		" ↑↓ select  pgup/pgdn scroll  g/G top/bottom  q quit",
+		" ↑↓ select  tab view  r restart  s stop  q quit",
 	}
 	got := screen(m)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -222,7 +239,7 @@ func TestRunningQuit(t *testing.T) {
 	if sess.stopAll != 1 || cmd == nil {
 		t.Fatalf("stopAll = %d, cmd = %v", sess.stopAll, cmd)
 	}
-	if !strings.Contains(screen(m)[0], "stopping… ctrl+c to force") {
+	if !strings.Contains(screen(m)[0], "stopping… 0 left · ctrl+c to force") {
 		t.Fatalf("header = %q", screen(m)[0])
 	}
 	m.Update(key("q")) // ignored while stopping
@@ -295,5 +312,146 @@ func TestRunningTooSmall(t *testing.T) {
 	m, _ := newTestModel(t, 20, 4)
 	if got := m.render(); got != "terminal too small" {
 		t.Fatalf("render = %q", got)
+	}
+}
+
+// emit appends a line to the session's logs and returns its event, like the
+// supervisor does.
+func emit(sess *fakeSession, project, text string) supervisor.Event {
+	return supervisor.LineEvent{Line: sess.logs.Append(project, supervisor.Stdout, text)}
+}
+
+// logRows returns the log column of the body rows, trimmed.
+func logRows(m *runningModel) []string {
+	var out []string
+	rows := screen(m)
+	for _, r := range rows[2 : len(rows)-2] {
+		_, text, _ := strings.Cut(r, "│")
+		if text = strings.TrimSpace(text); text != "" {
+			out = append(out, text)
+		}
+	}
+	return out
+}
+
+func TestRunningSingleView(t *testing.T) {
+	m, sess := newTestModel(t, 60, 10)
+	m.Update(eventsMsg{events: []supervisor.Event{
+		emit(sess, "db", "a"), emit(sess, "api", "b"), emit(sess, "db", "c"),
+	}})
+	pending := emit(sess, "db", "c2") // in the buffer, event not delivered yet
+
+	m.Update(key("tab")) // db is selected
+	if got := strings.Join(logRows(m), ","); got != "a,c,c2" {
+		t.Fatalf("single view = %q", got)
+	}
+	if got := screen(m)[0]; !strings.HasSuffix(got, "db · following") {
+		t.Fatalf("header = %q", got)
+	}
+	if got := screen(m)[len(screen(m))-1]; !strings.Contains(got, "tab all") {
+		t.Fatalf("help = %q", got)
+	}
+
+	m.Update(eventsMsg{events: []supervisor.Event{pending, emit(sess, "api", "x"), emit(sess, "db", "d")}})
+	if got := strings.Join(logRows(m), ","); got != "a,c,c2,d" {
+		t.Fatalf("after events = %q", got)
+	}
+
+	m.Update(key("down"))
+	if got := strings.Join(logRows(m), ","); got != "b,x" {
+		t.Fatalf("api view = %q", got)
+	}
+	if got := screen(m)[0]; !strings.HasSuffix(got, "api · following") {
+		t.Fatalf("header = %q", got)
+	}
+
+	m.Update(key("tab"))
+	want := "db     a,api    b,db     c,db     c2,api    x,db     d"
+	if got := strings.Join(logRows(m), ","); got != want {
+		t.Fatalf("combined = %q, want %q", got, want)
+	}
+}
+
+func TestRunningCombinedKeepsScrollAcrossViews(t *testing.T) {
+	m, sess := newTestModel(t, 60, 6)
+	var events []supervisor.Event
+	for i := range 10 {
+		events = append(events, emit(sess, "db", fmt.Sprint("line ", i)))
+	}
+	m.Update(eventsMsg{events: events})
+	m.Update(key("g"))
+	m.Update(key("tab"))
+	if !strings.HasSuffix(screen(m)[0], "db · following") {
+		t.Fatalf("single header = %q", screen(m)[0])
+	}
+	m.Update(key("tab"))
+	if got := screen(m)[0]; !strings.Contains(got, "combined · paused") {
+		t.Fatalf("combined header = %q", got)
+	}
+	if got := logRows(m)[0]; got != "db     line 0" {
+		t.Fatalf("first row = %q", got)
+	}
+}
+
+func TestRunningStopStartRestart(t *testing.T) {
+	m, sess := newTestModel(t, 80, 10)
+	setState := func(name string, s supervisor.State) {
+		m.Update(eventsMsg{events: []supervisor.Event{state(name, s)}})
+	}
+	helpRow := func() string { rows := screen(m); return rows[len(rows)-1] }
+
+	setState("db", supervisor.Running)
+	setState("api", supervisor.Waiting)
+	setState("worker", supervisor.Crashed)
+
+	m.Update(key("s")) // db running → stop
+	m.Update(key("down"))
+	m.Update(key("s")) // api waiting → stop (cancel)
+	m.Update(key("down"))
+	if !strings.Contains(helpRow(), "s start") {
+		t.Fatalf("help = %q", helpRow())
+	}
+	m.Update(key("s")) // worker crashed → start
+	m.Update(key("r"))
+	setState("worker", supervisor.Stopping)
+	m.Update(key("s")) // already stopping: nothing
+
+	want := "stop db,stop api,start worker,restart worker"
+	if got := strings.Join(sess.calls, ","); got != want {
+		t.Fatalf("calls = %q, want %q", got, want)
+	}
+
+	sess.err = fmt.Errorf("shutting down")
+	m.Update(key("r"))
+	if got := helpRow(); got != " shutting down" {
+		t.Fatalf("help = %q", got)
+	}
+	m.Update(key("down"))
+	if strings.Contains(helpRow(), "shutting down") {
+		t.Fatal("notice not cleared by the next key")
+	}
+
+	sess.calls = nil
+	m.Update(key("q"))
+	m.Update(key("r"))
+	m.Update(key("s"))
+	if len(sess.calls) != 0 {
+		t.Fatalf("calls while stopping: %q", sess.calls)
+	}
+}
+
+func TestRunningStoppingProgress(t *testing.T) {
+	m, _ := newTestModel(t, 60, 8)
+	m.Update(eventsMsg{events: []supervisor.Event{
+		state("db", supervisor.Running), state("api", supervisor.Running),
+	}})
+	m.Update(key("q"))
+	m.Update(eventsMsg{events: []supervisor.Event{state("api", supervisor.Stopping)}})
+	if got := screen(m)[0]; !strings.HasSuffix(got, "stopping… 2 left · ctrl+c to force") {
+		t.Fatalf("header = %q", got)
+	}
+	m.Update(eventsMsg{events: []supervisor.Event{state("api", supervisor.Stopped)}})
+	if got := screen(m)[0]; !strings.HasSuffix(got, "stopping… 1 left · ctrl+c to force") {
+		t.Fatalf("header = %q", got)
 	}
 }
