@@ -172,3 +172,50 @@ func TestFormTheme(t *testing.T) {
 		t.Error("form isn't drawn in the theme's accent")
 	}
 }
+
+func TestThemeBackground(t *testing.T) {
+	cfg := launcherConfig(t)
+	cfg.Settings.ThemeValue = "catppuccin"
+	m := newLauncherModel(cfg, nil, settingsStyles(cfg.Settings))
+	m.Update(tea.WindowSizeMsg{Width: 96, Height: 14})
+	if v := m.View(); v.BackgroundColor != nil || v.ForegroundColor != nil {
+		t.Fatal("painted without theme_background")
+	}
+
+	cfg.Settings.ThemeBackgroundValue = true
+	m = newLauncherModel(cfg, nil, settingsStyles(cfg.Settings))
+	m.Update(tea.WindowSizeMsg{Width: 96, Height: 14})
+	if v := m.View(); v.BackgroundColor != nil {
+		t.Fatal("painted before the terminal told its background")
+	}
+	m.Update(tea.BackgroundColorMsg{Color: hex("#ffffff")})
+	if v := m.View(); v.BackgroundColor != catppuccin.light.bg || v.ForegroundColor != catppuccin.light.fg {
+		t.Fatalf("colors = %v on %v, want latte's", v.ForegroundColor, v.BackgroundColor)
+	}
+
+	// The theme picker's preview paints too; the terminal theme has no
+	// background of its own.
+	m.Update(key("t"))
+	m.Update(key("down")) // tokyo-night
+	if v := m.View(); v.BackgroundColor != tokyoNight.light.bg {
+		t.Fatalf("preview background = %v, want tokyo-night day's", v.BackgroundColor)
+	}
+	m.Update(key("up"))
+	m.Update(key("up")) // terminal
+	if v := m.View(); v.BackgroundColor != nil || v.ForegroundColor != nil {
+		t.Fatal("the terminal theme painted a background")
+	}
+	m.Update(key("esc"))
+
+	// The running view shares the styles.
+	r := newRunningModel(newFakeSession("api"), testConfig(), []string{"api"}, m.st)
+	r.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	if v := r.View(); v.BackgroundColor != catppuccin.light.bg {
+		t.Fatalf("running view background = %v, want latte's", v.BackgroundColor)
+	}
+	// Below 256 colors the terminal theme is used, so nothing is painted.
+	r.Update(tea.ColorProfileMsg{Profile: colorprofile.ANSI})
+	if v := r.View(); v.BackgroundColor != nil {
+		t.Fatal("painted on 16 colors")
+	}
+}

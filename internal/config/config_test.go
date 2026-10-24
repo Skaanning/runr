@@ -305,6 +305,26 @@ func TestShowAll(t *testing.T) {
 	}
 }
 
+func TestThemeBackground(t *testing.T) {
+	if (Settings{}).ThemeBackground() {
+		t.Error("ThemeBackground defaults to true")
+	}
+	c, err := Load(writeFile(t, "[settings]\ntheme_background = true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Settings.ThemeBackground() {
+		t.Error("theme_background = true not applied")
+	}
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	if c, err = Load(path); err != nil || !c.Settings.ThemeBackground() {
+		t.Errorf("theme_background = true lost on save (err %v)", err)
+	}
+}
+
 func TestTheme(t *testing.T) {
 	if got := (Settings{}).Theme(); got != "terminal" {
 		t.Errorf("default theme = %q", got)

@@ -92,6 +92,9 @@ type styles struct {
 	// reverse video, bold or faint text.
 	profile colorprofile.Profile
 	dark    bool // the terminal's background, from tea.BackgroundColorMsg (dark until it arrives)
+	// paint is the theme_background setting; the theme's colors are painted
+	// once the terminal has told its background (bgKnown).
+	paint, bgKnown bool
 
 	plain, bold, faint lipgloss.Style
 	ok, warn, err      lipgloss.Style // green, yellow, red
@@ -127,10 +130,23 @@ func (s *styles) setProfile(p colorprofile.Profile) {
 	s.build()
 }
 
-// setDark rebuilds the styles for a dark or light terminal background.
+// setDark rebuilds the styles for a dark or light terminal background, as
+// the terminal reported it.
 func (s *styles) setDark(dark bool) {
-	s.dark = dark
+	s.dark, s.bgKnown = dark, true
 	s.build()
+}
+
+// screen returns the colors to set as the terminal's default foreground and
+// background, or nils to leave the terminal's own. Program output that resets
+// its colors then falls back to the theme's, so painting leaves no holes.
+// Nothing is painted before the terminal has answered the background query:
+// it would answer with the painted color.
+func (s *styles) screen() (fg, bg color.Color) {
+	if !s.paint || !s.bgKnown || s.pal.bg == nil {
+		return nil, nil
+	}
+	return s.pal.fg, s.pal.bg
 }
 
 // setTheme rebuilds the styles with another theme.

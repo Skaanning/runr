@@ -37,6 +37,7 @@ type Settings struct {
 	ScrollbackLinesValue int      `toml:"scrollback_lines,omitempty"`
 	ShowAllValue         *bool    `toml:"show_all,omitempty"`
 	ThemeValue           string   `toml:"theme,omitempty"`
+	ThemeBackgroundValue bool     `toml:"theme_background,omitempty"`
 }
 
 // Theme is the name of the UI's color theme, one of ThemeNames.
@@ -45,6 +46,12 @@ func (s Settings) Theme() string {
 		return ThemeNames[0]
 	}
 	return s.ThemeValue
+}
+
+// ThemeBackground reports whether the UI paints the theme's background
+// instead of letting the terminal's show through (default false).
+func (s Settings) ThemeBackground() bool {
+	return s.ThemeBackgroundValue
 }
 
 // ShutdownTimeout is the graceful stop window before processes are force-killed.

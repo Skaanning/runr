@@ -985,6 +985,7 @@ func (m *runningModel) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
 	v.WindowTitle = "runr · " + strings.Join(m.titles, " + ")
+	v.ForegroundColor, v.BackgroundColor = m.st.screen()
 	return v
 }
 

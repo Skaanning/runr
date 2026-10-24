@@ -152,6 +152,7 @@ backend = ["db", "api"]
 | `shutdown_timeout` | `"5s"` | How long a stopping process gets before it is killed (Go duration: `500ms`, `10s`, `1m`) |
 | `scrollback_lines` | `10000` | Lines of output kept per process |
 | `theme` | `"terminal"` | Colors of the TUI: `terminal` (your terminal's own colors), `catppuccin`, `tokyo-night`, `gruvbox` or `nord`. See [Themes](#themes). |
+| `theme_background` | `false` | Paint the theme's background and text color behind the whole TUI instead of letting your terminal's show through. See [Themes](#themes). |
 | `show_all` | `true` | List the registered projects that aren't running in the running view's sidebar, below the session's (`a` toggles it for a session) |
 
 ### Themes
@@ -161,7 +162,11 @@ The others bring their own colors: `catppuccin` (mocha on dark terminals, latte 
 ones), `tokyo-night` (night / day), `gruvbox` (dark / light) and `nord` (dark only; on a
 light terminal runr uses the `terminal` theme instead). runr asks the terminal whether its
 background is light or dark when it starts, and assumes dark if it doesn't answer. Themes
-color the text only; your terminal's background shows through. Named project colors
+color the text only and your terminal's background shows through, unless you set
+`theme_background = true`: then runr sets the terminal's background and text color to the
+theme's while it runs (so output that resets its colors falls back to the theme's too) and
+restores them when it exits. That needs a terminal that answers the background query and lets
+programs set its colors, which most do. Named project colors
 (`cyan`, `bright-red`, …) come from the theme; numbers and hex codes are used as they are.
 Themes need a 256-color or true-color terminal; with 16 colors runr uses the `terminal`
 theme.
@@ -339,5 +344,12 @@ is left to you:
   `go run` report the signal rather than the program's own exit code. Harmless.
 - **npm prints an update notice when stopping:** add
   `--env NPM_CONFIG_UPDATE_NOTIFIER=false`.
+- **`theme_background = true` has no effect:** the terminal didn't answer runr's question
+  about its background color (inside tmux this happens when tmux doesn't know the outer
+  terminal's colors), or it ignores programs setting its colors. The theme is still used for
+  the text. With 16 colors, and with the `terminal` theme, nothing is painted.
+- **The terminal kept runr's background after runr was killed:** runr restores the colors when
+  it exits, but not when it's killed with `SIGKILL`. Run `reset`, or
+  `printf '\e]110\a\e]111\a'`.
 - **A project is stuck at `◐`:** it is waiting for a dependency, or its `ready_log` hasn't
   matched. Select it and press `tab` to see its log; runr's lines say what it's waiting for.

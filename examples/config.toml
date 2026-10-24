@@ -15,6 +15,7 @@ shutdown_timeout = "5s"   # how long a stopping process gets before it is killed
 scrollback_lines = 10000  # lines of output kept per process (default 10000)
 show_all = true           # list projects that aren't running in the sidebar too (default true)
 theme = "terminal"        # terminal (default), catppuccin, tokyo-night, gruvbox or nord
+theme_background = false  # paint the theme's background behind the UI (default false)
 
 # A database that takes a moment to boot. Dependents wait until a line of its
 # output matches ready_log.
