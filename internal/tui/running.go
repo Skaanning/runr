@@ -245,9 +245,13 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 			return m.git.update(msg, m.gitDirs)
 		}
 	case branchesMsg:
-		return m.showBranches(msg)
+		if msg.owner == m {
+			return m.showBranches(msg)
+		}
 	case switchedMsg:
-		return m.switched(msg)
+		if msg.owner == m {
+			return m.switched(msg)
+		}
 	case pullCheckMsg:
 		m.confirmPull(msg)
 	case pulledMsg:

@@ -365,6 +365,182 @@ func TestPullConfirmationKeys(t *testing.T) {
 	}
 }
 
+// newGitLauncher returns a launcher listing the group backend and the
+// projects api, db and worker, with git state as in newGitModel.
+func newGitLauncher(t *testing.T) (*launcherModel, *fakeGit) {
+	t.Helper()
+	cfg := testConfig()
+	cfg.Groups = map[string][]string{"backend": {"db", "api"}}
+	m := newLauncherModel(cfg, nil)
+	f := testGit()
+	f.status["/r/app"] = gitinfo.Status{Branch: "main", Commit: "0123456789", Upstream: "origin/main"}
+	f.branches = map[string][]gitinfo.Branch{"/r/app": {
+		{Name: "main", Current: true, Upstream: "origin/main", Date: "3 days ago"},
+		{Name: "feat/login", Upstream: "origin/feat/login", Date: "2 hours ago"},
+		{Name: "origin/fix/typo", Remote: true, Date: "5 days ago"},
+	}}
+	m.git = newGitTracker(f)
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 14})
+	loadGit(t, func(msg tea.Msg) { m.Update(msg) }, m.git, m.gitDirs())
+	return m, f
+}
+
+// launcherPress sends a key to the launcher and runs the resulting git
+// commands synchronously.
+func launcherPress(t *testing.T, m *launcherModel, k string) tea.Cmd {
+	t.Helper()
+	_, cmd := m.Update(key(k))
+	return launcherFollow(t, m, cmd)
+}
+
+// launcherFollow runs cmd, feeding git action results back to m, and
+// returns any other command it produced (e.g. startMsg, tea.Quit).
+func launcherFollow(t *testing.T, m *launcherModel, cmd tea.Cmd) tea.Cmd {
+	t.Helper()
+	if cmd == nil {
+		return nil
+	}
+	switch msg := cmd().(type) {
+	case branchesMsg, switchedMsg:
+		_, next := m.Update(msg)
+		return launcherFollow(t, m, next)
+	case tea.BatchMsg:
+		var rest tea.Cmd
+		for _, c := range msg {
+			if r := launcherFollow(t, m, c); r != nil {
+				rest = r
+			}
+		}
+		return rest
+	case gitMsg, nil:
+		return nil
+	}
+	return cmd
+}
+
+func launcherHelp(m *launcherModel) string {
+	rows := launcherScreen(m)
+	return rows[len(rows)-1]
+}
+
+func TestLauncherSwitchBranch(t *testing.T) {
+	m, f := newGitLauncher(t)
+	launcherPress(t, m, "b") // on the group
+	if m.picker != nil || m.notice != "move to a project to switch its branch" {
+		t.Errorf("group: picker %v, notice %q", m.picker != nil, m.notice)
+	}
+	if strings.Contains(launcherHelp(m), "b branch") {
+		t.Error("b hint shown on a group")
+	}
+
+	launcherPress(t, m, "down") // api
+	if got := launcherHelp(m); !strings.Contains(got, "d delete  b branch  q quit") {
+		t.Errorf("help = %q", got)
+	}
+	launcherPress(t, m, "b")
+	if m.picker == nil {
+		t.Fatalf("no picker; notice %q", m.notice)
+	}
+	rows := launcherScreen(m)
+	for _, want := range []string{
+		" switch",
+		" api is on main · worker shares the repository and switches too",
+		" ▸ main        current · 3 days ago",
+		"   fix/typo    new branch from origin/fix/typo · 5 days ago",
+	} {
+		if !slices.ContainsFunc(rows, func(r string) bool { return strings.HasPrefix(r, want) }) {
+			t.Errorf("screen lacks %q:\n%s", want, strings.Join(rows, "\n"))
+		}
+	}
+	if got := launcherHelp(m); got != " type to filter  ↑↓ select  enter switch  esc cancel" {
+		t.Errorf("picker help = %q", got)
+	}
+
+	for _, k := range []string{"t", "y", "p", "o"} {
+		launcherPress(t, m, k)
+	}
+	_, cmd := m.Update(key("enter"))
+	if m.picker != nil || m.gitAction != "git switch" || m.notice != "switching api to fix/typo…" {
+		t.Errorf("while switching: picker %v, action %q, notice %q", m.picker != nil, m.gitAction, m.notice)
+	}
+	if start := launcherPress(t, m, "enter"); start != nil || m.notice != "git switch is still running" {
+		t.Errorf("start while switching: cmd %v, notice %q", start != nil, m.notice)
+	}
+	launcherFollow(t, m, cmd)
+
+	if !slices.Equal(f.switches, []string{"/r/app origin/fix/typo"}) {
+		t.Errorf("switches = %v", f.switches)
+	}
+	if m.notice != "switched api to fix/typo (also worker)" || m.gitAction != "" {
+		t.Errorf("notice %q, action %q", m.notice, m.gitAction)
+	}
+	if !m.git.busy {
+		t.Error("git state not refreshed after the switch")
+	}
+}
+
+func TestLauncherSwitchBranchFailure(t *testing.T) {
+	m, f := newGitLauncher(t)
+	f.switchOut = "error: The following untracked working tree files would be overwritten by checkout:\n\tnew.txt\nAborting\n"
+	f.switchErr = &gitinfo.Error{Args: []string{"switch", "feat/login"}, Stderr: f.switchOut, Err: errors.New("exit status 1")}
+	launcherPress(t, m, "down")
+	launcherPress(t, m, "b")
+	launcherPress(t, m, "down")
+	launcherPress(t, m, "enter")
+
+	rows := launcherScreen(m)
+	if !slices.Contains(rows, "  $ git switch feat/login") || !slices.Contains(rows, "  Aborting") || !slices.Contains(rows, "  press any key to close") {
+		t.Errorf("output not shown:\n%s", strings.Join(rows, "\n"))
+	}
+	if want := " git switch: error: The following untracked working tree files would be overwritten by checkout:"; launcherHelp(m) != want {
+		t.Errorf("help = %q", launcherHelp(m))
+	}
+	if cmd := launcherPress(t, m, "q"); cmd != nil || m.output != nil {
+		t.Errorf("q: cmd %v, output %v", cmd != nil, m.output)
+	}
+	if !slices.ContainsFunc(launcherScreen(m), func(r string) bool { return strings.Contains(r, "Projects") }) {
+		t.Error("list not shown again after closing the output")
+	}
+}
+
+func TestLauncherSwitchBranchRefused(t *testing.T) {
+	m, f := newGitLauncher(t)
+	f.status["/r/app"] = gitinfo.Status{Branch: "main", Changed: true}
+	launcherPress(t, m, "down")
+	launcherPress(t, m, "b")
+	if m.picker != nil || m.notice != "can't switch branches: there are uncommitted changes to tracked files" {
+		t.Errorf("picker %v, notice %q", m.picker != nil, m.notice)
+	}
+
+	f.status["/r/app"] = gitinfo.Status{Branch: "main"}
+	launcherPress(t, m, "b")
+	if cmd := launcherPress(t, m, "esc"); m.picker != nil || cmd != nil {
+		t.Errorf("esc: picker %v, cmd %v", m.picker != nil, cmd != nil)
+	}
+	if len(f.switches) != 0 {
+		t.Error("switched anyway")
+	}
+}
+
+// TestBranchMessagesStayWithTheirModel checks that a reply for the launcher
+// that arrives after the running view opened (or the other way round) is
+// dropped.
+func TestBranchMessagesStayWithTheirModel(t *testing.T) {
+	l, _ := newGitLauncher(t)
+	r, _, _ := newGitModel(t)
+	branches := []gitinfo.Branch{{Name: "main", Current: true}}
+	r.Update(branchesMsg{owner: l, project: "api", repo: gitinfo.Repo{Root: "/r/app"}, branches: branches})
+	l.Update(branchesMsg{owner: r, project: "api", repo: gitinfo.Repo{Root: "/r/app"}, branches: branches})
+	if r.picker != nil || l.picker != nil {
+		t.Errorf("picker opened by another model's reply: running %v, launcher %v", r.picker != nil, l.picker != nil)
+	}
+	r.gitAction = "git switch"
+	r.Update(switchedMsg{owner: l, project: "api", ran: true})
+	if r.gitAction == "" {
+		t.Error("running view handled the launcher's switch result")
+	}
+}
+
 func TestOutputLines(t *testing.T) {
 	got := outputLines("Updating files:  50% (1/2)\rUpdating files: 100% (2/2), done.\r\nSwitched to branch 'x'\n\n")
 	want := []string{"Updating files: 100% (2/2), done.", "Switched to branch 'x'"}

@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/gitinfo"
 )
 
 // launcherItem is a group or project in the launcher list.
@@ -35,9 +36,12 @@ type launcherModel struct {
 	notice   string          // shown instead of the help line until the next key
 	form     *editForm       // open project or group form, or nil
 	confirm  *confirmation   // open delete confirmation, or nil
+	picker   *picker         // open branch picker, or nil
+	output   []string        // output of a failed git action, shown until the next key
 
-	git      *gitTracker // nil: git is not installed
-	gitStale bool        // the config changed; refresh the git state
+	git       *gitTracker // nil: git is not installed
+	gitStale  bool        // the config or a repository changed; refresh the git state
+	gitAction string      // git action running in the background, e.g. "git switch"
 
 	width, height int
 }
@@ -100,12 +104,32 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sizeForm()
 	case interruptMsg:
 		return m, tea.Quit
+	case branchesMsg:
+		if msg.owner == m {
+			return m, m.showBranches(msg)
+		}
+		return m, nil
+	case switchedMsg:
+		if msg.owner == m {
+			m.switched(msg)
+		}
+		return m, nil
 	}
 	switch {
 	case m.form != nil:
 		return m, m.updateForm(msg)
 	case m.confirm != nil:
 		return m, m.updateConfirm(msg)
+	case m.picker != nil:
+		return m, m.updatePicker(msg)
+	case m.output != nil:
+		if msg, ok := msg.(tea.KeyPressMsg); ok {
+			m.output, m.notice = nil, ""
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+		}
+		return m, nil
 	}
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
@@ -124,6 +148,10 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "space":
 			m.toggle()
 		case "enter":
+			if m.gitAction != "" {
+				m.notice = m.gitAction + " is still running"
+				return m, nil
+			}
 			names := m.selection()
 			if len(names) == 0 && m.cursor < len(m.items) {
 				names = []string{m.items[m.cursor].name} // nothing selected: start the item under the cursor
@@ -148,9 +176,113 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if it, ok := m.current(); ok {
 				m.confirm = newDeleteConfirmation(m.cfg, it)
 			}
+		case "b":
+			return m, m.openBranches()
 		}
 	}
 	return m, nil
+}
+
+// openBranches checks the repository of the project under the cursor and
+// reads its branches in the background; the picker opens when they arrive.
+func (m *launcherModel) openBranches() tea.Cmd {
+	it, ok := m.current()
+	if !ok {
+		return nil
+	}
+	if it.group {
+		m.notice = "move to a project to switch its branch"
+		return nil
+	}
+	repo, notice := m.git.target(it.name, it.name, m.gitAction)
+	if notice != "" {
+		m.notice = notice
+		return nil
+	}
+	return readBranches(m, m.git.reader, it.name, repo)
+}
+
+// showBranches opens the branch picker. Every registered project in the
+// repository switches along.
+func (m *launcherModel) showBranches(msg branchesMsg) tea.Cmd {
+	if msg.err != nil {
+		m.notice = "can't switch branches: " + msg.err.Error()
+		return nil
+	}
+	if m.form != nil || m.confirm != nil || m.picker != nil {
+		return nil // something else took over the screen meanwhile
+	}
+	var cmd tea.Cmd
+	m.picker, cmd = branchPicker(msg, msg.project, m.sharing(msg.project, msg.repo.Root), func(b gitinfo.Branch) tea.Cmd {
+		return m.switchBranch(msg.project, msg.repo, b)
+	})
+	return cmd
+}
+
+// sharing returns the other registered projects in the repository at root.
+func (m *launcherModel) sharing(project, root string) []string {
+	return m.git.inRepo(project, root, slices.Sorted(maps.Keys(m.cfg.Projects)))
+}
+
+func (m *launcherModel) updatePicker(msg tea.Msg) tea.Cmd {
+	key, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		var cmd tea.Cmd
+		m.picker.input, cmd = m.picker.input.Update(msg)
+		return cmd
+	}
+	m.notice = ""
+	switch key.String() {
+	case "ctrl+c":
+		return tea.Quit
+	case "esc":
+		m.picker = nil
+	case "enter":
+		if it, ok := m.picker.selected(); ok {
+			pick := m.picker.pick
+			m.picker = nil
+			return pick(it)
+		}
+	default:
+		return m.picker.update(key)
+	}
+	return nil
+}
+
+// switchBranch switches the repository of project to b in the background,
+// after checking it again.
+func (m *launcherModel) switchBranch(project string, repo gitinfo.Repo, b gitinfo.Branch) tea.Cmd {
+	if b.Current {
+		m.notice = "already on " + b.Name
+		return nil
+	}
+	if m.gitAction != "" {
+		m.notice = m.gitAction + " is still running"
+		return nil
+	}
+	m.gitAction = "git switch"
+	m.notice = fmt.Sprintf("switching %s to %s…", project, b.LocalName())
+	return runSwitch(m, m.git.reader, project, repo, b)
+}
+
+// switched reports the outcome of a branch switch: a summary in the help
+// line, and git's output in place of the list if it failed.
+func (m *launcherModel) switched(msg switchedMsg) {
+	m.gitAction = ""
+	if !msg.ran {
+		m.notice = "can't switch branches: " + msg.err.Error()
+		return
+	}
+	m.gitStale = true
+	if msg.err != nil {
+		m.output = switchLines(msg)
+		m.notice = msg.err.Error()
+		return
+	}
+	m.notice = fmt.Sprintf("switched %s to %s", msg.project, msg.branch.LocalName())
+	if others := m.sharing(msg.project, msg.repo.Root); len(others) > 0 {
+		m.notice += " (also " + strings.Join(others, ", ") + ")"
+	}
 }
 
 // current returns the item under the cursor.
@@ -369,6 +501,22 @@ func (m *launcherModel) render() string {
 		}
 		m.top = 0
 	}
+	if m.picker != nil {
+		rows = m.picker.view(m.width-2, body)
+		for i, r := range rows {
+			rows[i] = " " + r
+		}
+		m.top = 0
+	}
+	if m.output != nil {
+		rows = []string{""}
+		for _, l := range m.output {
+			rows = append(rows, "  "+sanitize(l))
+		}
+		rows = append(rows, "", "  "+faintStyle.Render("press any key to close"))
+		// Keep the end of the output, where git says what went wrong.
+		m.top = max(len(rows)-body, 0)
+	}
 
 	var b strings.Builder
 	right := ""
@@ -482,6 +630,11 @@ func (m *launcherModel) help() string {
 	if m.notice != "" {
 		return ansi.Truncate(" "+warnStyle.Render(m.notice), m.width, "…")
 	}
+	if m.picker != nil {
+		return ansi.Truncate(" "+hintList([][2]string{
+			{"type", "to filter"}, {"↑↓", "select"}, {"enter", m.picker.action}, {"esc", "cancel"},
+		}), m.width, "…")
+	}
 	if m.form != nil {
 		if errs := m.form.form.Errors(); len(errs) > 0 {
 			return ansi.Truncate(" "+errStyle.Render("✗ "+oneLine(errs[0].Error())), m.width, "…")
@@ -489,8 +642,14 @@ func (m *launcherModel) help() string {
 	}
 	keys := [][2]string{
 		{"↑↓", "move"}, {"space", "select"}, {"enter", "start"},
-		{"n", "new"}, {"e", "edit"}, {"g", "group"}, {"d", "delete"}, {"q", "quit"},
+		{"n", "new"}, {"e", "edit"}, {"g", "group"}, {"d", "delete"},
 	}
+	if it, ok := m.current(); ok && !it.group {
+		if _, ok := m.git.get(it.name); ok {
+			keys = append(keys, [2]string{"b", "branch"})
+		}
+	}
+	keys = append(keys, [2]string{"q", "quit"})
 	switch {
 	case m.form != nil:
 		keys = [][2]string{{"tab/enter", "next"}, {"shift+tab", "back"}, {"space", "toggle"}, {"esc", "cancel"}}

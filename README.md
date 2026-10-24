@@ -189,6 +189,7 @@ start them in the running view, or manage the registry with in-TUI forms.
 | `e` | Edit the project (or group) under the cursor; changing the name renames it |
 | `g` | On a group: edit it. On a project: create a group, preselecting the selected projects |
 | `d` | Delete, after confirmation that lists the affected groups and dependents |
+| `b` | Switch the git branch of the project under the cursor (see [Git](#git)) |
 | `q`, `esc` | Quit |
 
 In forms: `tab`/`enter` next field, `shift+tab` back, `space` toggles a checkbox,
@@ -255,8 +256,9 @@ each project's `dir` is in, with markers:
 Projects outside a repository show nothing. The state is read every 5 seconds and after
 each action; runr never fetches on its own.
 
-`b` (switch branch) and `p` (pull) act on the selected project's repository, and only in
-the simple cases — anything that needs a decision is left to you:
+`b` (switch branch, in the launcher and the running view) and `p` (pull, in the running view)
+act on the selected project's repository, and only in the simple cases — anything that needs a
+decision is left to you:
 
 - Both are refused up front while the repository has uncommitted changes to tracked files,
   unresolved conflicts, or an operation in progress. Untracked files don't count, but git
@@ -266,10 +268,11 @@ the simple cases — anything that needs a decision is left to you:
 - `p` fast-forwards the current branch from its upstream and fails if the branch has
   diverged — runr never merges, rebases, stashes or resets. It is refused on a detached
   HEAD or a branch without an upstream.
-- If other projects in the session are in the same repository, the picker or the
-  confirmation says so, since they change too.
-- git's output goes to the selected project's log, and a short summary or error to the
-  bottom line. Running processes are not restarted; press `r` if your dev server doesn't
+- If other projects are in the same repository, the picker or the confirmation says so,
+  since they change too (in the launcher: any registered project; in the running view:
+  projects in the session).
+- In the running view, git's output goes to the selected project's log, and a short summary
+  or error to the bottom line. In the launcher, git's output is shown when it fails. Running processes are not restarted; press `r` if your dev server doesn't
   reload by itself.
 - git never prompts: it gets no input, credential prompts are off and `ssh` runs in
   batch mode, so a pull that needs a password or passphrase fails instead of hanging — use

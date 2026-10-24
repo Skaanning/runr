@@ -12,18 +12,21 @@ import (
 
 // Git actions run on the selected project's repository, in the background.
 // Before anything is changed, the repository's current state is checked
-// (gitinfo.Status.CheckSafe). git's output goes to the selected project's
-// log; other projects in the session that share the repository get a line
-// saying what changed.
+// (gitinfo.Status.CheckSafe). In the running view, git's output goes to the
+// selected project's log, and other projects in the session that share the
+// repository get a line saying what changed. The launcher can switch
+// branches too (launcherModel.openBranches).
 
 type (
 	branchesMsg struct { // branches read for the picker
+		owner    any // the model that asked
 		project  string
 		repo     gitinfo.Repo
 		branches []gitinfo.Branch
 		err      error // reading failed, or the preflight refused
 	}
 	switchedMsg struct { // a branch switch finished
+		owner   any
 		project string
 		repo    gitinfo.Repo
 		branch  gitinfo.Branch
@@ -54,37 +57,53 @@ type question struct {
 	yes    func() tea.Cmd
 }
 
+// target returns the repository of a project (shown as label) for a git
+// action. If there is none, or the action busy is still running, it returns
+// a notice saying why instead.
+func (t *gitTracker) target(name, label, busy string) (gitinfo.Repo, string) {
+	if t == nil {
+		return gitinfo.Repo{}, "git is not installed"
+	}
+	g, ok := t.get(name)
+	switch {
+	case !ok:
+		return gitinfo.Repo{}, label + " is not in a git repository"
+	case g.err != nil:
+		return gitinfo.Repo{}, g.err.Error()
+	case busy != "":
+		return gitinfo.Repo{}, busy + " is still running"
+	}
+	return t.repos.ByRoot[g.root], ""
+}
+
+// inRepo returns those of names, other than project, whose directories are
+// in the repository at root.
+func (t *gitTracker) inRepo(project, root string, names []string) []string {
+	var in []string
+	for _, name := range names {
+		if g, ok := t.get(name); ok && name != project && g.root == root {
+			in = append(in, name)
+		}
+	}
+	return in
+}
+
 // gitTarget returns the repository of a project for a git action. If there
 // is none, or another action is running, it sets a notice saying why.
 func (m *runningModel) gitTarget(name string) (gitinfo.Repo, bool) {
-	if m.git == nil {
-		m.notice = "git is not installed"
-		return gitinfo.Repo{}, false
-	}
-	g, ok := m.git.get(name)
-	switch {
-	case !ok:
-		m.notice = m.entry(name).label + " is not in a git repository"
-	case g.err != nil:
-		m.notice = g.err.Error()
-	case m.gitAction != "":
-		m.notice = m.gitAction + " is still running"
-	default:
-		return m.git.repos.ByRoot[g.root], true
-	}
-	return gitinfo.Repo{}, false
+	repo, notice := m.git.target(name, m.entry(name).label, m.gitAction)
+	m.notice = notice
+	return repo, notice == ""
 }
 
 // sharing returns the other projects in the session that are in the
 // repository at root.
 func (m *runningModel) sharing(project, root string) []string {
-	var names []string
-	for _, e := range m.entries {
-		if g, ok := m.git.get(e.info.Name); ok && e.info.Name != project && g.root == root {
-			names = append(names, e.info.Name)
-		}
+	names := make([]string, len(m.entries))
+	for i, e := range m.entries {
+		names[i] = e.info.Name
 	}
-	return names
+	return m.git.inRepo(project, root, names)
 }
 
 func (m *runningModel) labels(names []string) string {
@@ -126,9 +145,14 @@ func (m *runningModel) openBranches() tea.Cmd {
 	if !ok {
 		return nil
 	}
-	reader, name := m.git.reader, e.info.Name
+	return readBranches(m, m.git.reader, e.info.Name, repo)
+}
+
+// readBranches checks repo and reads its branches in the background, for
+// the picker.
+func readBranches(owner any, reader GitReader, project string, repo gitinfo.Repo) tea.Cmd {
 	return func() tea.Msg {
-		msg := branchesMsg{project: name, repo: repo}
+		msg := branchesMsg{owner: owner, project: project, repo: repo}
 		if msg.err = preflight(reader, repo); msg.err == nil {
 			msg.branches, msg.err = reader.Branches(context.Background(), repo)
 		}
@@ -136,15 +160,10 @@ func (m *runningModel) openBranches() tea.Cmd {
 	}
 }
 
-// showBranches opens the branch picker.
-func (m *runningModel) showBranches(msg branchesMsg) tea.Cmd {
-	if msg.err != nil {
-		m.notice = "can't switch branches: " + msg.err.Error()
-		return nil
-	}
-	if m.stopping || m.picker != nil || m.editing {
-		return nil // something else took over the screen meanwhile
-	}
+// branchPicker returns the picker for the branches in msg. Its note says
+// which branch the project (shown as label) is on and which other projects
+// (others, as shown) switch with it.
+func branchPicker(msg branchesMsg, label string, others []string, pick func(gitinfo.Branch) tea.Cmd) (*picker, tea.Cmd) {
 	byName := map[string]gitinfo.Branch{}
 	current := "a detached HEAD"
 	var items []pickerItem
@@ -163,16 +182,34 @@ func (m *runningModel) showBranches(msg branchesMsg) tea.Cmd {
 		}
 		items = append(items, pickerItem{name: b.Name, label: b.LocalName(), info: strings.Join(info, " · ")})
 	}
-	note := fmt.Sprintf("%s is on %s", m.entry(msg.project).label, current)
-	if others := m.sharing(msg.project, msg.repo.Root); len(others) == 1 {
-		note += " · " + m.labels(others) + " shares the repository and switches too"
+	note := fmt.Sprintf("%s is on %s", label, current)
+	if len(others) == 1 {
+		note += " · " + others[0] + " shares the repository and switches too"
 	} else if len(others) > 1 {
-		note += " · " + m.labels(others) + " share the repository and switch too"
+		note += " · " + strings.Join(others, ", ") + " share the repository and switch too"
+	}
+	return newPicker(&picker{
+		action: "switch", note: note, empty: "no branches", items: items,
+		pick: func(it pickerItem) tea.Cmd { return pick(byName[it.name]) },
+	})
+}
+
+// showBranches opens the branch picker.
+func (m *runningModel) showBranches(msg branchesMsg) tea.Cmd {
+	if msg.err != nil {
+		m.notice = "can't switch branches: " + msg.err.Error()
+		return nil
+	}
+	if m.stopping || m.picker != nil || m.editing {
+		return nil // something else took over the screen meanwhile
+	}
+	others := m.sharing(msg.project, msg.repo.Root)
+	for i, name := range others {
+		others[i] = m.entry(name).label
 	}
 	var cmd tea.Cmd
-	m.picker, cmd = newPicker(&picker{
-		action: "switch", note: note, empty: "no branches", items: items,
-		pick: func(it pickerItem) tea.Cmd { return m.switchBranch(msg.project, msg.repo, byName[it.name]) },
+	m.picker, cmd = branchPicker(msg, m.entry(msg.project).label, others, func(b gitinfo.Branch) tea.Cmd {
+		return m.switchBranch(msg.project, msg.repo, b)
 	})
 	return cmd
 }
@@ -190,9 +227,13 @@ func (m *runningModel) switchBranch(project string, repo gitinfo.Repo, b gitinfo
 	}
 	m.gitAction = "git switch"
 	m.notice = fmt.Sprintf("switching %s to %s…", m.entry(project).label, b.LocalName())
-	reader := m.git.reader
+	return runSwitch(m, m.git.reader, project, repo, b)
+}
+
+// runSwitch checks repo again and switches it to b in the background.
+func runSwitch(owner any, reader GitReader, project string, repo gitinfo.Repo, b gitinfo.Branch) tea.Cmd {
 	return func() tea.Msg {
-		msg := switchedMsg{project: project, repo: repo, branch: b}
+		msg := switchedMsg{owner: owner, project: project, repo: repo, branch: b}
 		if msg.err = preflight(reader, repo); msg.err != nil {
 			return msg
 		}
@@ -200,6 +241,11 @@ func (m *runningModel) switchBranch(project string, repo gitinfo.Repo, b gitinfo
 		msg.output, msg.err = reader.Switch(context.Background(), repo, b)
 		return msg
 	}
+}
+
+// switchLines returns what a branch switch printed, after the command.
+func switchLines(msg switchedMsg) []string {
+	return append([]string{"$ git " + strings.Join(gitinfo.SwitchArgs(msg.branch), " ")}, outputLines(msg.output)...)
 }
 
 // switched reports the outcome of a branch switch in the help line and in
@@ -211,7 +257,7 @@ func (m *runningModel) switched(msg switchedMsg) tea.Cmd {
 		return nil
 	}
 	label, branch := m.entry(msg.project).label, msg.branch.LocalName()
-	lines := append([]string{"$ git " + strings.Join(gitinfo.SwitchArgs(msg.branch), " ")}, outputLines(msg.output)...)
+	lines := switchLines(msg)
 	if msg.err != nil {
 		_ = m.sess.Note(msg.project, append(lines, "git switch failed")...)
 		m.notice = msg.err.Error() + " (output in the log)"
