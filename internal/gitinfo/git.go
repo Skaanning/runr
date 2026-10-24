@@ -40,7 +40,7 @@ func New() (*Git, error) {
 // Error is a git command that failed.
 type Error struct {
 	Args   []string // git arguments, without the global options runr adds
-	Stderr string   // git's error output, trimmed
+	Stderr string   // git's error output (for actions, all of its output)
 	Err    error    // exit status, or context.DeadlineExceeded on timeout
 }
 
@@ -65,6 +65,12 @@ func firstLine(s string) string {
 // run runs git in dir and returns its standard output. extraEnv is added to
 // the environment built by gitEnv.
 func (g *Git) run(ctx context.Context, dir string, extraEnv []string, args ...string) ([]byte, error) {
+	return g.invoke(ctx, dir, extraEnv, false, args...)
+}
+
+// invoke runs git in dir. With combined, standard output and error are
+// returned together, interleaved, and also make up Error.Stderr on failure.
+func (g *Git) invoke(ctx context.Context, dir string, extraEnv []string, combined bool, args ...string) ([]byte, error) {
 	timeout := g.Timeout
 	if timeout <= 0 {
 		timeout = DefaultTimeout
@@ -77,6 +83,9 @@ func (g *Git) run(ctx context.Context, dir string, extraEnv []string, args ...st
 	cmd.Env = append(gitEnv(os.Environ()), extraEnv...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
+	if combined {
+		cmd.Stderr = &stdout
+	}
 	// Don't wait forever for output from children (e.g. ssh) that outlive git.
 	cmd.WaitDelay = time.Second
 	detach(cmd)
@@ -85,7 +94,11 @@ func (g *Git) run(ctx context.Context, dir string, extraEnv []string, args ...st
 		if ctx.Err() != nil {
 			err = ctx.Err()
 		}
-		return stdout.Bytes(), &Error{Args: args, Stderr: stderr.String(), Err: err}
+		msg := stderr.String()
+		if combined {
+			msg = stdout.String()
+		}
+		return stdout.Bytes(), &Error{Args: args, Stderr: msg, Err: err}
 	}
 	return stdout.Bytes(), nil
 }

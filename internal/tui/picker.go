@@ -8,9 +8,9 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// pickerItem is a group or project that can be started.
+// pickerItem is something to pick: a group or project to start, or a branch.
 type pickerItem struct {
-	name  string
+	name  string // identifies the item
 	label string // shown name
 	group bool
 	info  string // details shown after the name
@@ -18,6 +18,11 @@ type pickerItem struct {
 
 // picker is a filterable list of items, shown in place of the log.
 type picker struct {
+	action string                   // what enter does, e.g. "start"; also the input's prompt
+	note   string                   // shown under the input, if set
+	empty  string                   // shown when there are no items
+	pick   func(pickerItem) tea.Cmd // called with the chosen item
+
 	input    textinput.Model
 	items    []pickerItem
 	filtered []int // indexes into items
@@ -25,8 +30,8 @@ type picker struct {
 	top      int   // first filtered item shown
 }
 
-func newPicker(items []pickerItem) (*picker, tea.Cmd) {
-	p := &picker{items: items, input: textinput.New()}
+func newPicker(p *picker) (*picker, tea.Cmd) {
+	p.input = textinput.New()
 	p.input.Prompt = ""
 	styles := textinput.DefaultStyles(true)
 	styles.Cursor.Blink = false
@@ -77,7 +82,10 @@ func (p *picker) selected() (pickerItem, bool) {
 // view returns exactly height rows of at most width cells.
 func (p *picker) view(width, height int) []string {
 	p.input.SetWidth(max(width-8, 1))
-	rows := []string{boldStyle.Render("start") + " " + p.input.View(), ""}
+	rows := []string{boldStyle.Render(p.action) + " " + p.input.View(), ""}
+	if p.note != "" {
+		rows = append(rows, warnStyle.Render(p.note), "")
+	}
 
 	listHeight := max(height-len(rows), 0)
 	switch {
@@ -94,7 +102,7 @@ func (p *picker) view(width, height int) []string {
 
 	switch {
 	case len(p.items) == 0:
-		rows = append(rows, faintStyle.Render("everything is running"))
+		rows = append(rows, faintStyle.Render(p.empty))
 	case len(p.filtered) == 0:
 		rows = append(rows, faintStyle.Render("no matches"))
 	}

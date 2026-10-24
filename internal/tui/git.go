@@ -13,10 +13,13 @@ import (
 	"runr/internal/gitinfo"
 )
 
-// GitReader reads the git state of project directories (*gitinfo.Git).
+// GitReader reads the git state of project directories and runs the git
+// actions (*gitinfo.Git).
 type GitReader interface {
 	FindAll(ctx context.Context, dirs map[string]string) gitinfo.Repos
 	Status(ctx context.Context, repo gitinfo.Repo) (gitinfo.Status, error)
+	Branches(ctx context.Context, repo gitinfo.Repo) ([]gitinfo.Branch, error)
+	Switch(ctx context.Context, repo gitinfo.Repo, b gitinfo.Branch) (string, error)
 }
 
 const (

@@ -209,6 +209,7 @@ either all of them interleaved (the combined view) or just the selected one.
 | `r` | Restart the selected process |
 | `s` | Stop the selected process, or start it (with its dependencies) if it isn't running |
 | `+` | Start another registered project or group (type to filter, `enter` to start, `esc` to close) |
+| `b` | Switch the selected project's git repository to another branch (refused while it has uncommitted changes to tracked files, conflicts, or a merge/rebase in progress); processes are not restarted |
 | `/` | Search the output; `enter` jumps to the newest match, `esc` cancels |
 | `n` / `N` | Next newer / older match |
 | `esc` | Clear the search |

@@ -21,8 +21,9 @@ type fakeSession struct {
 	stopDone chan struct{}
 	stopAll  int
 	killAll  int
-	calls    []string // Start/Stop/Restart calls, e.g. "stop api"
-	err      error    // returned by Start/Stop/Restart
+	calls    []string            // Start/Stop/Restart calls, e.g. "stop api"
+	notes    map[string][]string // lines passed to Note, by project
+	err      error               // returned by Start/Stop/Restart
 }
 
 func newFakeSession(names ...string) *fakeSession {
@@ -51,6 +52,13 @@ func (f *fakeSession) Restart(name string) error {
 func (f *fakeSession) Events() <-chan supervisor.Event { return f.events }
 func (f *fakeSession) StopAll() <-chan struct{}        { f.stopAll++; return f.stopDone }
 func (f *fakeSession) KillAll()                        { f.killAll++ }
+func (f *fakeSession) Note(name string, lines ...string) error {
+	if f.notes == nil {
+		f.notes = map[string][]string{}
+	}
+	f.notes[name] = append(f.notes[name], lines...)
+	return nil
+}
 
 func testConfig() *config.Config {
 	return &config.Config{Projects: map[string]*config.Project{

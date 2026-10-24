@@ -221,6 +221,21 @@ func (s *Supervisor) Restart(name string) error {
 	})
 }
 
+// Note appends lines to a project's log as runr's own (System) lines, e.g.
+// the output of a git command run for it.
+func (s *Supervisor) Note(name string, lines ...string) error {
+	return s.call(func() error {
+		m := s.procs[name]
+		if m == nil {
+			return fmt.Errorf("project %q is not in the session", name)
+		}
+		for _, l := range lines {
+			s.system(m, "%s", l)
+		}
+		return nil
+	})
+}
+
 // Kill force-kills a project immediately.
 func (s *Supervisor) Kill(name string) error {
 	return s.call(func() error {

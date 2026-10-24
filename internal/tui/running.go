@@ -29,6 +29,7 @@ type Session interface {
 	Restart(name string) error
 	StopAll() <-chan struct{}
 	KillAll()
+	Note(name string, lines ...string) error
 }
 
 const (
@@ -84,9 +85,10 @@ type runningModel struct {
 	input      textinput.Model
 	matchInfo  string // position of the current match, e.g. "3/17"
 
-	picker *picker // open start-another picker, or nil
+	picker *picker // open picker (start another, branches), or nil
 
-	git *gitTracker // nil: git is not installed
+	git       *gitTracker // nil: git is not installed
+	gitAction string      // git action running in the background, e.g. "git switch"
 
 	width, height int
 
@@ -241,6 +243,10 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 		if !m.stopping {
 			return m.git.update(msg, m.gitDirs)
 		}
+	case branchesMsg:
+		return m.showBranches(msg)
+	case switchedMsg:
+		return m.switched(msg)
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case interruptMsg:
@@ -315,7 +321,10 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 			return nil
 		}
 		var cmd tea.Cmd
-		m.picker, cmd = newPicker(m.pickerItems())
+		m.picker, cmd = newPicker(&picker{
+			action: "start", empty: "everything is running", items: m.pickerItems(),
+			pick: func(it pickerItem) tea.Cmd { m.startPicked(it); return nil },
+		})
 		return cmd
 	case "/":
 		m.editing, m.prevSearch = true, m.search
@@ -331,6 +340,8 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		if m.search.active() {
 			m.setSearch(search{})
 		}
+	case "b":
+		return m.openBranches()
 	case "r":
 		m.restart()
 	case "s":
@@ -349,7 +360,7 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	return nil
 }
 
-// handlePickerKey handles keys while the start-another picker is open.
+// handlePickerKey handles keys while a picker is open.
 func (m *runningModel) handlePickerKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
 	case "ctrl+c":
@@ -358,10 +369,10 @@ func (m *runningModel) handlePickerKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "esc":
 		m.picker = nil
 	case "enter":
-		it, ok := m.picker.selected()
-		if ok {
+		if it, ok := m.picker.selected(); ok {
+			pick := m.picker.pick
 			m.picker = nil
-			m.startPicked(it)
+			return pick(it)
 		}
 	default:
 		return m.picker.update(msg)
@@ -808,7 +819,7 @@ func (m *runningModel) help() string {
 	}
 	if m.picker != nil {
 		return ansi.Truncate(" "+hintList([][2]string{
-			{"type", "to filter"}, {"↑↓", "select"}, {"enter", "start"}, {"esc", "cancel"},
+			{"type", "to filter"}, {"↑↓", "select"}, {"enter", m.picker.action}, {"esc", "cancel"},
 		}), m.width, "…")
 	}
 	if m.editing {
@@ -824,10 +835,15 @@ func (m *runningModel) help() string {
 		stop = "stop"
 	}
 	// Hints are dropped from the end of the middle when narrow.
-	keys := [][2]string{
-		{"↑↓", "select"}, {"tab", view}, {"r", "restart"}, {"s", stop}, {"+", "start"}, {"/", "search"},
-		{"pgup/pgdn", "scroll"}, {"g/G", "top/bottom"}, {"f", "follow"}, {"q", "quit"},
+	keys := [][2]string{{"↑↓", "select"}, {"tab", view}, {"r", "restart"}, {"s", stop}, {"+", "start"}}
+	if e := m.selectedEntry(); e != nil {
+		if _, ok := m.git.get(e.info.Name); ok {
+			keys = append(keys, [2]string{"b", "branch"})
+		}
 	}
+	keys = append(keys, [][2]string{
+		{"/", "search"}, {"pgup/pgdn", "scroll"}, {"g/G", "top/bottom"}, {"f", "follow"}, {"q", "quit"},
+	}...)
 	var parts []string
 	if m.search.active() {
 		keys = append([][2]string{{"n/N", "next/prev"}, {"esc", "clear"}}, keys...)

@@ -23,6 +23,11 @@ type fakeGit struct {
 	errs     map[string]error          // by root (Status) or project (lookup)
 	finds    []map[string]string       // dirs passed to each FindAll
 	statuses []string                  // roots passed to Status
+
+	branches  map[string][]gitinfo.Branch // by root
+	switches  []string                    // "root branch" for each Switch call
+	switchOut string                      // output of Switch
+	switchErr error                       // returned by Switch
 }
 
 func (f *fakeGit) FindAll(_ context.Context, dirs map[string]string) gitinfo.Repos {
@@ -47,6 +52,20 @@ func (f *fakeGit) FindAll(_ context.Context, dirs map[string]string) gitinfo.Rep
 func (f *fakeGit) Status(_ context.Context, repo gitinfo.Repo) (gitinfo.Status, error) {
 	f.statuses = append(f.statuses, repo.Root)
 	return f.status[repo.Root], f.errs[repo.Root]
+}
+
+func (f *fakeGit) Branches(_ context.Context, repo gitinfo.Repo) ([]gitinfo.Branch, error) {
+	return f.branches[repo.Root], nil
+}
+
+func (f *fakeGit) Switch(_ context.Context, repo gitinfo.Repo, b gitinfo.Branch) (string, error) {
+	f.switches = append(f.switches, repo.Root+" "+b.Name)
+	if f.switchErr == nil {
+		s := f.status[repo.Root]
+		s.Branch = b.LocalName()
+		f.status[repo.Root] = s
+	}
+	return f.switchOut, f.switchErr
 }
 
 func testGit() *fakeGit {

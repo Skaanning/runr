@@ -260,6 +260,24 @@ func TestStopWaitsForLeftovers(t *testing.T) {
 	}
 }
 
+func TestNote(t *testing.T) {
+	s, r := newTestSupervisor(t, map[string]string{"api": "true", "web": "true"})
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "api", Exited)
+	if err := s.Note("api", "$ git switch main", "Switched to branch 'main'"); err != nil {
+		t.Fatal(err)
+	}
+	logs := logLines(s, "api")
+	if got := logs[len(logs)-2:]; !reflect.DeepEqual(got, []string{"sys:$ git switch main", "sys:Switched to branch 'main'"}) {
+		t.Errorf("logs = %q", logs)
+	}
+	if err := s.Note("web", "x"); err == nil {
+		t.Error("noted on a project outside the session")
+	}
+}
+
 func TestKill(t *testing.T) {
 	s, r := newTestSupervisor(t, map[string]string{"api": "trap '' TERM; echo ready; sleep 30"})
 	if err := s.Start("api"); err != nil {

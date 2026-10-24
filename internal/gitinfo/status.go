@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,6 +41,21 @@ type Status struct {
 	Changed   bool      // tracked files with staged or unstaged changes
 	Conflicts bool      // unmerged entries
 	Operation Operation // merge, rebase, … in progress
+}
+
+// CheckSafe returns why runr refuses to switch branches or pull in a work
+// tree in this state, or nil. Untracked files don't count: git itself
+// refuses if they would be overwritten.
+func (s Status) CheckSafe() error {
+	switch {
+	case s.Operation != NoOperation:
+		return fmt.Errorf("a %s is in progress", s.Operation)
+	case s.Conflicts:
+		return errors.New("there are unresolved conflicts")
+	case s.Changed:
+		return errors.New("there are uncommitted changes to tracked files")
+	}
+	return nil
 }
 
 // ShortCommit returns the abbreviated HEAD commit id.
