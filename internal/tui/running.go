@@ -253,9 +253,13 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 			return m.switched(msg)
 		}
 	case pullCheckMsg:
-		m.confirmPull(msg)
+		if msg.owner == m {
+			m.confirmPull(msg)
+		}
 	case pulledMsg:
-		return m.pulled(msg)
+		if msg.owner == m {
+			return m.pulled(msg)
+		}
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case interruptMsg:
@@ -396,18 +400,15 @@ func (m *runningModel) handlePickerKey(msg tea.KeyPressMsg) tea.Cmd {
 // handleConfirmKey handles keys while a question is open: enter or y
 // answers yes; esc, n or q cancel.
 func (m *runningModel) handleConfirmKey(msg tea.KeyPressMsg) tea.Cmd {
-	c := m.confirm
-	switch msg.String() {
-	case "ctrl+c":
+	if msg.String() == "ctrl+c" {
 		m.confirm = nil
 		return m.interrupt()
-	case "esc", "n", "q":
-		m.confirm = nil
-	case "enter", "y":
-		m.confirm = nil
-		return c.yes()
 	}
-	return nil
+	done, cmd := m.confirm.answer(msg.String())
+	if done {
+		m.confirm = nil
+	}
+	return cmd
 }
 
 // pickerItems lists the groups with something left to start and the
@@ -846,10 +847,7 @@ func (m *runningModel) sidebarRow(i, width, gitCol int) string {
 
 func (m *runningModel) help() string {
 	if m.confirm != nil {
-		// The hints stay visible; the question is cut short when narrow.
-		hints := "  " + hintList([][2]string{{"enter", m.confirm.action}, {"esc", "cancel"}})
-		width := max(m.width-ansi.StringWidth(hints)-1, 1)
-		return ansi.Truncate(" "+boldStyle.Render(ansi.Truncate(m.confirm.prompt, width, "…"))+hints, m.width, "…")
+		return questionLine(m.confirm, m.width)
 	}
 	if m.notice != "" {
 		return ansi.Truncate(" "+warnStyle.Render(m.notice), m.width, "…")
@@ -892,13 +890,18 @@ func (m *runningModel) help() string {
 	for _, k := range keys {
 		parts = append(parts, boldStyle.Render(k[0])+" "+faintStyle.Render(k[1]))
 	}
-	// When narrow, drop hints from the middle so quitting stays visible.
+	return fitHints(parts, m.width)
+}
+
+// fitHints joins help line parts. When narrow, it drops hints from the end
+// of the middle so the last one (quitting) stays visible.
+func fitHints(parts []string, width int) string {
 	line := " " + strings.Join(parts, "  ")
-	for len(parts) > 2 && ansi.StringWidth(line) > m.width {
+	for len(parts) > 2 && ansi.StringWidth(line) > width {
 		parts = append(parts[:len(parts)-2], parts[len(parts)-1])
 		line = " " + strings.Join(parts, "  ")
 	}
-	return ansi.Truncate(line, m.width, "…")
+	return ansi.Truncate(line, width, "…")
 }
 
 // pad pads s with spaces to width cells.

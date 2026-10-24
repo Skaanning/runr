@@ -37,6 +37,7 @@ type launcherModel struct {
 	form     *editForm       // open project or group form, or nil
 	confirm  *confirmation   // open delete confirmation, or nil
 	picker   *picker         // open branch picker, or nil
+	ask      *question       // open question in the help line (pull?), or nil
 	output   []string        // output of a failed git action, shown until the next key
 
 	git       *gitTracker // nil: git is not installed
@@ -114,6 +115,16 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.switched(msg)
 		}
 		return m, nil
+	case pullCheckMsg:
+		if msg.owner == m {
+			m.confirmPull(msg)
+		}
+		return m, nil
+	case pulledMsg:
+		if msg.owner == m {
+			m.pulled(msg)
+		}
+		return m, nil
 	}
 	switch {
 	case m.form != nil:
@@ -122,6 +133,19 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.updateConfirm(msg)
 	case m.picker != nil:
 		return m, m.updatePicker(msg)
+	case m.ask != nil:
+		if msg, ok := msg.(tea.KeyPressMsg); ok {
+			m.notice = ""
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
+			}
+			done, cmd := m.ask.answer(msg.String())
+			if done {
+				m.ask = nil
+			}
+			return m, cmd
+		}
+		return m, nil
 	case m.output != nil:
 		if msg, ok := msg.(tea.KeyPressMsg); ok {
 			m.output, m.notice = nil, ""
@@ -178,6 +202,8 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "b":
 			return m, m.openBranches()
+		case "p":
+			return m, m.openPull()
 		}
 	}
 	return m, nil
@@ -186,20 +212,43 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // openBranches checks the repository of the project under the cursor and
 // reads its branches in the background; the picker opens when they arrive.
 func (m *launcherModel) openBranches() tea.Cmd {
-	it, ok := m.current()
+	name, repo, ok := m.gitTarget("switch its branch")
 	if !ok {
 		return nil
 	}
-	if it.group {
-		m.notice = "move to a project to switch its branch"
+	return readBranches(m, m.git.reader, name, repo)
+}
+
+// openPull checks the repository of the project under the cursor in the
+// background; the question whether to pull opens when it is done.
+func (m *launcherModel) openPull() tea.Cmd {
+	name, repo, ok := m.gitTarget("pull")
+	if !ok {
 		return nil
+	}
+	return checkPull(m, m.git.reader, name, repo)
+}
+
+// gitTarget returns the project under the cursor and its repository for a
+// git action (what, e.g. "pull"). If there is none, or another action is
+// running, it sets a notice saying why.
+func (m *launcherModel) gitTarget(what string) (string, gitinfo.Repo, bool) {
+	it, ok := m.current()
+	if !ok {
+		return "", gitinfo.Repo{}, false
+	}
+	if it.group {
+		m.notice = "move to a project to " + what
+		return "", gitinfo.Repo{}, false
 	}
 	repo, notice := m.git.target(it.name, it.name, m.gitAction)
-	if notice != "" {
-		m.notice = notice
-		return nil
-	}
-	return readBranches(m, m.git.reader, it.name, repo)
+	m.notice = notice
+	return it.name, repo, notice == ""
+}
+
+// busy reports whether something else has the screen.
+func (m *launcherModel) busy() bool {
+	return m.form != nil || m.confirm != nil || m.picker != nil || m.ask != nil || m.output != nil
 }
 
 // showBranches opens the branch picker. Every registered project in the
@@ -209,7 +258,7 @@ func (m *launcherModel) showBranches(msg branchesMsg) tea.Cmd {
 		m.notice = "can't switch branches: " + msg.err.Error()
 		return nil
 	}
-	if m.form != nil || m.confirm != nil || m.picker != nil {
+	if m.busy() {
 		return nil // something else took over the screen meanwhile
 	}
 	var cmd tea.Cmd
@@ -282,6 +331,61 @@ func (m *launcherModel) switched(msg switchedMsg) {
 	m.notice = fmt.Sprintf("switched %s to %s", msg.project, msg.branch.LocalName())
 	if others := m.sharing(msg.project, msg.repo.Root); len(others) > 0 {
 		m.notice += " (also " + strings.Join(others, ", ") + ")"
+	}
+}
+
+// confirmPull asks whether to pull, naming the other registered projects in
+// the repository.
+func (m *launcherModel) confirmPull(msg pullCheckMsg) {
+	if msg.err != nil {
+		m.notice = "can't pull: " + msg.err.Error()
+		return
+	}
+	if m.busy() {
+		return
+	}
+	m.notice = ""
+	m.ask = pullQuestion(msg, msg.project, m.sharing(msg.project, msg.repo.Root), func() tea.Cmd {
+		return m.pull(msg.project, msg.repo)
+	})
+}
+
+// pull pulls the repository of project in the background, after checking
+// it again.
+func (m *launcherModel) pull(project string, repo gitinfo.Repo) tea.Cmd {
+	if m.gitAction != "" {
+		m.notice = m.gitAction + " is still running"
+		return nil
+	}
+	m.gitAction = "git pull"
+	m.notice = fmt.Sprintf("pulling %s…", project)
+	return runPull(m, m.git.reader, project, repo)
+}
+
+// pulled reports the outcome of a pull: a summary in the help line, and
+// git's output in place of the list if it failed.
+func (m *launcherModel) pulled(msg pulledMsg) {
+	m.gitAction = ""
+	if !msg.ran {
+		m.notice = "can't pull: " + msg.err.Error()
+		return
+	}
+	m.gitStale = true
+	if msg.err != nil {
+		m.output = pullLines(msg)
+		m.notice = msg.err.Error()
+		return
+	}
+	switch change := pullChange(msg); {
+	case change == "":
+		m.notice = msg.project + " is already up to date"
+	case msg.after.Commit == "":
+		m.notice = fmt.Sprintf("pulled %s into %s", change, msg.project)
+	default:
+		m.notice = fmt.Sprintf("pulled %s: %s", msg.project, change)
+		if others := m.sharing(msg.project, msg.repo.Root); len(others) > 0 {
+			m.notice += " (also " + strings.Join(others, ", ") + ")"
+		}
 	}
 }
 
@@ -627,6 +731,9 @@ func (m *launcherModel) itemRow(it launcherItem, current bool, nameWidth, dirWid
 }
 
 func (m *launcherModel) help() string {
+	if m.ask != nil {
+		return questionLine(m.ask, m.width)
+	}
 	if m.notice != "" {
 		return ansi.Truncate(" "+warnStyle.Render(m.notice), m.width, "…")
 	}
@@ -646,7 +753,7 @@ func (m *launcherModel) help() string {
 	}
 	if it, ok := m.current(); ok && !it.group {
 		if _, ok := m.git.get(it.name); ok {
-			keys = append(keys, [2]string{"b", "branch"})
+			keys = append(keys, [2]string{"b", "branch"}, [2]string{"p", "pull"})
 		}
 	}
 	keys = append(keys, [2]string{"q", "quit"})
@@ -656,5 +763,9 @@ func (m *launcherModel) help() string {
 	case m.confirm != nil:
 		keys = [][2]string{{"y", "delete"}, {"n", "cancel"}}
 	}
-	return ansi.Truncate(" "+hintList(keys), m.width, "…")
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = boldStyle.Render(k[0]) + " " + faintStyle.Render(k[1])
+	}
+	return fitHints(parts, m.width)
 }

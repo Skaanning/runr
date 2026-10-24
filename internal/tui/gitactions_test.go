@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Skaanning/runr/internal/gitinfo"
 )
@@ -401,7 +402,7 @@ func launcherFollow(t *testing.T, m *launcherModel, cmd tea.Cmd) tea.Cmd {
 		return nil
 	}
 	switch msg := cmd().(type) {
-	case branchesMsg, switchedMsg:
+	case branchesMsg, switchedMsg, pullCheckMsg, pulledMsg:
 		_, next := m.Update(msg)
 		return launcherFollow(t, m, next)
 	case tea.BatchMsg:
@@ -434,7 +435,7 @@ func TestLauncherSwitchBranch(t *testing.T) {
 	}
 
 	launcherPress(t, m, "down") // api
-	if got := launcherHelp(m); !strings.Contains(got, "d delete  b branch  q quit") {
+	if got := launcherHelp(m); !strings.Contains(got, "d delete  b branch  p pull  q quit") {
 		t.Errorf("help = %q", got)
 	}
 	launcherPress(t, m, "b")
@@ -522,6 +523,103 @@ func TestLauncherSwitchBranchRefused(t *testing.T) {
 	}
 }
 
+func TestLauncherPull(t *testing.T) {
+	m, f := newGitLauncher(t)
+	launcherPress(t, m, "p") // on the group
+	if m.ask != nil || m.notice != "move to a project to pull" {
+		t.Errorf("group: question %v, notice %q", m.ask != nil, m.notice)
+	}
+
+	launcherPress(t, m, "down") // api
+	launcherPress(t, m, "p")
+	if m.ask == nil {
+		t.Fatalf("no question; notice %q", m.notice)
+	}
+	if got, want := launcherHelp(m), " pull origin/main into api (main)? also updates worker (same repository)  enter pull  esc cancel"; got != want {
+		t.Errorf("question = %q\nwant       %q", got, want)
+	}
+	f.pullOut = "Updating 0123456..fedcba9\nFast-forward\n"
+	f.pulledTo = map[string]gitinfo.Status{"/r/app": {Branch: "main", Commit: "fedcba9876", Upstream: "origin/main"}}
+	_, cmd := m.Update(key("enter"))
+	if m.ask != nil || m.gitAction != "git pull" || m.notice != "pulling api…" {
+		t.Errorf("while pulling: question %v, action %q, notice %q", m.ask != nil, m.gitAction, m.notice)
+	}
+	if start := launcherPress(t, m, "enter"); start != nil || m.notice != "git pull is still running" {
+		t.Errorf("start while pulling: cmd %v, notice %q", start != nil, m.notice)
+	}
+	launcherFollow(t, m, cmd)
+	if !slices.Equal(f.pulls, []string{"/r/app"}) {
+		t.Errorf("pulls = %v", f.pulls)
+	}
+	if m.notice != "pulled api: main 0123456 → fedcba9 (also worker)" || m.gitAction != "" {
+		t.Errorf("notice %q, action %q", m.notice, m.gitAction)
+	}
+	if !m.git.busy {
+		t.Error("git state not refreshed after the pull")
+	}
+
+	launcherPress(t, m, "p")
+	launcherPress(t, m, "y")
+	if m.notice != "api is already up to date" {
+		t.Errorf("up to date: notice %q", m.notice)
+	}
+}
+
+func TestLauncherPullFailure(t *testing.T) {
+	m, f := newGitLauncher(t)
+	f.pullOut = "hint: Diverging branches can't be fast-forwarded, you need to either:\nfatal: Not possible to fast-forward, aborting.\n"
+	f.pullErr = &gitinfo.Error{Args: gitinfo.PullArgs(), Stderr: f.pullOut, Err: errors.New("exit status 128")}
+	launcherPress(t, m, "down")
+	launcherPress(t, m, "p")
+	launcherPress(t, m, "enter")
+
+	rows := launcherScreen(m)
+	if !slices.Contains(rows, "  $ git pull --ff-only --no-rebase") || !slices.Contains(rows, "  fatal: Not possible to fast-forward, aborting.") {
+		t.Errorf("output not shown:\n%s", strings.Join(rows, "\n"))
+	}
+	if want := " git pull: fatal: Not possible to fast-forward, aborting."; launcherHelp(m) != want {
+		t.Errorf("help = %q", launcherHelp(m))
+	}
+	launcherPress(t, m, "x")
+	if m.output != nil {
+		t.Error("output still shown after a key")
+	}
+}
+
+func TestLauncherPullRefusedAndCancelled(t *testing.T) {
+	m, f := newGitLauncher(t)
+	launcherPress(t, m, "down")
+	f.status["/r/app"] = gitinfo.Status{Branch: "main"}
+	launcherPress(t, m, "p")
+	if m.ask != nil || m.notice != "can't pull: main has no upstream branch" {
+		t.Errorf("no upstream: question %v, notice %q", m.ask != nil, m.notice)
+	}
+
+	f.status["/r/app"] = gitinfo.Status{Branch: "main", Upstream: "origin/main"}
+	for _, k := range []string{"esc", "n", "q"} {
+		launcherPress(t, m, "p")
+		launcherPress(t, m, "x") // ignored
+		if m.ask == nil {
+			t.Fatalf("%s: question closed by another key", k)
+		}
+		if cmd := launcherPress(t, m, k); m.ask != nil || cmd != nil {
+			t.Errorf("%s: question %v, cmd %v", k, m.ask != nil, cmd != nil)
+		}
+	}
+	if len(f.pulls) != 0 {
+		t.Error("pulled after cancelling")
+	}
+}
+
+func TestLauncherHelpKeepsQuitWhenNarrow(t *testing.T) {
+	m, _ := newGitLauncher(t)
+	launcherPress(t, m, "down")
+	m.width = 60
+	if got := launcherHelp(m); !strings.HasSuffix(got, "q quit") || ansi.StringWidth(got) > 60 {
+		t.Errorf("help = %q", got)
+	}
+}
+
 // TestBranchMessagesStayWithTheirModel checks that a reply for the launcher
 // that arrives after the running view opened (or the other way round) is
 // dropped.
@@ -538,6 +636,15 @@ func TestBranchMessagesStayWithTheirModel(t *testing.T) {
 	r.Update(switchedMsg{owner: l, project: "api", ran: true})
 	if r.gitAction == "" {
 		t.Error("running view handled the launcher's switch result")
+	}
+	r.Update(pullCheckMsg{owner: l, project: "api", status: gitinfo.Status{Branch: "main", Upstream: "origin/main"}})
+	l.Update(pullCheckMsg{owner: r, project: "api", status: gitinfo.Status{Branch: "main", Upstream: "origin/main"}})
+	if r.confirm != nil || l.ask != nil {
+		t.Errorf("question opened by another model's reply: running %v, launcher %v", r.confirm != nil, l.ask != nil)
+	}
+	r.Update(pulledMsg{owner: l, project: "api", ran: true})
+	if r.gitAction == "" {
+		t.Error("running view handled the launcher's pull result")
 	}
 }
 

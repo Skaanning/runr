@@ -190,6 +190,7 @@ start them in the running view, or manage the registry with in-TUI forms.
 | `g` | On a group: edit it. On a project: create a group, preselecting the selected projects |
 | `d` | Delete, after confirmation that lists the affected groups and dependents |
 | `b` | Switch the git branch of the project under the cursor (see [Git](#git)) |
+| `p` | Pull the git repository of the project under the cursor (`git pull --ff-only`), after confirming |
 | `q`, `esc` | Quit |
 
 In forms: `tab`/`enter` next field, `shift+tab` back, `space` toggles a checkbox,
@@ -256,9 +257,9 @@ each project's `dir` is in, with markers:
 Projects outside a repository show nothing. The state is read every 5 seconds and after
 each action; runr never fetches on its own.
 
-`b` (switch branch, in the launcher and the running view) and `p` (pull, in the running view)
-act on the selected project's repository, and only in the simple cases — anything that needs a
-decision is left to you:
+`b` (switch branch) and `p` (pull) work in the launcher and the running view. They act on the
+selected project's repository, and only in the simple cases — anything that needs a decision
+is left to you:
 
 - Both are refused up front while the repository has uncommitted changes to tracked files,
   unresolved conflicts, or an operation in progress. Untracked files don't count, but git
