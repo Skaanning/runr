@@ -172,6 +172,12 @@ var ColorNames = []string{
 	"bright-blue", "bright-magenta", "bright-cyan", "bright-white",
 }
 
+// DefaultColors are assigned in order to projects without a configured color.
+var DefaultColors = []string{
+	"cyan", "magenta", "yellow", "green", "blue",
+	"bright-red", "bright-cyan", "bright-magenta", "bright-yellow", "bright-green",
+}
+
 var hexColorPattern = regexp.MustCompile(`^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$`)
 
 // ValidColor reports whether s is a named color, an ANSI color number (0-255)

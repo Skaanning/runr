@@ -11,12 +11,6 @@ import (
 	"runr/internal/supervisor"
 )
 
-// defaultColors are assigned in order to projects without a configured color.
-var defaultColors = []string{
-	"cyan", "magenta", "yellow", "green", "blue",
-	"bright-red", "bright-cyan", "bright-magenta", "bright-yellow", "bright-green",
-}
-
 // runPlain starts the projects and prints their output interleaved, one line
 // per output line, until every project has finished. The first signal on
 // sigs stops everything gracefully; a second one kills it.
@@ -123,7 +117,7 @@ func newPlainPrinter(w io.Writer, cfg *config.Config, projects []string, color b
 		proj := cfg.Projects[name]
 		c := proj.Color
 		if c == "" {
-			c = defaultColors[next%len(defaultColors)]
+			c = config.DefaultColors[next%len(config.DefaultColors)]
 			next++
 		}
 		p.labels[name] = p.paint(sgrColor(config.ColorCode(c)), pad(proj.Label(name), p.width))

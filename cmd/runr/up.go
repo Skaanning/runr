@@ -11,6 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"runr/internal/config"
+	"runr/internal/supervisor"
+	"runr/internal/tui"
 )
 
 func newUpCmd() *cobra.Command {
@@ -30,20 +32,33 @@ func newUpCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if !plain {
-				return notImplemented("up without --plain (the TUI)")
-			}
 
 			sigs := make(chan os.Signal, 2)
-			signal.Notify(sigs, os.Interrupt, syscall.SIGTERM)
+			signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 			defer signal.Stop(sigs)
-			return runPlain(cmd.OutOrStdout(), s.cfg, args, projects, sigs, colorEnabled(cmd.OutOrStdout()))
+			if plain {
+				return runPlain(cmd.OutOrStdout(), s.cfg, args, projects, sigs, colorEnabled(cmd.OutOrStdout()))
+			}
+			return runTUI(s.cfg, args, sigs)
 		},
 	}
 	// Plain interleaved output, for debugging and non-interactive use.
 	cmd.Flags().BoolVar(&plain, "plain", false, "print interleaved output instead of opening the TUI")
 	_ = cmd.Flags().MarkHidden("plain")
 	return cmd
+}
+
+// runTUI starts the projects and shows the running view until the user quits.
+func runTUI(cfg *config.Config, names []string, sigs <-chan os.Signal) error {
+	sup := supervisor.New(cfg, supervisor.Options{})
+	err := sup.Start(names...)
+	if err == nil {
+		err = tui.Run(sup, cfg, strings.Join(names, " + "), sigs)
+	}
+	sup.Close() // kills anything still alive if the TUI failed
+	for range sup.Events() {
+	}
+	return err
 }
 
 // prepareUp validates the config and checks that every project that would be
