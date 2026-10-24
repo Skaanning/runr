@@ -125,7 +125,7 @@ func TestRunningLayout(t *testing.T) {
 		"   ✗ Worker 1   │ Worker error: queue not found",
 		"                │",
 		"────────────────┴───────────────────────────────────────────",
-		" ↑↓ select  tab view  r restart  s stop  q quit",
+		" ↑↓ select  tab view  r restart  s stop  / search  q quit",
 	}
 	got := screen(m)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -453,5 +453,122 @@ func TestRunningStoppingProgress(t *testing.T) {
 	m.Update(eventsMsg{events: []supervisor.Event{state("api", supervisor.Stopped)}})
 	if got := screen(m)[0]; !strings.HasSuffix(got, "stopping… 1 left · ctrl+c to force") {
 		t.Fatalf("header = %q", got)
+	}
+}
+
+func typeText(m *runningModel, text string) {
+	for _, r := range text {
+		m.Update(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+}
+
+func helpRow(m *runningModel) string {
+	rows := screen(m)
+	return rows[len(rows)-1]
+}
+
+func TestRunningSearch(t *testing.T) {
+	m, sess := newTestModel(t, 80, 8) // 4 body rows
+	var events []supervisor.Event
+	for i := range 10 {
+		text := fmt.Sprint("line ", i)
+		if i%3 == 2 {
+			text += " Error"
+		}
+		events = append(events, emit(sess, "db", text))
+	}
+	m.Update(eventsMsg{events: events}) // shows lines 6-9
+
+	m.Update(key("/"))
+	typeText(m, "error q") // q must not quit
+	if sess.stopAll != 0 {
+		t.Fatal("q in the search input quit")
+	}
+	for range 2 {
+		m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	}
+	if got := helpRow(m); !strings.HasPrefix(got, " /error") || !strings.Contains(got, "enter search") {
+		t.Fatalf("help while editing = %q", got)
+	}
+	if !strings.Contains(m.render(), "line 8 "+matchStyle+"Error\x1b[0m") {
+		t.Fatal("matches not highlighted while typing")
+	}
+
+	m.Update(key("enter")) // newest match on screen
+	if !strings.Contains(m.render(), currentStyle+"Error") || !strings.HasPrefix(helpRow(m), " /error 3/3  n/N next/prev  esc clear") {
+		t.Fatalf("after enter: help = %q", helpRow(m))
+	}
+
+	m.Update(key("N"))
+	if got := strings.Join(logRows(m), ","); !strings.Contains(got, "line 5 Error") {
+		t.Fatalf("match not revealed: %q", got)
+	}
+	if !strings.HasPrefix(helpRow(m), " /error 2/3") || !strings.Contains(screen(m)[0], "paused") {
+		t.Fatalf("help = %q, header = %q", helpRow(m), screen(m)[0])
+	}
+	m.Update(key("N"))
+	m.Update(key("N"))
+	if got := helpRow(m); got != " search wrapped to the bottom" {
+		t.Fatalf("help = %q", got)
+	}
+	m.Update(key("n"))
+	if got := helpRow(m); got != " search wrapped to the top" {
+		t.Fatalf("help = %q", got)
+	}
+	if !strings.Contains(strings.Join(logRows(m), ","), "line 2 Error") {
+		t.Fatalf("rows = %q", logRows(m))
+	}
+
+	// Opening the input and cancelling keeps the search.
+	m.Update(key("/"))
+	typeText(m, "zzz")
+	m.Update(key("esc"))
+	if !strings.HasPrefix(helpRow(m), " /error") {
+		t.Fatalf("search not restored: %q", helpRow(m))
+	}
+
+	m.Update(key("esc"))
+	if strings.Contains(m.render(), matchStyle) || strings.Contains(helpRow(m), "/error") {
+		t.Fatal("esc did not clear the search")
+	}
+
+	m.Update(key("/"))
+	typeText(m, "Line") // capital letter: exact case, so nothing matches
+	m.Update(key("enter"))
+	if got := helpRow(m); got != ` no matches for "Line"` {
+		t.Fatalf("help = %q", got)
+	}
+}
+
+func TestRunningSearchSingleView(t *testing.T) {
+	m, sess := newTestModel(t, 80, 8)
+	m.Update(eventsMsg{events: []supervisor.Event{
+		emit(sess, "db", "db hit"), emit(sess, "api", "api hit"), emit(sess, "db", "db miss"),
+	}})
+	m.Update(key("/"))
+	typeText(m, "hit")
+	m.Update(key("enter"))
+	if !strings.HasPrefix(helpRow(m), " /hit 2/2") {
+		t.Fatalf("combined: %q", helpRow(m))
+	}
+	m.Update(key("tab")) // db only: one match, search kept
+	m.Update(key("n"))
+	if !strings.HasPrefix(helpRow(m), " /hit 1/1") {
+		t.Fatalf("single: %q", helpRow(m))
+	}
+	if !strings.Contains(m.render(), "db "+currentStyle+"hit") {
+		t.Fatal("current match not highlighted in the single view")
+	}
+}
+
+func TestRunningSearchKeepsFaintSystemLines(t *testing.T) {
+	m, _ := newTestModel(t, 80, 8)
+	m.Update(eventsMsg{events: []supervisor.Event{system("db", "starting: db --port 1")}})
+	m.Update(key("/"))
+	typeText(m, "db")
+	out := m.render()
+	// After the highlighted match the faint styling is restored.
+	if !strings.Contains(out, "\x1b[2mstarting: "+matchStyle+"db\x1b[0m\x1b[2m --port 1") {
+		t.Fatalf("render = %q", out)
 	}
 }

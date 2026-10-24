@@ -3,10 +3,12 @@ package tui
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -74,6 +76,12 @@ type runningModel struct {
 	lastBatch time.Time
 	notice    string // result of the last action, shown until the next key
 
+	search     search // applies to both views
+	prevSearch search // restored when editing is cancelled
+	editing    bool   // the search input is open
+	input      textinput.Model
+	matchInfo  string // position of the current match, e.g. "3/17"
+
 	width, height int
 
 	stopping bool
@@ -87,6 +95,12 @@ func newRunningModel(sess Session, cfg *config.Config, title string) *runningMod
 	}
 	limit := cfg.Settings.ScrollbackLines() * max(len(m.entries), 1)
 	m.combined = newLogView(limit, m.formatCombined)
+
+	m.input = textinput.New()
+	m.input.Prompt = ""
+	styles := textinput.DefaultStyles(true)
+	styles.Cursor.Blink = false
+	m.input.SetStyles(styles)
 	return m
 }
 
@@ -200,6 +214,12 @@ func (m *runningModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.interrupt()
 	case stoppedMsg:
 		return m, tea.Quit
+	default:
+		if m.editing {
+			var cmd tea.Cmd
+			m.input, cmd = m.input.Update(msg)
+			return m, cmd
+		}
 	}
 	return m, nil
 }
@@ -230,6 +250,9 @@ func (m *runningModel) handleEvents(events []supervisor.Event) {
 
 func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	m.notice = ""
+	if m.editing {
+		return m.handleSearchKey(msg)
+	}
 	switch msg.String() {
 	case "ctrl+c":
 		return m.interrupt()
@@ -248,6 +271,20 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		} else if e := m.selectedEntry(); e != nil {
 			m.showSingle(e.info.Name)
 		}
+	case "/":
+		m.editing, m.prevSearch = true, m.search
+		m.input.Reset()
+		m.input.SetWidth(max(m.width-30, 10))
+		m.setSearch(search{})
+		return m.input.Focus()
+	case "n":
+		m.jump(1)
+	case "N":
+		m.jump(-1)
+	case "esc":
+		if m.search.active() {
+			m.setSearch(search{})
+		}
 	case "r":
 		m.restart()
 	case "s":
@@ -264,6 +301,92 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.view().toggleFollow()
 	}
 	return nil
+}
+
+// handleSearchKey handles keys while the search input is open. Matches are
+// highlighted as the query is typed.
+func (m *runningModel) handleSearchKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "ctrl+c":
+		return m.interrupt()
+	case "esc":
+		m.editing = false
+		m.input.Blur()
+		m.setSearch(m.prevSearch)
+		return nil
+	case "enter":
+		m.editing = false
+		m.input.Blur()
+		if m.search.active() {
+			m.jump(-1) // the newest match up to the bottom of the screen
+		}
+		return nil
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	if q := m.input.Value(); q != m.search.query {
+		m.setSearch(newSearch(q))
+	}
+	return cmd
+}
+
+func (m *runningModel) setSearch(s search) {
+	m.search, m.matchInfo = s, ""
+	for _, v := range []*logView{m.combined, m.single} {
+		if v != nil {
+			v.current = 0
+			v.invalidate()
+		}
+	}
+}
+
+// jump moves to the next (dir > 0, newer) or previous (dir < 0, older) line
+// matching the search, wrapping around at either end. Without a current
+// match it starts from the edge of the screen.
+func (m *runningModel) jump(dir int) {
+	if !m.search.active() {
+		return
+	}
+	v := m.view()
+	idx := v.matching(m.search)
+	v.invalidate()
+	if len(idx) == 0 {
+		v.current, m.matchInfo = 0, ""
+		m.notice = fmt.Sprintf("no matches for %q", m.search.query)
+		return
+	}
+	v.render()
+	cur := -1
+	if v.current != 0 {
+		cur = v.indexOf(v.current)
+	}
+	var k int // position in idx
+	switch {
+	case cur < 0 && dir < 0:
+		k = sort.SearchInts(idx, v.last+1) - 1
+	case cur < 0:
+		k = sort.SearchInts(idx, v.first)
+	case dir < 0:
+		k = sort.SearchInts(idx, cur) - 1
+	default:
+		k = sort.SearchInts(idx, cur+1)
+	}
+	switch {
+	case k < 0:
+		k = len(idx) - 1
+		if cur >= 0 {
+			m.notice = "search wrapped to the bottom"
+		}
+	case k >= len(idx):
+		k = 0
+		if cur >= 0 {
+			m.notice = "search wrapped to the top"
+		}
+	}
+	v.current = v.lines[idx[k]].Seq
+	v.invalidate()
+	v.reveal(idx[k])
+	m.matchInfo = fmt.Sprintf("%d/%d", k+1, len(idx))
 }
 
 func (m *runningModel) selectedEntry() *sidebarEntry {
@@ -365,13 +488,10 @@ func (m *runningModel) layout() {
 func (m *runningModel) formatCombined(line supervisor.LogLine, width int) []string {
 	e := m.entry(line.Project)
 	lw := min(m.labelWidth, maxPrefixWidth)
-	rows := wrap(sanitize(line.Text), width-lw-1)
+	rows := wrap(m.display(line, m.combined.current), width-lw-1)
 	label := e.style.Render(pad(ansi.Truncate(e.label, lw, "…"), lw)) + " "
 	indent := strings.Repeat(" ", lw+1)
 	for i, row := range rows {
-		if line.Stream == supervisor.System {
-			row = faintStyle.Render(row)
-		}
 		if i == 0 {
 			rows[i] = label + row
 		} else {
@@ -381,15 +501,28 @@ func (m *runningModel) formatCombined(line supervisor.LogLine, width int) []stri
 	return rows
 }
 
-// formatSingle renders a line of the single-process view.
-func (m *runningModel) formatSingle(line supervisor.LogLine, width int) []string {
-	rows := wrap(sanitize(line.Text), width)
+// display returns a line's text sanitized, with runr's own lines faint and
+// search matches highlighted, ready to wrap.
+func (m *runningModel) display(line supervisor.LogLine, current uint64) string {
+	text := sanitize(line.Text)
 	if line.Stream == supervisor.System {
-		for i, row := range rows {
-			rows[i] = faintStyle.Render(row)
+		text = "\x1b[2m" + text
+	}
+	if m.search.active() {
+		if ranges := m.search.find(plain(text)); len(ranges) > 0 {
+			on := matchStyle
+			if current != 0 && line.Seq == current {
+				on = currentStyle
+			}
+			text = highlight(text, ranges, on)
 		}
 	}
-	return rows
+	return text
+}
+
+// formatSingle renders a line of the single-process view.
+func (m *runningModel) formatSingle(line supervisor.LogLine, width int) []string {
+	return wrap(m.display(line, m.single.current), width)
 }
 
 func (m *runningModel) View() tea.View {
@@ -499,6 +632,11 @@ func (m *runningModel) help() string {
 	if m.notice != "" {
 		return ansi.Truncate(" "+warnStyle.Render(m.notice), m.width, "…")
 	}
+	if m.editing {
+		hints := boldStyle.Render("enter") + " " + faintStyle.Render("search") + "  " +
+			boldStyle.Render("esc") + " " + faintStyle.Render("cancel")
+		return ansi.Truncate(" "+boldStyle.Render("/")+m.input.View()+"  "+hints, m.width, "…")
+	}
 	view, stop := "view", "start"
 	if m.single != nil {
 		view = "all"
@@ -508,13 +646,17 @@ func (m *runningModel) help() string {
 	}
 	// Hints are dropped from the end of the middle when narrow.
 	keys := [][2]string{
-		{"↑↓", "select"}, {"tab", view}, {"r", "restart"}, {"s", stop},
+		{"↑↓", "select"}, {"tab", view}, {"r", "restart"}, {"s", stop}, {"/", "search"},
 		{"pgup/pgdn", "scroll"}, {"g/G", "top/bottom"}, {"f", "follow"}, {"q", "quit"},
 	}
-	if m.stopping {
-		keys = [][2]string{{"ctrl+c", "force quit"}}
-	}
 	var parts []string
+	if m.search.active() {
+		keys = append([][2]string{{"n/N", "next/prev"}, {"esc", "clear"}}, keys...)
+		parts = append(parts, boldStyle.Render("/"+m.search.query)+" "+faintStyle.Render(m.matchInfo))
+	}
+	if m.stopping {
+		keys, parts = [][2]string{{"ctrl+c", "force quit"}}, nil
+	}
 	for _, k := range keys {
 		parts = append(parts, boldStyle.Render(k[0])+" "+faintStyle.Render(k[1]))
 	}

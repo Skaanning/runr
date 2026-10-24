@@ -22,6 +22,8 @@ type logView struct {
 
 	width, height int
 
+	current uint64 // Seq of the search match jumped to; 0 if none
+
 	// Cached rendering, valid unless dirty.
 	dirty       bool
 	rows        []string
@@ -101,6 +103,45 @@ func (v *logView) toggleFollow() {
 	v.render()
 	v.follow, v.anchorTop, v.anchor = false, false, max(v.last, 0)
 	v.dirty = true
+}
+
+// reveal scrolls line i into view, unless it already is, roughly centered.
+func (v *logView) reveal(i int) {
+	v.render()
+	if (i > v.first || i == v.first && v.atTop) && i <= v.last {
+		return
+	}
+	v.follow, v.anchorTop = false, false
+	v.anchor = min(i+(v.height-1)/2, len(v.lines)-1)
+	v.dirty = true
+	v.render()
+	if i < v.first || i == v.first && !v.atTop {
+		// Wrapped lines below it took the space.
+		v.anchor = i
+		v.dirty = true
+	}
+}
+
+// matching returns the indexes of the lines that contain the search query.
+func (v *logView) matching(s search) []int {
+	var out []int
+	var buf []byte
+	for i, l := range v.lines {
+		if s.matches(l.Text, &buf) {
+			out = append(out, i)
+		}
+	}
+	return out
+}
+
+// indexOf returns the index of the line with the given Seq, or -1.
+func (v *logView) indexOf(seq uint64) int {
+	for i := len(v.lines) - 1; i >= 0; i-- {
+		if v.lines[i].Seq == seq {
+			return i
+		}
+	}
+	return -1
 }
 
 // following reports whether new lines scroll into view.
