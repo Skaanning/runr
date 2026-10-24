@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/huh/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"runr/internal/config"
@@ -21,35 +22,51 @@ type launcherItem struct {
 // startMsg asks the app to start the given groups and projects.
 type startMsg struct{ names []string }
 
-// launcherModel lists groups and projects and lets the user pick what to
-// start.
+// launcherModel lists groups and projects, lets the user pick what to start,
+// and edits the registry through forms.
 type launcherModel struct {
 	cfg      *config.Config
+	save     SaveFunc       // nil: changes are only kept in memory
 	items    []launcherItem // groups first, then projects, each sorted
 	selected map[string]bool
 	missing  map[string]bool // projects whose dir does not exist
 	cursor   int             // index into items
 	top      int             // first row shown, see rows
 	notice   string          // shown instead of the help line until the next key
+	form     *editForm       // open project or group form, or nil
+	confirm  *confirmation   // open delete confirmation, or nil
 
 	width, height int
 }
 
-func newLauncherModel(cfg *config.Config) *launcherModel {
-	m := &launcherModel{cfg: cfg, selected: map[string]bool{}, missing: map[string]bool{}}
-	for _, g := range slices.Sorted(maps.Keys(cfg.Groups)) {
+func newLauncherModel(cfg *config.Config, save SaveFunc) *launcherModel {
+	m := &launcherModel{cfg: cfg, save: save, selected: map[string]bool{}}
+	m.reload()
+	return m
+}
+
+// reload rebuilds the list from the config.
+func (m *launcherModel) reload() {
+	m.items = m.items[:0]
+	for _, g := range slices.Sorted(maps.Keys(m.cfg.Groups)) {
 		m.items = append(m.items, launcherItem{name: g, group: true})
 	}
-	for _, p := range slices.Sorted(maps.Keys(cfg.Projects)) {
+	for _, p := range slices.Sorted(maps.Keys(m.cfg.Projects)) {
 		m.items = append(m.items, launcherItem{name: p})
 	}
-	warnings, _ := cfg.Validate()
+	m.missing = map[string]bool{}
+	warnings, _ := m.cfg.Validate()
 	for _, w := range warnings {
 		if w.Field == "dir" {
 			m.missing[w.Name] = true
 		}
 	}
-	return m
+	for p := range m.selected {
+		if m.cfg.Projects[p] == nil {
+			delete(m.selected, p)
+		}
+	}
+	m.cursor = max(min(m.cursor, len(m.items)-1), 0)
 }
 
 func (m *launcherModel) Init() tea.Cmd { return nil }
@@ -58,8 +75,17 @@ func (m *launcherModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
+		m.sizeForm()
 	case interruptMsg:
 		return m, tea.Quit
+	}
+	switch {
+	case m.form != nil:
+		return m, m.updateForm(msg)
+	case m.confirm != nil:
+		return m, m.updateConfirm(msg)
+	}
+	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		m.notice = ""
 		switch msg.String() {
@@ -83,9 +109,137 @@ func (m *launcherModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if len(names) > 0 {
 				return m, func() tea.Msg { return startMsg{names} }
 			}
+		case "n":
+			return m, m.openForm(newProjectForm(m.cfg, ""))
+		case "e":
+			if it, ok := m.current(); ok && it.group {
+				return m, m.openForm(newGroupForm(m.cfg, it.name, nil))
+			} else if ok {
+				return m, m.openForm(newProjectForm(m.cfg, it.name))
+			}
+		case "g":
+			if it, ok := m.current(); ok && it.group {
+				return m, m.openForm(newGroupForm(m.cfg, it.name, nil))
+			}
+			return m, m.openForm(newGroupForm(m.cfg, "", slices.Sorted(maps.Keys(m.selected))))
+		case "d":
+			if it, ok := m.current(); ok {
+				m.confirm = newDeleteConfirmation(m.cfg, it)
+			}
 		}
 	}
 	return m, nil
+}
+
+// current returns the item under the cursor.
+func (m *launcherModel) current() (launcherItem, bool) {
+	if m.cursor < len(m.items) {
+		return m.items[m.cursor], true
+	}
+	return launcherItem{}, false
+}
+
+func (m *launcherModel) openForm(f *editForm) tea.Cmd {
+	m.form = f
+	m.sizeForm()
+	return f.form.Init()
+}
+
+func (m *launcherModel) sizeForm() {
+	if m.form != nil && m.width > 0 {
+		m.form.form.WithWidth(max(m.width-2, 10)).WithHeight(max(m.height-4, 3))
+	}
+}
+
+func (m *launcherModel) updateForm(msg tea.Msg) tea.Cmd {
+	if k, ok := msg.(tea.KeyPressMsg); ok {
+		m.notice = ""
+		switch k.String() {
+		case "ctrl+c":
+			return tea.Quit
+		case "esc":
+			m.form = nil
+			return nil
+		}
+	}
+	f, cmd := m.form.form.Update(msg)
+	m.form.form = f.(*huh.Form)
+	switch m.form.form.State {
+	case huh.StateCompleted:
+		return m.submitForm()
+	case huh.StateAborted:
+		m.form = nil
+	}
+	return cmd
+}
+
+// submitForm saves a completed form, or reopens it with the error shown.
+func (m *launcherModel) submitForm() tea.Cmd {
+	f := m.form
+	if !f.confirmed() {
+		m.form = nil
+		return nil
+	}
+	c, focus, err := f.result()
+	if err == nil {
+		_, err = c.Validate()
+	}
+	if err == nil && m.save != nil {
+		err = m.save(c)
+	}
+	if err != nil {
+		m.notice = oneLine(err.Error())
+		f.form = f.rebuild()
+		m.sizeForm()
+		return f.form.Init()
+	}
+	m.form = nil
+	m.apply(c)
+	if i := slices.Index(m.items, focus); i >= 0 {
+		m.cursor = i
+	}
+	kind := "project"
+	if focus.group {
+		kind = "group"
+	}
+	m.notice = fmt.Sprintf("saved %s %q", kind, focus.name)
+	return nil
+}
+
+func (m *launcherModel) updateConfirm(msg tea.Msg) tea.Cmd {
+	k, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return nil
+	}
+	switch k.String() {
+	case "ctrl+c":
+		return tea.Quit
+	case "y", "enter":
+		c := m.confirm.result()
+		m.confirm = nil
+		if m.save != nil {
+			if err := m.save(c); err != nil {
+				m.notice = oneLine(err.Error())
+				return nil
+			}
+		}
+		m.apply(c)
+	case "n", "esc":
+		m.confirm = nil
+	}
+	return nil
+}
+
+// apply replaces the config in place, so everything sharing it sees the
+// change, and rebuilds the list.
+func (m *launcherModel) apply(c *config.Config) {
+	*m.cfg = *c
+	m.reload()
+}
+
+// oneLine joins a multi-line message, e.g. a list of validation errors.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // members returns the projects an item stands for.
@@ -170,12 +324,30 @@ func (m *launcherModel) render() string {
 	}
 	m.top = max(min(m.top, len(rows)-body), 0)
 
+	if m.form != nil {
+		rows = strings.Split(m.form.form.View(), "\n")
+		for i, r := range rows {
+			rows[i] = " " + r
+		}
+		m.top = 0
+	}
+	if m.confirm != nil {
+		rows = []string{""}
+		for _, l := range m.confirm.lines {
+			rows = append(rows, "  "+l)
+		}
+		m.top = 0
+	}
+
 	var b strings.Builder
 	right := ""
 	if n := len(m.selected); n > 0 {
 		right = fmt.Sprintf("%d selected ", n)
 	}
 	left := " " + boldStyle.Render("runr")
+	if m.form != nil {
+		left += " · " + m.form.title
+	}
 	b.WriteString(left + strings.Repeat(" ", max(m.width-ansi.StringWidth(left)-len(right), 1)) + right)
 	b.WriteString("\n" + ruleStyle.Render(strings.Repeat("─", m.width)) + "\n")
 	for r := range body {
@@ -195,7 +367,7 @@ func (m *launcherModel) rows() (rows []string, cursorRow int) {
 	if len(m.items) == 0 {
 		return []string{
 			"",
-			"  No projects yet. Register one with:",
+			"  No projects yet. Press n to add one, or run:",
 			"",
 			"    runr add <name> --dir <path> -- <command>",
 		}, 0
@@ -268,7 +440,20 @@ func (m *launcherModel) help() string {
 	if m.notice != "" {
 		return ansi.Truncate(" "+warnStyle.Render(m.notice), m.width, "…")
 	}
-	return ansi.Truncate(" "+hintList([][2]string{
-		{"↑↓", "move"}, {"space", "select"}, {"enter", "start"}, {"q", "quit"},
-	}), m.width, "…")
+	if m.form != nil {
+		if errs := m.form.form.Errors(); len(errs) > 0 {
+			return ansi.Truncate(" "+errStyle.Render("✗ "+oneLine(errs[0].Error())), m.width, "…")
+		}
+	}
+	keys := [][2]string{
+		{"↑↓", "move"}, {"space", "select"}, {"enter", "start"},
+		{"n", "new"}, {"e", "edit"}, {"g", "group"}, {"d", "delete"}, {"q", "quit"},
+	}
+	switch {
+	case m.form != nil:
+		keys = [][2]string{{"tab/enter", "next"}, {"shift+tab", "back"}, {"space", "toggle"}, {"esc", "cancel"}}
+	case m.confirm != nil:
+		keys = [][2]string{{"y", "delete"}, {"n", "cancel"}}
+	}
+	return ansi.Truncate(" "+hintList(keys), m.width, "…")
 }

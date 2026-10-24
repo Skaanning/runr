@@ -9,6 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"runr/internal/config"
 	"runr/internal/supervisor"
 	"runr/internal/tui"
 )
@@ -73,7 +74,13 @@ func runLauncher(cmd *cobra.Command) error {
 		}
 		return sup, nil
 	}
-	err = tui.RunLauncher(s.cfg, start, sigs)
+	// Forms edit a copy; once it validates and is written, the launcher
+	// copies it into s.cfg, which start reads.
+	save := func(c *config.Config) error {
+		_, err := (&store{path: s.path, cfg: c}).save()
+		return err
+	}
+	err = tui.RunLauncher(s.cfg, start, save, sigs)
 	if sup != nil {
 		finish(cmd.ErrOrStderr(), sup)
 	}

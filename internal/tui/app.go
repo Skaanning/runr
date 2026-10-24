@@ -2,7 +2,6 @@ package tui
 
 import (
 	"os"
-	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -37,7 +36,7 @@ func (a *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		sess, err := a.start(msg.names)
 		if err != nil {
 			// Multi-line errors (e.g. several missing dirs) fit on one line.
-			a.launcher.notice = strings.Join(strings.Fields(err.Error()), " ")
+			a.launcher.notice = oneLine(err.Error())
 			return a, nil
 		}
 		a.running = newRunningModel(sess, a.cfg, msg.names)
@@ -56,10 +55,10 @@ func (a *appModel) View() tea.View {
 }
 
 // RunLauncher shows the launcher, and the running view once the user starts
-// something, until the user quits. Signals received on sigs are handled
-// like Ctrl+C.
-func RunLauncher(cfg *config.Config, start StartFunc, sigs <-chan os.Signal) error {
-	return run(&appModel{cfg: cfg, start: start, launcher: newLauncherModel(cfg)}, sigs)
+// something, until the user quits. Changes made in the launcher's forms are
+// written with save. Signals received on sigs are handled like Ctrl+C.
+func RunLauncher(cfg *config.Config, start StartFunc, save SaveFunc, sigs <-chan os.Signal) error {
+	return run(&appModel{cfg: cfg, start: start, launcher: newLauncherModel(cfg, save)}, sigs)
 }
 
 // Run shows the running view until the user quits and every process has

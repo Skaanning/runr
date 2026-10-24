@@ -250,3 +250,37 @@ func TestLabel(t *testing.T) {
 		t.Errorf("Label = %q", got)
 	}
 }
+
+func TestClone(t *testing.T) {
+	c := &Config{
+		Projects: map[string]*Project{"api": {Dir: "/x", Cmd: "run", Env: map[string]string{"A": "1"}, DependsOn: []string{"db"}}, "db": {Dir: "/x", Cmd: "db"}},
+		Groups:   map[string][]string{"backend": {"db", "api"}},
+	}
+	cp := c.Clone()
+	cp.Projects["api"].Env["A"] = "2"
+	cp.Projects["api"].DependsOn[0] = "x"
+	cp.Groups["backend"][0] = "x"
+	cp.Projects["api"].Cmd = "other"
+	if c.Projects["api"].Env["A"] != "1" || c.Projects["api"].DependsOn[0] != "db" || c.Groups["backend"][0] != "db" || c.Projects["api"].Cmd != "run" {
+		t.Fatal("clone shares data with the original")
+	}
+}
+
+func TestRemoveProject(t *testing.T) {
+	c := &Config{
+		Projects: map[string]*Project{
+			"db":  {Cmd: "db"},
+			"api": {Cmd: "api", DependsOn: []string{"db", "cache"}},
+			"web": {Cmd: "web", DependsOn: []string{"db"}},
+		},
+		Groups: map[string][]string{"all": {"db", "api", "web"}, "front": {"web"}, "data": {"db"}},
+	}
+	groups, dependents := c.RemoveProject("db")
+	if strings.Join(groups, ",") != "all,data" || strings.Join(dependents, ",") != "api,web" {
+		t.Fatalf("groups = %v, dependents = %v", groups, dependents)
+	}
+	if c.Projects["db"] != nil || strings.Join(c.Projects["api"].DependsOn, ",") != "cache" ||
+		len(c.Projects["web"].DependsOn) != 0 || strings.Join(c.Groups["all"], ",") != "api,web" || len(c.Groups["data"]) != 0 {
+		t.Fatalf("config after removal: %+v %v", c.Projects, c.Groups)
+	}
+}

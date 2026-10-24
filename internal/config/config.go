@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -242,4 +244,54 @@ func DisplayPath(path string) string {
 		return "~" + string(filepath.Separator) + rel
 	}
 	return path
+}
+
+// NormalizeDir makes dir absolute, keeping a leading ~ so the config stays
+// portable between machines.
+func NormalizeDir(dir string) (string, error) {
+	if dir == "" || strings.HasPrefix(dir, "~") {
+		return dir, nil
+	}
+	return filepath.Abs(dir)
+}
+
+// Clone returns a deep copy of the config.
+func (c *Config) Clone() *Config {
+	out := &Config{Settings: c.Settings}
+	if c.Projects != nil {
+		out.Projects = make(map[string]*Project, len(c.Projects))
+		for name, p := range c.Projects {
+			cp := *p
+			cp.Env = maps.Clone(p.Env)
+			cp.DependsOn = slices.Clone(p.DependsOn)
+			out.Projects[name] = &cp
+		}
+	}
+	if c.Groups != nil {
+		out.Groups = make(map[string][]string, len(c.Groups))
+		for name, members := range c.Groups {
+			out.Groups[name] = slices.Clone(members)
+		}
+	}
+	return out
+}
+
+// RemoveProject deletes a project and every reference to it: it is removed
+// from groups and from the depends_on of other projects. It returns the
+// groups and the dependents that were changed, sorted.
+func (c *Config) RemoveProject(name string) (groups, dependents []string) {
+	dependents = c.Dependents(name)
+	delete(c.Projects, name)
+	for _, dep := range dependents {
+		p := c.Projects[dep]
+		p.DependsOn = slices.DeleteFunc(p.DependsOn, func(d string) bool { return d == name })
+	}
+	for _, group := range slices.Sorted(maps.Keys(c.Groups)) {
+		members := c.Groups[group]
+		if slices.Contains(members, name) {
+			c.Groups[group] = slices.DeleteFunc(members, func(m string) bool { return m == name })
+			groups = append(groups, group)
+		}
+	}
+	return groups, dependents
 }

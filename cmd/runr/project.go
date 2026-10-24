@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -46,7 +45,7 @@ func (f *projectFlags) register(cmd *cobra.Command) {
 func (f *projectFlags) apply(cmd *cobra.Command, p *config.Project) error {
 	changed := cmd.Flags().Changed
 	if changed("dir") {
-		dir, err := normalizeDir(f.dir)
+		dir, err := config.NormalizeDir(f.dir)
 		if err != nil {
 			return err
 		}
@@ -85,15 +84,6 @@ func (f *projectFlags) apply(cmd *cobra.Command, p *config.Project) error {
 		p.ReadyLog = f.readyLog
 	}
 	return nil
-}
-
-// normalizeDir makes dir absolute, keeping a leading ~ so the config stays
-// portable between machines.
-func normalizeDir(dir string) (string, error) {
-	if dir == "" || strings.HasPrefix(dir, "~") {
-		return dir, nil
-	}
-	return filepath.Abs(dir)
 }
 
 // splitNameAndCommand parses "<name> -- <cmd...>" or "<name> [<cmd>]".
@@ -254,19 +244,7 @@ func newRmCmd() *cobra.Command {
 					name, strings.Join(dependents, ", "))
 			}
 
-			delete(s.cfg.Projects, name)
-			for _, dep := range dependents {
-				p := s.cfg.Projects[dep]
-				p.DependsOn = without(p.DependsOn, name)
-			}
-			var groups []string
-			for _, group := range sortedNames(s.cfg.Groups) {
-				members := s.cfg.Groups[group]
-				if trimmed := without(members, name); len(trimmed) != len(members) {
-					s.cfg.Groups[group] = trimmed
-					groups = append(groups, group)
-				}
-			}
+			groups, _ := s.cfg.RemoveProject(name)
 
 			if _, err := s.save(); err != nil {
 				return err
