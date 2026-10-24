@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"runr/internal/config"
-	"runr/internal/proc"
+	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/proc"
 )
 
 var (

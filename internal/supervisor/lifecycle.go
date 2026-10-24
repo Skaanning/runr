@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"runr/internal/config"
-	"runr/internal/proc"
+	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/proc"
 )
 
 // The methods in this file run on the loop goroutine.

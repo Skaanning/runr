@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"runr/internal/config"
+	"github.com/Skaanning/runr/internal/config"
 )
 
 // testEnv points runr at a fresh config file for the duration of the test.

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"runr/internal/config"
+	"github.com/Skaanning/runr/internal/config"
 )
 
 // store is the loaded config plus the path it came from.

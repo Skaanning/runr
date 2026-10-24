@@ -3,7 +3,7 @@ package tui
 import (
 	"math"
 
-	"runr/internal/supervisor"
+	"github.com/Skaanning/runr/internal/supervisor"
 )
 
 // formatFunc renders one log line as rows at most width cells wide.

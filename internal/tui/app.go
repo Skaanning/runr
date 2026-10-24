@@ -5,7 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"runr/internal/config"
+	"github.com/Skaanning/runr/internal/config"
 )
 
 // StartFunc validates and starts the given groups and projects, returning

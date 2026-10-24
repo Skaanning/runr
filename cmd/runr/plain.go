@@ -9,8 +9,8 @@ import (
 
 	"github.com/charmbracelet/x/term"
 
-	"runr/internal/config"
-	"runr/internal/supervisor"
+	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/supervisor"
 )
 
 // runPlain starts the projects and prints their output interleaved, one line

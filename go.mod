@@ -1,4 +1,4 @@
-module runr
+module github.com/Skaanning/runr
 
 go 1.27.3
 

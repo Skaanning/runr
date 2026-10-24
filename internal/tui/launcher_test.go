@@ -9,7 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"runr/internal/config"
+	"github.com/Skaanning/runr/internal/config"
 )
 
 func launcherConfig(t *testing.T) *config.Config {

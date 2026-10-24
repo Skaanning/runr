@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"runr/internal/config"
+	"github.com/Skaanning/runr/internal/config"
 )
 
 func TestAdd(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"charm.land/huh/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"runr/internal/config"
+	"github.com/Skaanning/runr/internal/config"
 )
 
 // launcherItem is a group or project in the launcher list.

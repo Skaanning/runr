@@ -3,7 +3,7 @@ package supervisor
 import (
 	"time"
 
-	"runr/internal/proc"
+	"github.com/Skaanning/runr/internal/proc"
 )
 
 // State is the lifecycle state of a managed project.

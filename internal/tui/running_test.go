@@ -9,9 +9,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"runr/internal/config"
-	"runr/internal/proc"
-	"runr/internal/supervisor"
+	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/proc"
+	"github.com/Skaanning/runr/internal/supervisor"
 )
 
 type fakeSession struct {

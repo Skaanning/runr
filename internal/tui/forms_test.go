@@ -10,7 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/huh/v2"
 
-	"runr/internal/config"
+	"github.com/Skaanning/runr/internal/config"
 )
 
 func TestParseEnv(t *testing.T) {

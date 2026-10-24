@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"runr/internal/config"
+	"github.com/Skaanning/runr/internal/config"
 )
 
 const testTimeout = 300 * time.Millisecond

@@ -12,8 +12,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"runr/internal/gitinfo"
-	"runr/internal/supervisor"
+	"github.com/Skaanning/runr/internal/gitinfo"
+	"github.com/Skaanning/runr/internal/supervisor"
 )
 
 // fakeGit serves canned git state: projects map to repository roots.

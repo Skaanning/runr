@@ -5,17 +5,30 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/spf13/cobra"
 
-	"runr/internal/config"
-	"runr/internal/supervisor"
-	"runr/internal/tui"
+	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/supervisor"
+	"github.com/Skaanning/runr/internal/tui"
 )
 
 // version is overridden at build time via -ldflags "-X main.version=...".
 var version = "dev"
+
+// buildVersion returns version, or for a binary built with
+// `go install <module>@<version>` the module version Go recorded.
+func buildVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return version
+}
 
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
@@ -23,7 +36,7 @@ func newRootCmd() *cobra.Command {
 		Short: "Run multiple local projects at once",
 		Long: "runr runs multiple local projects (e.g. microservices) at once and shows\n" +
 			"their output in a terminal UI. Run without arguments to open the launcher.",
-		Version:       version,
+		Version:       buildVersion(),
 		Args:          cobra.NoArgs,
 		SilenceUsage:  true,
 		SilenceErrors: true,

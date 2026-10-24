@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"runr/internal/gitinfo"
+	"github.com/Skaanning/runr/internal/gitinfo"
 )
 
 // Git actions run on the selected project's repository, in the background.

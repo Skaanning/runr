@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"runr/internal/proc"
-	"runr/internal/supervisor"
+	"github.com/Skaanning/runr/internal/proc"
+	"github.com/Skaanning/runr/internal/supervisor"
 )
 
 func TestUpWithoutTerminalPrintsPlain(t *testing.T) {

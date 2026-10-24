@@ -8,7 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"runr/internal/gitinfo"
+	"github.com/Skaanning/runr/internal/gitinfo"
 )
 
 // newGitModel returns a running view where api and Worker share the clean

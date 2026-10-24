@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"runr/internal/config"
+	"github.com/Skaanning/runr/internal/config"
 )
 
 func newGroupCmd() *cobra.Command {

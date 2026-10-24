@@ -5,8 +5,8 @@ import (
 
 	"charm.land/lipgloss/v2"
 
-	"runr/internal/config"
-	"runr/internal/supervisor"
+	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/supervisor"
 )
 
 var (

@@ -9,8 +9,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"runr/internal/config"
-	"runr/internal/gitinfo"
+	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/gitinfo"
 )
 
 // GitReader reads the git state of project directories and runs the git

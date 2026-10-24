@@ -26,12 +26,20 @@ Works on Linux, macOS and Windows.
 runr is built from source and needs Go 1.27 or newer.
 
 ```bash
-git clone <this repo> runr && cd runr
-go install ./cmd/runr        # puts runr in $(go env GOPATH)/bin, usually ~/go/bin
+go install github.com/Skaanning/runr/cmd/runr@latest
 ```
 
-Make sure that directory is on your `PATH`. Alternatively `make build` writes `bin/runr`,
-and `make cross` builds binaries for Linux, macOS and Windows into `dist/`.
+This puts `runr` in `$(go env GOPATH)/bin`, usually `~/go/bin`; make sure that directory is
+on your `PATH`.
+
+Or build from a clone:
+
+```bash
+git clone https://github.com/Skaanning/runr.git && cd runr
+go install ./cmd/runr        # or: make build → bin/runr
+```
+
+`make cross` builds binaries for Linux, macOS and Windows into `dist/`.
 
 ## Quick start
 

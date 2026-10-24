@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"runr/internal/config"
+	"github.com/Skaanning/runr/internal/config"
 )
 
 // projectFlags holds the flags shared by add and edit.

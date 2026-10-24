@@ -10,7 +10,7 @@ import (
 
 	"charm.land/huh/v2"
 
-	"runr/internal/config"
+	"github.com/Skaanning/runr/internal/config"
 )
 
 // SaveFunc validates and writes a changed config.

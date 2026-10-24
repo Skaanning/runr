@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"runr/internal/config"
+	"github.com/Skaanning/runr/internal/config"
 )
 
 // syncBuffer is a bytes.Buffer safe for concurrent writes and reads.

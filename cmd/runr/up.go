@@ -10,10 +10,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"runr/internal/config"
-	"runr/internal/gitinfo"
-	"runr/internal/supervisor"
-	"runr/internal/tui"
+	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/gitinfo"
+	"github.com/Skaanning/runr/internal/supervisor"
+	"github.com/Skaanning/runr/internal/tui"
 )
 
 func newUpCmd() *cobra.Command {

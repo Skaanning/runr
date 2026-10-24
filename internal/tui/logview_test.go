@@ -5,7 +5,7 @@ import (
 	"slices"
 	"testing"
 
-	"runr/internal/supervisor"
+	"github.com/Skaanning/runr/internal/supervisor"
 )
 
 func plainFormat(l supervisor.LogLine, width int) []string {

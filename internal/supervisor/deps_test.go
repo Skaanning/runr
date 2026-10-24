@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"runr/internal/config"
+	"github.com/Skaanning/runr/internal/config"
 )
 
 // depConfig builds a config from projects given as name → (cmd, deps, ready_log).
