@@ -1,0 +1,413 @@
+//go:build !windows
+
+package supervisor
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"runr/internal/config"
+)
+
+const testTimeout = 300 * time.Millisecond
+
+// recorder consumes a supervisor's events and records state history.
+type recorder struct {
+	mu      sync.Mutex
+	history map[string][]State
+	latest  map[string]ProcessInfo
+	closed  chan struct{}
+}
+
+func record(s *Supervisor) *recorder {
+	r := &recorder{history: map[string][]State{}, latest: map[string]ProcessInfo{}, closed: make(chan struct{})}
+	go func() {
+		defer close(r.closed)
+		for e := range s.Events() {
+			if se, ok := e.(StateEvent); ok {
+				r.mu.Lock()
+				r.history[se.Info.Name] = append(r.history[se.Info.Name], se.Info.State)
+				r.latest[se.Info.Name] = se.Info
+				r.mu.Unlock()
+			}
+		}
+	}()
+	return r
+}
+
+func (r *recorder) states(name string) []State {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]State(nil), r.history[name]...)
+}
+
+// waitState waits until the project's latest state is want and returns its info.
+func (r *recorder) waitState(t *testing.T, name string, want State) ProcessInfo {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		r.mu.Lock()
+		info, ok := r.latest[name]
+		r.mu.Unlock()
+		if ok && info.State == want {
+			return info
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("%s did not reach %v; history %v", name, want, r.states(name))
+	return ProcessInfo{}
+}
+
+// newTestSupervisor creates a supervisor for projects given as name → command.
+func newTestSupervisor(t *testing.T, projects map[string]string) (*Supervisor, *recorder) {
+	t.Helper()
+	cfg := config.New()
+	cfg.Settings.ShutdownTimeoutValue.Duration = testTimeout
+	dir := t.TempDir()
+	for name, cmd := range projects {
+		cfg.Projects[name] = &config.Project{Dir: dir, Cmd: cmd}
+	}
+	return newTestSupervisorWithConfig(t, cfg)
+}
+
+func newTestSupervisorWithConfig(t *testing.T, cfg *config.Config) (*Supervisor, *recorder) {
+	t.Helper()
+	s := New(cfg, Options{BaseEnv: []string{"PATH=" + os.Getenv("PATH")}})
+	r := record(s)
+	t.Cleanup(s.Close)
+	return s, r
+}
+
+// logLines returns a project's log as "stream:text" strings.
+func logLines(s *Supervisor, name string) []string {
+	var out []string
+	for _, l := range s.Logs().Lines(name) {
+		out = append(out, []string{"out", "err", "sys"}[l.Stream]+":"+l.Text)
+	}
+	return out
+}
+
+func TestStartAndExit(t *testing.T) {
+	s, r := newTestSupervisor(t, map[string]string{"api": "echo hello; echo oops >&2"})
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	info := r.waitState(t, "api", Exited)
+
+	if !info.Exit.Success() || info.Pid != 0 {
+		t.Errorf("info = %+v", info)
+	}
+	if got := r.states("api"); !reflect.DeepEqual(got, []State{Running, Exited}) {
+		t.Errorf("states = %v", got)
+	}
+	want := []string{
+		"sys:starting: echo hello; echo oops >&2",
+		"out:hello",
+		"err:oops",
+		"sys:exited (exit code 0)",
+	}
+	got := logLines(s, "api")
+	// stdout and stderr are read concurrently, so their relative order may vary.
+	if len(got) != 4 || got[0] != want[0] || got[3] != want[3] ||
+		!(reflect.DeepEqual(got[1:3], want[1:3]) || reflect.DeepEqual(got[1:3], []string{want[2], want[1]})) {
+		t.Errorf("logs = %q", got)
+	}
+}
+
+func TestCrash(t *testing.T) {
+	s, r := newTestSupervisor(t, map[string]string{"api": "exit 3"})
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	info := r.waitState(t, "api", Crashed)
+	if info.Exit.Code != 3 {
+		t.Errorf("exit = %+v", info.Exit)
+	}
+	if logs := logLines(s, "api"); logs[len(logs)-1] != "sys:crashed (exit code 3)" {
+		t.Errorf("logs = %q", logs)
+	}
+}
+
+func TestStartErrors(t *testing.T) {
+	cfg := config.New()
+	cfg.Projects["sleepy"] = &config.Project{Dir: t.TempDir(), Cmd: "sleep 30"}
+	cfg.Projects["nodir"] = &config.Project{Dir: filepath.Join(t.TempDir(), "gone"), Cmd: "true"}
+	s, r := newTestSupervisorWithConfig(t, cfg)
+
+	if err := s.Start("nope"); err == nil || err.Error() != `unknown project "nope"` {
+		t.Errorf("unknown: %v", err)
+	}
+
+	if err := s.Start("sleepy"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "sleepy", Running)
+	if err := s.Start("sleepy"); err == nil || err.Error() != "sleepy is already running" {
+		t.Errorf("double start: %v", err)
+	}
+
+	// A start failure is not an API error; it shows up as Crashed.
+	if err := s.Start("nodir"); err != nil {
+		t.Fatal(err)
+	}
+	info := r.waitState(t, "nodir", Crashed)
+	if info.Exit.Err == nil {
+		t.Errorf("exit = %+v", info.Exit)
+	}
+	if logs := logLines(s, "nodir"); !strings.HasPrefix(logs[len(logs)-1], "sys:failed to start:") {
+		t.Errorf("logs = %q", logs)
+	}
+}
+
+func TestStopGraceful(t *testing.T) {
+	s, r := newTestSupervisor(t, map[string]string{"api": "sleep 30"})
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "api", Running)
+
+	start := time.Now()
+	if err := s.Stop("api"); err != nil {
+		t.Fatal(err)
+	}
+	info := r.waitState(t, "api", Stopped)
+	if elapsed := time.Since(start); elapsed >= testTimeout {
+		t.Errorf("graceful stop took %v (kill timeout is %v)", elapsed, testTimeout)
+	}
+	if info.Exit.Signal != "terminated" {
+		t.Errorf("exit = %+v", info.Exit)
+	}
+	if got := r.states("api"); !reflect.DeepEqual(got, []State{Running, Stopping, Stopped}) {
+		t.Errorf("states = %v", got)
+	}
+}
+
+func TestStopKillsAfterTimeout(t *testing.T) {
+	s, r := newTestSupervisor(t, map[string]string{"api": "trap '' TERM; echo ready; sleep 30"})
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	waitLog(t, s, "api", "out:ready")
+
+	start := time.Now()
+	if err := s.Stop("api"); err != nil {
+		t.Fatal(err)
+	}
+	info := r.waitState(t, "api", Stopped)
+	if elapsed := time.Since(start); elapsed < testTimeout {
+		t.Errorf("stopped after %v, before the %v timeout", elapsed, testTimeout)
+	}
+	if info.Exit.Signal != "killed" {
+		t.Errorf("exit = %+v", info.Exit)
+	}
+	if !containsLine(logLines(s, "api"), "sys:still running after 300ms, killing") {
+		t.Errorf("logs = %q", logLines(s, "api"))
+	}
+}
+
+func TestKill(t *testing.T) {
+	s, r := newTestSupervisor(t, map[string]string{"api": "trap '' TERM; echo ready; sleep 30"})
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	waitLog(t, s, "api", "out:ready")
+
+	start := time.Now()
+	if err := s.Kill("api"); err != nil {
+		t.Fatal(err)
+	}
+	info := r.waitState(t, "api", Stopped)
+	if elapsed := time.Since(start); elapsed >= testTimeout {
+		t.Errorf("kill took %v", elapsed)
+	}
+	if info.Exit.Signal != "killed" {
+		t.Errorf("exit = %+v", info.Exit)
+	}
+}
+
+func TestStopWhenNotAliveIsNoop(t *testing.T) {
+	s, r := newTestSupervisor(t, map[string]string{"api": "true"})
+	if err := s.Stop("api"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "api", Exited)
+	if err := s.Stop("api"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := r.states("api"); !reflect.DeepEqual(got, []State{Running, Exited}) {
+		t.Errorf("states = %v", got)
+	}
+}
+
+func TestRestart(t *testing.T) {
+	s, r := newTestSupervisor(t, map[string]string{"api": "echo run; sleep 30"})
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	waitLog(t, s, "api", "out:run")
+	firstPid := r.waitState(t, "api", Running).Pid
+
+	if err := s.Restart("api"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for countLines(logLines(s, "api"), "out:run") < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("no second run; logs %q", logLines(s, "api"))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	info := r.waitState(t, "api", Running)
+	if info.Restarts != 1 || info.Pid == firstPid || info.Pid == 0 {
+		t.Errorf("info = %+v (first pid %d)", info, firstPid)
+	}
+	if got := r.states("api"); !reflect.DeepEqual(got, []State{Running, Stopping, Stopped, Running}) {
+		t.Errorf("states = %v", got)
+	}
+}
+
+func TestRestartWhenNotAlive(t *testing.T) {
+	s, r := newTestSupervisor(t, map[string]string{"api": "echo run"})
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "api", Exited)
+	if err := s.Restart("api"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for countLines(logLines(s, "api"), "out:run") < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("no second run; logs %q", logLines(s, "api"))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func TestEnvLayers(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("B=file\nC=file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.New()
+	cfg.Projects["api"] = &config.Project{
+		Dir:     dir,
+		Cmd:     `echo "$A $B $C $FORCE_COLOR"`,
+		EnvFile: ".env",
+		Env:     map[string]string{"C": "env"},
+	}
+	s := New(cfg, Options{BaseEnv: []string{"PATH=" + os.Getenv("PATH"), "A=base", "B=base", "C=base"}})
+	r := record(s)
+	t.Cleanup(s.Close)
+
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "api", Exited)
+	if !containsLine(logLines(s, "api"), "out:base file env 1") {
+		t.Errorf("logs = %q", logLines(s, "api"))
+	}
+}
+
+func TestMissingEnvFileFailsStart(t *testing.T) {
+	cfg := config.New()
+	cfg.Projects["api"] = &config.Project{Dir: t.TempDir(), Cmd: "true", EnvFile: "missing.env"}
+	s, r := newTestSupervisorWithConfig(t, cfg)
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	info := r.waitState(t, "api", Crashed)
+	if info.Exit.Err == nil || !strings.Contains(info.Exit.Err.Error(), "env file") {
+		t.Errorf("exit = %+v", info.Exit)
+	}
+}
+
+func TestProcesses(t *testing.T) {
+	s, r := newTestSupervisor(t, map[string]string{"b": "sleep 30", "a": "true", "c": "true"})
+	for _, name := range []string{"b", "a"} {
+		if err := s.Start(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.waitState(t, "a", Exited)
+	r.waitState(t, "b", Running)
+
+	got := s.Processes()
+	if len(got) != 2 || got[0].Name != "a" || got[0].State != Exited || got[1].Name != "b" || got[1].State != Running {
+		t.Errorf("Processes() = %+v", got)
+	}
+}
+
+func TestClose(t *testing.T) {
+	cfg := config.New()
+	cfg.Settings.ShutdownTimeoutValue.Duration = time.Hour // Close must not wait for this
+	dir := t.TempDir()
+	cfg.Projects["a"] = &config.Project{Dir: dir, Cmd: "trap '' TERM; sleep 30"}
+	cfg.Projects["b"] = &config.Project{Dir: dir, Cmd: "sleep 30"}
+	s := New(cfg, Options{BaseEnv: []string{"PATH=" + os.Getenv("PATH")}})
+	r := record(s)
+
+	for _, name := range []string{"a", "b"} {
+		if err := s.Start(name); err != nil {
+			t.Fatal(err)
+		}
+		r.waitState(t, name, Running)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		s.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close did not return")
+	}
+	select {
+	case <-r.closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Events was not closed")
+	}
+
+	if err := s.Start("a"); !errors.Is(err, ErrClosed) {
+		t.Errorf("Start after Close: %v", err)
+	}
+	s.Close() // idempotent
+}
+
+func waitLog(t *testing.T, s *Supervisor, name, line string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !containsLine(logLines(s, name), line) {
+		if time.Now().After(deadline) {
+			t.Fatalf("log line %q not seen; logs %q", line, logLines(s, name))
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+func containsLine(lines []string, line string) bool {
+	return countLines(lines, line) > 0
+}
+
+func countLines(lines []string, line string) int {
+	n := 0
+	for _, l := range lines {
+		if l == line {
+			n++
+		}
+	}
+	return n
+}
