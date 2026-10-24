@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"runr/internal/config"
+	"runr/internal/gitinfo"
 	"runr/internal/supervisor"
 	"runr/internal/tui"
 )
@@ -57,10 +58,20 @@ func runTUI(stderr io.Writer, cfg *config.Config, names []string, sigs <-chan os
 	sup := supervisor.New(cfg, supervisor.Options{})
 	err := sup.Start(names...)
 	if err == nil {
-		err = tui.Run(sup, cfg, names, sigs)
+		err = tui.Run(sup, cfg, names, gitReader(), sigs)
 	}
 	finish(stderr, sup)
 	return err
+}
+
+// gitReader returns the reader for the TUI's git display, or nil (hiding
+// it) when git is not installed.
+func gitReader() tui.GitReader {
+	g, err := gitinfo.New()
+	if err != nil {
+		return nil
+	}
+	return g
 }
 
 // finish shuts a supervisor down after the TUI has exited and reports

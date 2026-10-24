@@ -81,7 +81,7 @@ func runLauncher(cmd *cobra.Command) error {
 		_, err := (&store{path: s.path, cfg: c}).save()
 		return err
 	}
-	err = tui.RunLauncher(s.cfg, start, save, sigs)
+	err = tui.RunLauncher(s.cfg, start, save, gitReader(), sigs)
 	if sup != nil {
 		finish(cmd.ErrOrStderr(), sup)
 	}

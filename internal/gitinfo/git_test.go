@@ -184,8 +184,15 @@ func TestFindAll(t *testing.T) {
 	if len(r.ByRoot) != 2 || r.ByRoot[root].GitDir != filepath.Join(root, ".git") {
 		t.Errorf("ByRoot = %v", r.ByRoot)
 	}
-	if len(r.Errors) != 1 || r.Errors["gone"] == nil {
+	if len(r.Errors) != 0 {
 		t.Errorf("Errors = %v", r.Errors)
+	}
+
+	// Failures other than "not a repo" are reported per project.
+	g.Timeout = time.Nanosecond
+	r = g.FindAll(context.Background(), map[string]string{"api": root, "gone": missing})
+	if len(r.Errors) != 1 || !errors.Is(r.Errors["api"], context.DeadlineExceeded) || len(r.Of) != 0 {
+		t.Errorf("with timeouts: %+v", r)
 	}
 }
 

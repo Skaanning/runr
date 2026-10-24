@@ -57,7 +57,8 @@ type Repos struct {
 
 // FindAll looks up the repositories of projects, given as name → directory,
 // so that projects sharing a repository can be queried once. Each distinct
-// directory is looked up once.
+// directory is looked up once. Projects whose directory does not exist are
+// treated like projects outside a repository.
 func (g *Git) FindAll(ctx context.Context, dirs map[string]string) Repos {
 	r := Repos{
 		ByRoot:  map[string]Repo{},
@@ -74,7 +75,11 @@ func (g *Git) FindAll(ctx context.Context, dirs map[string]string) Repos {
 		dir := dirs[name]
 		res, ok := found[dir]
 		if !ok {
-			res.repo, res.err = g.Find(ctx, dir)
+			if fi, err := os.Stat(dir); err != nil || !fi.IsDir() {
+				res.err = ErrNotRepo
+			} else {
+				res.repo, res.err = g.Find(ctx, dir)
+			}
 			found[dir] = res
 		}
 		switch {

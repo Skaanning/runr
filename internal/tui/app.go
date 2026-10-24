@@ -22,7 +22,7 @@ type appModel struct {
 	size     tea.WindowSizeMsg
 }
 
-func (a *appModel) Init() tea.Cmd { return nil }
+func (a *appModel) Init() tea.Cmd { return a.launcher.Init() }
 
 func (a *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if size, ok := msg.(tea.WindowSizeMsg); ok {
@@ -40,6 +40,7 @@ func (a *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, nil
 		}
 		a.running = newRunningModel(sess, a.cfg, msg.names)
+		a.running.git = a.launcher.git // already has the git state
 		a.running.Update(a.size)
 		return a, a.running.Init()
 	}
@@ -56,16 +57,22 @@ func (a *appModel) View() tea.View {
 
 // RunLauncher shows the launcher, and the running view once the user starts
 // something, until the user quits. Changes made in the launcher's forms are
-// written with save. Signals received on sigs are handled like Ctrl+C.
-func RunLauncher(cfg *config.Config, start StartFunc, save SaveFunc, sigs <-chan os.Signal) error {
-	return run(&appModel{cfg: cfg, start: start, launcher: newLauncherModel(cfg, save)}, sigs)
+// written with save. git reads the projects' git state; nil hides it.
+// Signals received on sigs are handled like Ctrl+C.
+func RunLauncher(cfg *config.Config, start StartFunc, save SaveFunc, git GitReader, sigs <-chan os.Signal) error {
+	launcher := newLauncherModel(cfg, save)
+	launcher.git = newGitTracker(git)
+	return run(&appModel{cfg: cfg, start: start, launcher: launcher}, sigs)
 }
 
 // Run shows the running view until the user quits and every process has
 // stopped. names are the groups and projects that were started, shown in
-// the header. Signals received on sigs are handled like Ctrl+C.
-func Run(sess Session, cfg *config.Config, names []string, sigs <-chan os.Signal) error {
-	return run(newRunningModel(sess, cfg, names), sigs)
+// the header. git reads the projects' git state; nil hides it. Signals
+// received on sigs are handled like Ctrl+C.
+func Run(sess Session, cfg *config.Config, names []string, git GitReader, sigs <-chan os.Signal) error {
+	m := newRunningModel(sess, cfg, names)
+	m.git = newGitTracker(git)
+	return run(m, sigs)
 }
 
 func run(model tea.Model, sigs <-chan os.Signal) error {

@@ -86,6 +86,8 @@ type runningModel struct {
 
 	picker *picker // open start-another picker, or nil
 
+	git *gitTracker // nil: git is not installed
+
 	width, height int
 
 	stopping bool
@@ -151,7 +153,16 @@ func (m *runningModel) showSingle(name string) {
 }
 
 func (m *runningModel) Init() tea.Cmd {
-	return m.waitEvents()
+	return tea.Batch(m.waitEvents(), m.git.refresh(m.gitDirs()))
+}
+
+// gitDirs returns the directories of the projects in the sidebar.
+func (m *runningModel) gitDirs() map[string]string {
+	names := make([]string, len(m.entries))
+	for i, e := range m.entries {
+		names[i] = e.info.Name
+	}
+	return projectDirs(m.cfg, names)
 }
 
 // waitEvents returns a command that delivers the next batch of supervisor
@@ -202,6 +213,16 @@ func (m *runningModel) waitEvents() tea.Cmd {
 }
 
 func (m *runningModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	n := len(m.entries)
+	cmd := m.update(msg)
+	if len(m.entries) > n && m.combined != nil {
+		// Projects were added (e.g. with the picker): show their git state too.
+		cmd = tea.Batch(cmd, m.git.refresh(m.gitDirs()))
+	}
+	return m, cmd
+}
+
+func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -210,14 +231,22 @@ func (m *runningModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastBatch = time.Now()
 		m.handleEvents(msg.events)
 		if !msg.closed {
-			return m, m.waitEvents()
+			return m.waitEvents()
+		}
+	case gitMsg:
+		cmd := m.git.update(msg, m.gitDirs)
+		m.layout() // the git column may have changed width
+		return cmd
+	case gitTickMsg:
+		if !m.stopping {
+			return m.git.update(msg, m.gitDirs)
 		}
 	case tea.KeyPressMsg:
-		return m, m.handleKey(msg)
+		return m.handleKey(msg)
 	case interruptMsg:
-		return m, m.interrupt()
+		return m.interrupt()
 	case stoppedMsg:
-		return m, tea.Quit
+		return tea.Quit
 	default:
 		var cmd tea.Cmd
 		switch {
@@ -226,9 +255,9 @@ func (m *runningModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case m.editing:
 			m.input, cmd = m.input.Update(msg)
 		}
-		return m, cmd
+		return cmd
 	}
-	return m, nil
+	return nil
 }
 
 func (m *runningModel) handleEvents(events []supervisor.Event) {
@@ -570,9 +599,27 @@ func (m *runningModel) selectEntry(i int) {
 
 // sidebarWidth is the width of the sidebar column, without the divider.
 func (m *runningModel) sidebarWidth() int {
-	// " ▸ ● " + label + exit code + " "
-	w := 5 + m.labelWidth + codeWidth + 1
-	return max(min(w, m.width/3), 12)
+	w, _ := m.sidebarLayout()
+	return w
+}
+
+// sidebarLayout returns the sidebar width (without the divider) and the width
+// of its git column, 0 if hidden. The sidebar takes at most a third of the
+// screen; the git column is narrowed and then dropped before names are
+// truncated.
+func (m *runningModel) sidebarLayout() (width, gitCol int) {
+	names := 5 + m.labelWidth + codeWidth + 1 // " ▸ ● " + label + exit code + " "
+	limit := max(m.width/3, 12)
+	want := 0 // widest git label
+	for _, e := range m.entries {
+		if g, ok := m.git.get(e.info.Name); ok {
+			want = max(want, gitWidth(g))
+		}
+	}
+	if gw := min(want, maxGitWidth, limit-names-1); gw > 0 && gw >= min(want, minGitWidth) {
+		return names + gw + 1, gw
+	}
+	return max(min(names, limit), 12), 0
 }
 
 // bodyHeight is the number of rows between the header and the help line.
@@ -651,7 +698,7 @@ func (m *runningModel) render() string {
 	if m.width < minWidth || m.height < minHeight {
 		return "terminal too small"
 	}
-	sw := m.sidebarWidth()
+	sw, gitCol := m.sidebarLayout()
 	var logRows []string
 	if m.picker != nil {
 		logRows = m.picker.view(m.width-sw-2, m.bodyHeight())
@@ -666,7 +713,7 @@ func (m *runningModel) render() string {
 	b.WriteByte('\n')
 	divider := ruleStyle.Render("│")
 	for r := range m.bodyHeight() {
-		b.WriteString(m.sidebarRow(m.sideTop+r, sw))
+		b.WriteString(m.sidebarRow(m.sideTop+r, sw, gitCol))
 		b.WriteString(divider)
 		b.WriteByte(' ')
 		b.WriteString(logRows[r])
@@ -718,9 +765,13 @@ func (m *runningModel) alive() int {
 	return n
 }
 
-func (m *runningModel) sidebarRow(i, width int) string {
+func (m *runningModel) sidebarRow(i, width, gitCol int) string {
 	if i >= len(m.entries) {
 		return strings.Repeat(" ", width)
+	}
+	full := width
+	if gitCol > 0 {
+		width -= gitCol + 1 // the git column and the margin after it
 	}
 	e := m.entries[i]
 	marker := " "
@@ -742,7 +793,13 @@ func (m *runningModel) sidebarRow(i, width int) string {
 	if code != "" {
 		row += " " + faintStyle.Render(code)
 	}
-	return pad(row, width)
+	if gitCol > 0 {
+		row = pad(row, width)
+		if g, ok := m.git.get(e.info.Name); ok {
+			row += gitLabel(g, gitCol)
+		}
+	}
+	return pad(row, full)
 }
 
 func (m *runningModel) help() string {

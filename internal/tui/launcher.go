@@ -36,6 +36,9 @@ type launcherModel struct {
 	form     *editForm       // open project or group form, or nil
 	confirm  *confirmation   // open delete confirmation, or nil
 
+	git      *gitTracker // nil: git is not installed
+	gitStale bool        // the config changed; refresh the git state
+
 	width, height int
 }
 
@@ -69,9 +72,28 @@ func (m *launcherModel) reload() {
 	m.cursor = max(min(m.cursor, len(m.items)-1), 0)
 }
 
-func (m *launcherModel) Init() tea.Cmd { return nil }
+func (m *launcherModel) Init() tea.Cmd {
+	return m.git.refresh(m.gitDirs())
+}
+
+func (m *launcherModel) gitDirs() map[string]string {
+	return projectDirs(m.cfg, slices.Collect(maps.Keys(m.cfg.Projects)))
+}
 
 func (m *launcherModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg.(type) {
+	case gitMsg, gitTickMsg:
+		return m, m.git.update(msg, m.gitDirs)
+	}
+	_, cmd := m.update(msg)
+	if m.gitStale {
+		m.gitStale = false
+		cmd = tea.Batch(cmd, m.git.refresh(m.gitDirs()))
+	}
+	return m, cmd
+}
+
+func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -243,6 +265,7 @@ func (m *launcherModel) updateConfirm(msg tea.Msg) tea.Cmd {
 func (m *launcherModel) apply(c *config.Config) {
 	*m.cfg = *c
 	m.reload()
+	m.gitStale = true // dirs may have changed
 }
 
 // oneLine joins a multi-line message, e.g. a list of validation errors.
@@ -380,14 +403,17 @@ func (m *launcherModel) rows() (rows []string, cursorRow int) {
 			"    runr add <name> --dir <path> -- <command>",
 		}, 0
 	}
-	nameWidth, dirWidth := 0, 0
+	nameWidth, dirWidth, gitCol := 0, 0, 0
 	for _, it := range m.items {
 		nameWidth = max(nameWidth, ansi.StringWidth(it.name))
 		if !it.group {
 			dirWidth = max(dirWidth, ansi.StringWidth(config.DisplayPath(m.cfg.Projects[it.name].Dir)))
+			if g, ok := m.git.get(it.name); ok {
+				gitCol = max(gitCol, gitWidth(g))
+			}
 		}
 	}
-	nameWidth, dirWidth = min(nameWidth, 24), min(dirWidth, 32)
+	nameWidth, dirWidth, gitCol = min(nameWidth, 24), min(dirWidth, 32), min(gitCol, maxGitWidth)
 
 	heading := ""
 	for i, it := range m.items {
@@ -401,12 +427,12 @@ func (m *launcherModel) rows() (rows []string, cursorRow int) {
 		if i == m.cursor {
 			cursorRow = len(rows)
 		}
-		rows = append(rows, m.itemRow(it, i == m.cursor, nameWidth, dirWidth))
+		rows = append(rows, m.itemRow(it, i == m.cursor, nameWidth, dirWidth, gitCol))
 	}
 	return rows, cursorRow
 }
 
-func (m *launcherModel) itemRow(it launcherItem, current bool, nameWidth, dirWidth int) string {
+func (m *launcherModel) itemRow(it launcherItem, current bool, nameWidth, dirWidth, gitCol int) string {
 	marker, nameStyle := "  ", plainStyle
 	if current {
 		marker, nameStyle = "▸ ", boldStyle
@@ -441,7 +467,15 @@ func (m *launcherModel) itemRow(it launcherItem, current bool, nameWidth, dirWid
 	if m.missing[it.name] {
 		details = "dir does not exist"
 	}
-	return row + dir + "  " + faintStyle.Render(details)
+	row += dir + "  "
+	if gitCol > 0 {
+		label := ""
+		if g, ok := m.git.get(it.name); ok {
+			label = gitLabel(g, gitCol)
+		}
+		row += pad(label, gitCol) + "  "
+	}
+	return row + faintStyle.Render(details)
 }
 
 func (m *launcherModel) help() string {
