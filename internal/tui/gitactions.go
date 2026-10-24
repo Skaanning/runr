@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/Skaanning/runr/internal/config"
 	"github.com/Skaanning/runr/internal/gitinfo"
 )
 
@@ -173,38 +174,65 @@ func readBranches(owner any, reader GitReader, project string, repo gitinfo.Repo
 	}
 }
 
-// branchPicker returns the picker for the branches in msg. Its note says
-// which branch the project (shown as label) is on and which other projects
-// (others, as shown) switch with it.
-func branchPicker(st *styles, msg branchesMsg, label string, others []string, pick func(gitinfo.Branch) tea.Cmd) (*picker, tea.Cmd) {
+// branchPicker returns the picker for the branches in msg, local and remote
+// ones in their own sections. context is the line above the filter (see
+// branchContext); others are the other projects, as shown, that switch with
+// the project (shown as label).
+func branchPicker(st *styles, msg branchesMsg, label, context string, others []string, pick func(gitinfo.Branch) tea.Cmd) (*picker, tea.Cmd) {
 	byName := map[string]gitinfo.Branch{}
-	current := "a detached HEAD"
 	var items []pickerItem
 	for _, b := range msg.branches {
 		byName[b.Name] = b
-		var info []string
-		switch {
-		case b.Current:
-			current = b.Name
-			info = append(info, "current")
-		case b.Remote:
-			info = append(info, "new branch from "+b.Name)
+		it := pickerItem{name: b.Name, label: b.LocalName(), section: "Local", info: b.Subject, right: b.Date}
+		if b.Current {
+			it.mark, it.pill = st.accent.Render("●"), "current"
 		}
-		if b.Date != "" {
-			info = append(info, b.Date)
+		var track []string
+		if b.Ahead > 0 {
+			track = append(track, fmt.Sprintf("↑%d", b.Ahead))
 		}
-		items = append(items, pickerItem{name: b.Name, label: b.LocalName(), info: strings.Join(info, " · ")})
+		if b.Behind > 0 {
+			track = append(track, fmt.Sprintf("↓%d", b.Behind))
+		}
+		it.track = strings.Join(track, " ")
+		if b.Remote {
+			remote, _, _ := strings.Cut(b.Name, "/")
+			it.section, it.right = "Remote", "from "+remote
+			if b.Date != "" {
+				it.right += " · " + b.Date
+			}
+		}
+		items = append(items, it)
 	}
-	note := fmt.Sprintf("%s is on %s", label, current)
-	if len(others) == 1 {
-		note += " · " + others[0] + " shares the repository and switches too"
-	} else if len(others) > 1 {
-		note += " · " + strings.Join(others, ", ") + " share the repository and switch too"
-	}
-	return newPicker(st, &picker{
-		title: "switch branch · " + label, action: "switch", note: note, empty: "no branches", items: items,
+	p := &picker{
+		title: "switch branch · " + label, action: "switch", context: context, empty: "no branches",
+		noun: "branch", items: items,
 		pick: func(it pickerItem) tea.Cmd { return pick(byName[it.name]) },
-	})
+		footer: func(it pickerItem) string {
+			b := byName[it.name]
+			if b.Current {
+				return st.faint.Render("already on " + b.Name)
+			}
+			return st.accent.Render("$ ") + st.faint.Render("git "+strings.Join(gitinfo.SwitchArgs(b), " "))
+		},
+	}
+	if len(others) > 0 {
+		p.chip = "also switches: " + strings.Join(others, ", ")
+	}
+	return newPicker(st, p)
+}
+
+// branchContext renders the project (label, styled) a branch picker is for,
+// its directory and its git label: "api · ~/code/api · main ↑1".
+func branchContext(st *styles, label, dir string, git *gitTracker, project string) string {
+	line := label
+	if dir != "" {
+		line += st.faint.Render(" · " + config.DisplayPath(dir))
+	}
+	if g, ok := git.get(project); ok {
+		line += st.faint.Render(" · ") + gitLabel(st, g, gitWidth(g))
+	}
+	return line
 }
 
 // showBranches opens the branch picker.
@@ -220,8 +248,10 @@ func (m *runningModel) showBranches(msg branchesMsg) tea.Cmd {
 	for i, name := range others {
 		others[i] = m.labelOf(name)
 	}
+	label := m.styleOf(msg.project).Bold(true).Render(m.labelOf(msg.project))
+	context := branchContext(m.st, label, m.cfg.Projects[msg.project].Dir, m.git, msg.project)
 	var cmd tea.Cmd
-	m.picker, cmd = branchPicker(m.st, msg, m.labelOf(msg.project), others, func(b gitinfo.Branch) tea.Cmd {
+	m.picker, cmd = branchPicker(m.st, msg, m.labelOf(msg.project), context, others, func(b gitinfo.Branch) tea.Cmd {
 		return m.switchBranch(msg.project, msg.repo, b)
 	})
 	return cmd

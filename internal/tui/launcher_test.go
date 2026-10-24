@@ -225,20 +225,21 @@ func TestLauncherThemePicker(t *testing.T) {
 	if m.picker == nil {
 		t.Fatal("t did not open the theme picker")
 	}
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 15})
 	rows := launcherScreen(m)
 	want := []string{
-		" use",
+		"›   type to filter" + strings.Repeat(" ", 90) + "5 themes",
 		"",
-		" ▸ terminal     ●●●●●●●  the terminal's own colors · current",
-		"   catppuccin   ●●●●●●●  mocha · latte",
-		"   tokyo-night  ●●●●●●●  night · day",
-		"   gruvbox      ●●●●●●●  dark · light",
-		"   nord         ●●●●●●●  dark only",
+		"▌ terminal     ●●●●●●●  the terminal's own colors" + strings.Repeat(" ", 59) + "current",
+		"  catppuccin   ●●●●●●●  mocha · latte",
+		"  tokyo-night  ●●●●●●●  night · day",
+		"  gruvbox      ●●●●●●●  dark · light",
+		"  nord         ●●●●●●●  dark only",
 	}
-	if got := strings.Join(rows[2:9], "\n"); got != strings.Join(want, "\n") {
-		t.Fatalf("picker:\n%s\nwant:\n%s", got, strings.Join(want, "\n"))
+	if got := strings.Join(inFrame(rows[3:10]), "\n"); got != strings.Join(want, "\n") || !strings.HasPrefix(rows[2], "╭─ theme ─") {
+		t.Fatalf("picker:\n%s\nwant:\n%s", strings.Join(rows[2:11], "\n"), strings.Join(want, "\n"))
 	}
-	if status := rows[12]; !strings.HasPrefix(status, "  THEME  ") {
+	if status := rows[13]; !strings.HasPrefix(status, "  THEME  ") {
 		t.Fatalf("status bar = %q", status)
 	}
 
@@ -305,11 +306,22 @@ func TestLauncherThemePicker16Colors(t *testing.T) {
 	m := newThemeLauncher(t, "", &saved, &fail)
 	m.Update(tea.ColorProfileMsg{Profile: colorprofile.ANSI})
 	m.Update(key("t"))
-	rows := launcherScreen(m)
-	if rows[4] != " this terminal shows 16 colors, so runr uses the terminal theme here" {
-		t.Fatalf("note = %q", rows[4])
+	rows := inFrame(launcherScreen(m)[3:11])
+	if rows[2] != "this terminal shows 16 colors, so runr uses the terminal theme here" {
+		t.Fatalf("note = %q", rows[2])
 	}
-	if rows[7] != "   catppuccin   mocha · latte" {
-		t.Fatalf("row = %q (no swatch on 16 colors)", rows[7])
+	if rows[5] != "  catppuccin   mocha · latte" {
+		t.Fatalf("row = %q (no swatch on 16 colors)", rows[5])
 	}
+}
+
+// inFrame returns rows of a framed pane without the frame, trailing spaces
+// trimmed.
+func inFrame(rows []string) []string {
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		r = strings.TrimSuffix(strings.TrimPrefix(r, "│ "), "│")
+		out[i] = strings.TrimRight(r, " ")
+	}
+	return out
 }

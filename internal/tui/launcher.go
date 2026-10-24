@@ -231,17 +231,16 @@ func (m *launcherModel) openThemes() tea.Cmd {
 	items := make([]pickerItem, len(config.ThemeNames))
 	for i, name := range config.ThemeNames {
 		t := themeNamed(name)
-		info := t.about
+		items[i] = pickerItem{name: name, label: name, info: t.about}
 		if name == current {
-			info += " · current"
+			items[i].pill = "current"
 		}
-		items[i] = pickerItem{name: name, label: name, info: info}
 		if m.st.tints() {
 			items[i].swatch = m.st.swatch(t)
 		}
 	}
 	p := &picker{
-		title: "theme", action: "use", mode: "theme", items: items,
+		title: "theme", action: "use", mode: "theme", noun: "theme", items: items,
 		pick:    func(it pickerItem) tea.Cmd { m.saveTheme(it.name); return nil },
 		preview: func(it pickerItem) { m.st.setTheme(themeNamed(it.name)) },
 		cancel:  m.restoreTheme,
@@ -328,8 +327,10 @@ func (m *launcherModel) showBranches(msg branchesMsg) tea.Cmd {
 	if m.busy() {
 		return nil // something else took over the screen meanwhile
 	}
+	label := m.st.bold.Foreground(m.st.color(m.cfg.ColorOf(msg.project))).Render(msg.project)
+	context := branchContext(m.st, label, m.cfg.Projects[msg.project].Dir, m.git, msg.project)
 	var cmd tea.Cmd
-	m.picker, cmd = branchPicker(m.st, msg, msg.project, m.sharing(msg.project, msg.repo.Root), func(b gitinfo.Branch) tea.Cmd {
+	m.picker, cmd = branchPicker(m.st, msg, msg.project, context, m.sharing(msg.project, msg.repo.Root), func(b gitinfo.Branch) tea.Cmd {
 		return m.switchBranch(msg.project, msg.repo, b)
 	})
 	return cmd
@@ -685,10 +686,7 @@ func (m *launcherModel) render() string {
 		m.top = 0
 	}
 	if m.picker != nil {
-		rows = m.picker.view(m.width-2, body)
-		for i, r := range rows {
-			rows[i] = " " + r
-		}
+		rows = framed(m.st, m.picker.titleText(), m.picker.view(m.width-4, max(body-2, 0)), m.width)
 		m.top = 0
 	}
 	if m.output != nil {
@@ -745,10 +743,13 @@ func (m *launcherModel) statusBar() string {
 	return m.st.statusBar(b, m.width)
 }
 
-// count returns "1 project", "2 projects".
+// count returns "1 project", "2 projects", "2 branches".
 func count(n int, noun string) string {
-	if n == 1 {
+	switch {
+	case n == 1:
 		return "1 " + noun
+	case strings.HasSuffix(noun, "ch"), strings.HasSuffix(noun, "s"):
+		return fmt.Sprintf("%d %ses", n, noun)
 	}
 	return fmt.Sprintf("%d %ss", n, noun)
 }

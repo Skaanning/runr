@@ -65,18 +65,10 @@ func TestSwitchBranch(t *testing.T) {
 	if m.picker == nil {
 		t.Fatalf("no picker; notice %q", m.notice)
 	}
-	rows := screen(m)
-	for _, want := range []string{
-		"switch",
-		"api is on main · Worker shares the repository and switches too",
-		"▸ main        current · 3 days ago",
-		"  feat/login  2 hours ago",
-		"  fix/typo    new branch from origin/fix/typo · 5 days ago",
-	} {
-		if !slices.ContainsFunc(rows, func(r string) bool { return strings.Contains(r, want) }) {
-			t.Errorf("screen lacks %q:\n%s", want, strings.Join(rows, "\n"))
-		}
-	}
+	screenHas(t, screen(m),
+		"╭─ switch branch · api ─", "│ api · main ", " also switches: Worker  │", " 3 branches │",
+		"│ Local ", "│ ▌● main ", " current  3 days ago │", "│    feat/login ", "│ already on main ",
+	)
 	if got := helpRow(m); got != "  type  to filter  ↑↓  select  enter  switch  esc  cancel" {
 		t.Errorf("picker help = %q", got)
 	}
@@ -84,6 +76,10 @@ func TestSwitchBranch(t *testing.T) {
 	for _, k := range []string{"t", "y", "p", "o"} {
 		press(t, m, k)
 	}
+	screenHas(t, screen(m),
+		"│ › typo ", " 1/3 │", "│ Remote ", "│ ▌ fix/typo ", " from origin · 5 days ago │",
+		"│ $ git switch --track origin/fix/typo ",
+	)
 	f.switchOut = "branch 'fix/typo' set up to track 'origin/fix/typo'.\nSwitched to a new branch 'fix/typo'\n"
 	_, cmd := m.Update(key("enter"))
 	if m.gitAction != "git switch" || m.notice != "switching api to fix/typo…" {
@@ -442,17 +438,9 @@ func TestLauncherSwitchBranch(t *testing.T) {
 	if m.picker == nil {
 		t.Fatalf("no picker; notice %q", m.notice)
 	}
-	rows := launcherScreen(m)
-	for _, want := range []string{
-		" switch",
-		" api is on main · worker shares the repository and switches too",
-		" ▸ main        current · 3 days ago",
-		"   fix/typo    new branch from origin/fix/typo · 5 days ago",
-	} {
-		if !slices.ContainsFunc(rows, func(r string) bool { return strings.HasPrefix(r, want) }) {
-			t.Errorf("screen lacks %q:\n%s", want, strings.Join(rows, "\n"))
-		}
-	}
+	screenHas(t, launcherScreen(m),
+		"╭─ switch branch · api ─", "│ api · main ", " also switches: worker  │", "│ ▌● main ", " current  3 days ago │",
+	)
 	if got := launcherHelp(m); got != "  type  to filter  ↑↓  select  enter  switch  esc  cancel" {
 		t.Errorf("picker help = %q", got)
 	}
@@ -653,5 +641,15 @@ func TestOutputLines(t *testing.T) {
 	want := []string{"Updating files: 100% (2/2), done.", "Switched to branch 'x'"}
 	if !slices.Equal(got, want) {
 		t.Errorf("got %q", got)
+	}
+}
+
+// screenHas checks that each of want appears in some row of rows.
+func screenHas(t *testing.T, rows []string, want ...string) {
+	t.Helper()
+	for _, w := range want {
+		if !slices.ContainsFunc(rows, func(r string) bool { return strings.Contains(r, w) }) {
+			t.Errorf("screen lacks %q:\n%s", w, strings.Join(rows, "\n"))
+		}
 	}
 }

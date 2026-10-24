@@ -632,14 +632,17 @@ func newPickerModel(t *testing.T) (*runningModel, *fakeSession) {
 
 func TestPickerItems(t *testing.T) {
 	m, _ := newPickerModel(t)
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 16})
 	m.Update(key("+"))
 	want := []string{
-		"start",
-		"▸ jobs    group · worker",
-		"tools   group · worker, docs",
-		"cron",
-		"docs",
-		"Worker  needs db",
+		"›   type to filter                                5 items",
+		"Groups",
+		"▌  jobs    worker",
+		"tools   worker, docs",
+		"Projects",
+		"● cron",
+		"● docs",
+		"● Worker  needs db",
 	}
 	if got := logRows(m); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("picker:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -649,8 +652,11 @@ func TestPickerItems(t *testing.T) {
 	}
 
 	typeText(m, "WOR") // matches the display name, ignoring case; q-like keys are text
-	if got := strings.Join(logRows(m)[1:], ","); got != "▸ Worker  needs db" {
+	if got := strings.Join(logRows(m), ","); !strings.HasPrefix(got, "› WOR ") || !strings.HasSuffix(got, " 1/5,Projects,▌● Worker  needs db") {
 		t.Fatalf("filtered = %q", got)
+	}
+	if !strings.Contains(m.render(), m.st.accent.Bold(true).Render("Wor")) {
+		t.Error("the match is not highlighted")
 	}
 	typeText(m, "x")
 	if got := logRows(m)[1]; got != "no matches" {
@@ -701,7 +707,7 @@ func TestPickerStartsGroup(t *testing.T) {
 	m.Update(eventsMsg{events: []supervisor.Event{state("worker", supervisor.Crashed)}})
 	m.Update(key("+"))
 	typeText(m, "worker")
-	if got := logRows(m)[1]; got != "▸ Worker  crashed · needs db" {
+	if got := logRows(m)[2]; !strings.HasPrefix(got, "▌● ✗ Worker  needs db") || !strings.HasSuffix(got, "crashed") {
 		t.Fatalf("item = %q", got)
 	}
 	m.Update(key("enter"))

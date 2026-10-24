@@ -12,12 +12,14 @@ import (
 
 func TestParseBranches(t *testing.T) {
 	out := strings.Join([]string{
-		"refs/heads/feat/login\x00 \x00origin/feat/login\x002 hours ago\x00",
-		"refs/heads/main\x00*\x00origin/main\x003 days ago\x00",
-		"refs/remotes/origin/HEAD\x00 \x00\x003 days ago\x00refs/remotes/origin/main",
-		"refs/remotes/origin/main\x00 \x00\x003 days ago\x00",
-		"refs/remotes/origin/fix/typo\x00 \x00\x005 days ago\x00",
-		"refs/remotes/upstream/feat/login\x00 \x00\x001 week ago\x00",
+		"refs/heads/feat/login\x00 \x00origin/feat/login\x002 hours ago\x00\x00ahead 2, behind 1\x00Add session cookie",
+		"refs/heads/main\x00*\x00origin/main\x003 days ago\x00\x00ahead 1\x00Merge pull request #42",
+		"refs/heads/old\x00 \x00origin/old\x001 year ago\x00\x00gone\x00Old work",
+		"refs/heads/wip\x00 \x00\x001 minute ago\x00\x00\x00",
+		"refs/remotes/origin/HEAD\x00 \x00\x003 days ago\x00refs/remotes/origin/main\x00\x00Merge pull request #42",
+		"refs/remotes/origin/main\x00 \x00\x003 days ago\x00\x00\x00Merge pull request #42",
+		"refs/remotes/origin/fix/typo\x00 \x00\x005 days ago\x00\x00\x00Fix typo in README",
+		"refs/remotes/upstream/feat/login\x00 \x00\x001 week ago\x00\x00\x00Login",
 		"",
 	}, "\n")
 	got, err := parseBranches(out)
@@ -25,15 +27,17 @@ func TestParseBranches(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Branch{
-		{Name: "feat/login", Upstream: "origin/feat/login", Date: "2 hours ago"},
-		{Name: "main", Current: true, Upstream: "origin/main", Date: "3 days ago"},
-		{Name: "origin/fix/typo", Remote: true, Date: "5 days ago"},
+		{Name: "feat/login", Upstream: "origin/feat/login", Ahead: 2, Behind: 1, Date: "2 hours ago", Subject: "Add session cookie"},
+		{Name: "main", Current: true, Upstream: "origin/main", Ahead: 1, Date: "3 days ago", Subject: "Merge pull request #42"},
+		{Name: "old", Upstream: "origin/old", Date: "1 year ago", Subject: "Old work"},
+		{Name: "wip", Date: "1 minute ago"},
+		{Name: "origin/fix/typo", Remote: true, Date: "5 days ago", Subject: "Fix typo in README"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("got  %+v\nwant %+v", got, want)
 	}
-	if got[2].LocalName() != "fix/typo" || got[0].LocalName() != "feat/login" {
-		t.Errorf("LocalName = %q, %q", got[2].LocalName(), got[0].LocalName())
+	if got[4].LocalName() != "fix/typo" || got[0].LocalName() != "feat/login" {
+		t.Errorf("LocalName = %q, %q", got[4].LocalName(), got[0].LocalName())
 	}
 }
 
@@ -67,6 +71,9 @@ func TestBranchesAndSwitch(t *testing.T) {
 	git(t, upstream, "branch", "feature")
 	git(t, clone, "fetch", "-q")
 	git(t, clone, "branch", "local-only")
+	writeFile(t, filepath.Join(clone, "ahead"), "ahead\n")
+	git(t, clone, "add", "ahead")
+	git(t, clone, "commit", "-q", "-m", "Local commit")
 	repo, err := g.Find(context.Background(), clone)
 	if err != nil {
 		t.Fatal(err)
@@ -79,11 +86,14 @@ func TestBranchesAndSwitch(t *testing.T) {
 	var names []string
 	for _, b := range branches {
 		names = append(names, b.Name)
-		if b.Name == "main" && (!b.Current || b.Upstream != "origin/main" || b.Date == "") {
+		if b.Name == "main" && (!b.Current || b.Upstream != "origin/main" || b.Date == "" || b.Ahead != 1 || b.Behind != 0 || b.Subject != "Local commit") {
 			t.Errorf("main = %+v", b)
 		}
+		if b.Name == "origin/feature" && b.Subject == "" {
+			t.Errorf("origin/feature = %+v", b)
+		}
 	}
-	// Same commit date for all, so only local-before-remote is fixed.
+	// Commit dates may be equal, so only local-before-remote is fixed.
 	if len(names) != 3 || names[2] != "origin/feature" || !branches[2].Remote {
 		t.Fatalf("branches = %v", names)
 	}

@@ -300,12 +300,15 @@ is left to you:
 - Both are refused up front while the repository has uncommitted changes to tracked files,
   unresolved conflicts, or an operation in progress. Untracked files don't count, but git
   still refuses to overwrite them.
-- `b` lists local branches and remote branches without a local one (most recent first);
-  picking a remote branch creates a local branch that tracks it.
+- `b` lists local branches and remote branches without a local one (most recent first),
+  each with how far it is ahead/behind its upstream (`↑2 ↓1`), its last commit's subject and
+  date; picking a remote branch creates a local branch that tracks it. The bottom of the list
+  shows the git command `enter` runs. Type to filter; the matching part is highlighted.
 - `p` fast-forwards the current branch from its upstream and fails if the branch has
   diverged — runr never merges, rebases, stashes or resets. It is refused on a detached
   HEAD or a branch without an upstream.
-- If other projects are in the same repository, the picker or the confirmation says so,
+- If other projects are in the same repository, the picker (`also switches: …`) or the
+  confirmation says so,
   since they change too (in the launcher: any registered project; in the running view:
   projects in the session).
 - In the running view, git's output goes to the selected project's log, and a short summary

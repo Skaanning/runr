@@ -33,6 +33,16 @@ func paneTop(width int, title, note string, border lipgloss.Style) string {
 	return left + border.Render(strings.Repeat("─", max(fill, 0))) + right
 }
 
+// framed draws rows in a rounded pane of width cells with an accent border
+// and title, with a space on either side of the rows.
+func framed(st *styles, title string, rows []string, width int) []string {
+	out := []string{paneTop(width, title, "", st.accent)}
+	for _, r := range rows {
+		out = append(out, st.accent.Render("│")+" "+pad(ansi.Truncate(r, width-4, "…"), width-4)+" "+st.accent.Render("│"))
+	}
+	return append(out, paneBottom(width, st.accent))
+}
+
 // paneBottom renders the bottom border of a pane of width cells.
 func paneBottom(width int, border lipgloss.Style) string {
 	return border.Render("╰" + strings.Repeat("─", max(width-2, 0)) + "╯")

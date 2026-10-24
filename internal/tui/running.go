@@ -473,7 +473,7 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		var cmd tea.Cmd
 		m.picker, cmd = newPicker(m.st, &picker{
-			title: "start", action: "start", empty: empty, items: m.pickerItems(),
+			title: "start", action: "start", empty: empty, noun: "item", items: m.pickerItems(),
 			pick: func(it pickerItem) tea.Cmd { m.startPicked(it); return nil },
 		})
 		return cmd
@@ -563,24 +563,31 @@ func (m *runningModel) pickerItems() []pickerItem {
 		if err != nil || !slices.ContainsFunc(resolved, func(n string) bool { return !running(n) }) {
 			continue
 		}
-		info := "group · " + strings.Join(m.cfg.Groups[g], ", ")
-		items = append(items, pickerItem{name: g, label: g, group: true, info: info})
+		items = append(items, pickerItem{
+			name: g, label: g, group: true, section: "Groups", info: strings.Join(m.cfg.Groups[g], ", "),
+		})
 	}
 	for _, name := range slices.Sorted(maps.Keys(m.cfg.Projects)) {
 		if running(name) || m.showAll {
 			continue
 		}
 		p := m.cfg.Projects[name]
-		var info []string
+		it := pickerItem{name: name, label: p.Label(name), section: "Projects", mark: m.dot(name)}
 		if e := m.byName[name]; e != nil && e.info.State != supervisor.Pending {
-			info = append(info, e.info.State.String())
+			it.mark += " " + m.st.stateIcon(e.info.State, spinner(m.now()))
+			it.right = e.info.State.String()
 		}
 		if len(p.DependsOn) > 0 {
-			info = append(info, "needs "+strings.Join(p.DependsOn, ", "))
+			it.info = "needs " + strings.Join(p.DependsOn, ", ")
 		}
-		items = append(items, pickerItem{name: name, label: p.Label(name), info: strings.Join(info, " · ")})
+		items = append(items, it)
 	}
 	return items
+}
+
+// dot renders a dot in the project's color.
+func (m *runningModel) dot(name string) string {
+	return lipgloss.NewStyle().Foreground(m.st.color(m.cfg.ColorOf(name))).Render("●")
 }
 
 // startPicked starts a group or project chosen in the picker, with its
@@ -998,7 +1005,7 @@ func (m *runningModel) render() string {
 	cols := m.sidebarLayout()
 	var logRows []string
 	if m.picker != nil {
-		logRows = m.picker.view(m.logWidth(), m.bodyHeight())
+		logRows = m.picker.view(m.logWidth()-1, m.bodyHeight()) // a space before the border
 	} else {
 		logRows = m.drawToasts(m.view().view(), m.logWidth())
 	}
@@ -1077,15 +1084,23 @@ func spread(left, right string, width int) (string, bool) {
 // help line.
 func (m *runningModel) renderPanes(cols sidebarCols, logRows []string) string {
 	sw := cols.width
-	side := m.st.accent
+	side, sideTitle := m.st.accent, m.st.accent.Bold(true).Render("processes")
 	title, note, border := m.logPane()
 	logW := m.width - sw - 2
+	sideRows := m.sidebarRows(m.bodyHeight(), cols)
+	if m.picker != nil {
+		// The picker has the focus: the processes pane fades.
+		side, sideTitle = m.st.faint, m.st.faint.Render("processes")
+		for i, row := range sideRows {
+			sideRows[i] = m.st.faint.Render(ansi.Strip(row))
+		}
+	}
 
 	var b strings.Builder
-	b.WriteString(paneTop(sw+2, m.st.accent.Bold(true).Render("processes"), "", side))
+	b.WriteString(paneTop(sw+2, sideTitle, "", side))
 	b.WriteString(paneTop(logW, title, note, border))
 	b.WriteByte('\n')
-	for r, row := range m.sidebarRows(m.bodyHeight(), cols) {
+	for r, row := range sideRows {
 		b.WriteString(side.Render("│"))
 		b.WriteString(row)
 		b.WriteString(side.Render("│"))
@@ -1117,7 +1132,7 @@ func (m *runningModel) logPane() (title, note string, border lipgloss.Style) {
 		border = m.st.warn
 	}
 	if m.picker != nil {
-		return m.st.bold.Render(m.picker.title), "", border
+		return m.picker.titleText(), "", border
 	}
 
 	title = m.st.bold.Render("logs") + m.st.faint.Render(" · combined")

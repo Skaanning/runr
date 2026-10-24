@@ -198,7 +198,7 @@ func TestIdleToggle(t *testing.T) {
 		t.Errorf("help = %q", got)
 	}
 	m.Update(key("+")) // lists projects again
-	if got := logRows(m); !slices.Contains(got, "cron") {
+	if got := logRows(m); !slices.ContainsFunc(got, func(r string) bool { return strings.HasSuffix(r, " cron") }) {
 		t.Errorf("picker without the projects not started: %v", got)
 	}
 	m.Update(key("esc"))
@@ -207,7 +207,7 @@ func TestIdleToggle(t *testing.T) {
 		t.Errorf("after showing again: idle %v, selected %q", m.idle, m.selectedName())
 	}
 	m.Update(key("+")) // groups only
-	if got := logRows(m); slices.Contains(got, "cron") || !strings.Contains(strings.Join(got, ","), "group") {
+	if got := strings.Join(logRows(m), ","); strings.Contains(got, "cron") || !strings.Contains(got, "Groups") {
 		t.Errorf("picker with every project in the sidebar: %v", got)
 	}
 }
