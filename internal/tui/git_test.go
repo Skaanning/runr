@@ -108,7 +108,7 @@ func TestRunningSidebarGit(t *testing.T) {
 	m.Update(eventsMsg{events: []supervisor.Event{state("db", supervisor.Running), line("api", "hello")}})
 
 	want := []string{
-		"  runr   backend                                ● 1  ◐ 2   combined · following",
+		"  runr   backend                                ● 1  ⠋ 2   combined · following",
 		"──────────────────────────┬─────────────────────────────────────────────────────",
 		" ▌ ● db     main          │ api    hello",
 		"   ○ api    feat/lo… * ↓2 │",
@@ -148,8 +148,8 @@ func TestRunningWithoutGit(t *testing.T) {
 	if m.git != nil || m.Init() == nil {
 		t.Fatal("the model should work without a git tracker")
 	}
-	if w, col := m.sidebarLayout(); col != 0 || w != 5+6+1 {
-		t.Errorf("layout = %d, %d", w, col)
+	if c := m.sidebarLayout(); c.git != 0 || c.width != 5+6+1 {
+		t.Errorf("layout = %+v", c)
 	}
 }
 

@@ -63,10 +63,10 @@ func TestStateCounts(t *testing.T) {
 		supervisor.Crashed, supervisor.Blocked, // ✗
 		supervisor.Stopped, // not counted
 	}
-	if got := ansi.Strip(st.stateCounts(states, "  ")); got != "● 2  ◐ 4  ✗ 2" {
+	if got := ansi.Strip(st.stateCounts(states, "  ", "⠋")); got != "● 2  ⠋ 4  ✗ 2" {
 		t.Errorf("counts = %q", got)
 	}
-	if got := ansi.Strip(st.stateCounts([]supervisor.State{supervisor.Crashed, supervisor.Stopped}, "  ")); got != "✗ 1" {
+	if got := ansi.Strip(st.stateCounts([]supervisor.State{supervisor.Crashed, supervisor.Stopped}, "  ", "⠋")); got != "✗ 1" {
 		t.Errorf("counts = %q, want zeros left out", got)
 	}
 }
@@ -74,7 +74,7 @@ func TestStateCounts(t *testing.T) {
 func TestHeaderDropsCountsWhenNarrow(t *testing.T) {
 	m, _ := newTestModel(t, 60, 7)
 	m.Update(eventsMsg{events: []supervisor.Event{state("db", supervisor.Running)}})
-	if got := screen(m)[0]; got != "  runr   backend            ● 1  ◐ 2   combined · following" {
+	if got := screen(m)[0]; got != "  runr   backend            ● 1  ⠋ 2   combined · following" {
 		t.Errorf("header = %q", got)
 	}
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 7})

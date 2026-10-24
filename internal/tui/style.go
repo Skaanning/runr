@@ -4,6 +4,7 @@ import (
 	"image/color"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 
@@ -11,13 +12,24 @@ import (
 	"github.com/Skaanning/runr/internal/supervisor"
 )
 
-// stateIcon returns the sidebar icon for a state, styled.
-func (s *styles) stateIcon(state supervisor.State) string {
+// spinnerFrames are the frames of the spinner shown while a process starts,
+// waits or stops.
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
+// spinner returns the spinner's frame at a time, so all spinners on screen
+// move in step.
+func spinner(now time.Time) string {
+	return spinnerFrames[int(now.UnixMilli()/animateEvery.Milliseconds())%len(spinnerFrames)]
+}
+
+// stateIcon returns the sidebar icon for a state, styled; spin is the
+// spinner's current frame, for states in progress.
+func (s *styles) stateIcon(state supervisor.State, spin string) string {
 	switch state {
 	case supervisor.Waiting, supervisor.Starting:
-		return s.warn.Render("◐")
+		return s.warn.Render(spin)
 	case supervisor.Stopping:
-		return s.faint.Render("◐")
+		return s.faint.Render(spin)
 	case supervisor.Running:
 		return s.ok.Render("●")
 	case supervisor.Exited:
@@ -74,9 +86,9 @@ func (s *styles) fitHints(parts []string, width int) string {
 }
 
 // stateCounts renders the counts of running (or done), starting or
-// stopping, and failed processes, leaving out zeros: "● 2  ◐ 1  ✗ 1" with
-// sep "  ".
-func (s *styles) stateCounts(states []supervisor.State, sep string) string {
+// stopping, and failed processes, leaving out zeros: "● 2  ⠋ 1  ✗ 1" with
+// sep "  " and the spinner frame spin.
+func (s *styles) stateCounts(states []supervisor.State, sep, spin string) string {
 	var ok, busy, failed int
 	for _, st := range states {
 		switch st {
@@ -93,7 +105,7 @@ func (s *styles) stateCounts(states []supervisor.State, sep string) string {
 		n     int
 		icon  string
 		style func(...string) string
-	}{{ok, "●", s.ok.Render}, {busy, "◐", s.warn.Render}, {failed, "✗", s.err.Render}} {
+	}{{ok, "●", s.ok.Render}, {busy, spin, s.warn.Render}, {failed, "✗", s.err.Render}} {
 		if c.n > 0 {
 			parts = append(parts, c.style(c.icon+" "+strconv.Itoa(c.n)))
 		}

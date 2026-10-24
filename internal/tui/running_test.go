@@ -72,6 +72,7 @@ func newTestModel(t *testing.T, width, height int) (*runningModel, *fakeSession)
 	t.Helper()
 	sess := newFakeSession("db", "api", "worker")
 	m := newRunningModel(sess, testConfig(), []string{"backend"}, newStyles(terminalTheme))
+	m.now = testNow
 	m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	return m, sess
 }
@@ -126,10 +127,10 @@ func TestRunningLayout(t *testing.T) {
 	}})
 
 	want := []string{
-		"  runr   backend       ● 1  ◐ 1  ✗ 1   combined · following",
+		"  runr   backend       ● 1  ⠋ 1  ✗ 1   combined · following",
 		"───────────────────┬────────────────────────────────────────",
 		" ▌ ● db            │ db     starting: db",
-		"   ◐ api           │ api    listening on :8080",
+		"   ⠋ api           │ api    listening on :8080",
 		"   ✗ Worker exit 1 │ Worker error: queue not found",
 		"                   │",
 		"───────────────────┴────────────────────────────────────────",
@@ -233,7 +234,7 @@ func TestRunningNewProjectFromEvents(t *testing.T) {
 		line("frontend-application", "hi"),
 	}})
 	got := screen(m)
-	if !strings.HasPrefix(got[4], "│  ◐ frontend-appli… ││") {
+	if !strings.HasPrefix(got[4], "│  ⠋ frontend-appli… ││") {
 		t.Fatalf("sidebar row = %q", got[4])
 	}
 	if !strings.Contains(got[1], "││ frontend-applic… hi") {
@@ -612,6 +613,7 @@ func newPickerModel(t *testing.T) (*runningModel, *fakeSession) {
 	}
 	sess := newFakeSession("db", "api")
 	m := newRunningModel(sess, cfg, []string{"backend"}, newStyles(terminalTheme))
+	m.now = testNow
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
 	m.Update(eventsMsg{events: []supervisor.Event{state("db", supervisor.Running), state("api", supervisor.Running)}})
 	return m, sess

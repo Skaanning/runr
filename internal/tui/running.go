@@ -48,8 +48,15 @@ type (
 		events []supervisor.Event
 		closed bool
 	}
-	stoppedMsg   struct{} // StopAll finished
-	interruptMsg struct{} // a signal, treated like Ctrl+C
+	stoppedMsg   struct{}          // StopAll finished
+	interruptMsg struct{}          // a signal, treated like Ctrl+C
+	uiTickMsg    struct{ gen int } // time to redraw spinners and uptimes
+)
+
+const (
+	animateEvery = 100 * time.Millisecond // tick while a spinner turns
+	uptimeEvery  = time.Second            // tick while uptimes count
+	statusWidth  = 6                      // minimum width of the uptime column
 )
 
 // sidebarEntry is a project shown in the sidebar.
@@ -94,7 +101,9 @@ type runningModel struct {
 	gitAction string      // git action running in the background, e.g. "git switch"
 
 	width, height int
-	now           func() time.Time // for the clock
+	now           func() time.Time // for the clock, uptimes and spinners
+	tickEvery     time.Duration    // interval of the scheduled uiTickMsg, 0 if none
+	tickGen       int              // generation of the scheduled uiTickMsg
 
 	stopping bool
 	forced   bool
@@ -225,7 +234,43 @@ func (m *runningModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Projects were added (e.g. with the picker): show their git state too.
 		cmd = tea.Batch(cmd, m.git.refresh(m.gitDirs()))
 	}
-	return m, cmd
+	return m, tea.Batch(cmd, m.scheduleTick())
+}
+
+// wantTick returns how often the view needs redrawing without other
+// events: often while a spinner turns, every second while uptimes count,
+// never when nothing changes.
+func (m *runningModel) wantTick() time.Duration {
+	every := time.Duration(0)
+	for _, e := range m.entries {
+		switch e.info.State {
+		case supervisor.Starting, supervisor.Waiting, supervisor.Stopping:
+			return animateEvery
+		case supervisor.Running:
+			every = uptimeEvery
+		}
+	}
+	return every
+}
+
+// scheduleTick starts a tick of the wanted speed when it changed. Ticks of
+// an older generation are ignored, so they never stack.
+func (m *runningModel) scheduleTick() tea.Cmd {
+	want := m.wantTick()
+	if want == m.tickEvery {
+		return nil
+	}
+	m.tickGen++
+	m.tickEvery = want
+	return m.tick()
+}
+
+func (m *runningModel) tick() tea.Cmd {
+	if m.tickEvery == 0 {
+		return nil
+	}
+	gen := m.tickGen
+	return tea.Tick(m.tickEvery, func(time.Time) tea.Msg { return uiTickMsg{gen: gen} })
 }
 
 func (m *runningModel) update(msg tea.Msg) tea.Cmd {
@@ -240,6 +285,11 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 	case clockMsg:
 		if msg.owner == m {
 			return clockTick(m, m.now())
+		}
+	case uiTickMsg:
+		if msg.gen == m.tickGen {
+			m.layout() // uptimes can widen their column
+			return m.tick()
 		}
 	case eventsMsg:
 		m.lastBatch = time.Now()
@@ -672,7 +722,7 @@ func (m *runningModel) sidebarPrefix() int {
 
 // logWidth is the width of the log column.
 func (m *runningModel) logWidth() int {
-	sw, _ := m.sidebarLayout()
+	sw := m.sidebarLayout().width
 	if m.panes() {
 		return m.width - sw - 2 - 3 // the sidebar's borders, "│ " and "│"
 	}
@@ -681,10 +731,11 @@ func (m *runningModel) logWidth() int {
 
 // sidebarLayout returns the width of the sidebar's content (without borders
 // or the divider) and the width of its git column, 0 if hidden. The sidebar
-// takes at most a third of the screen; the git column is narrowed and then
-// dropped before names are truncated.
-func (m *runningModel) sidebarLayout() (width, gitCol int) {
-	names := m.sidebarPrefix() + m.namesWidth() + 1 // marker and icon + label and exit code + " "
+// takes at most a third of the screen; when narrow, the status column is
+// dropped first, then the git column is narrowed and dropped, before names
+// are truncated.
+func (m *runningModel) sidebarLayout() sidebarCols {
+	base := m.sidebarPrefix() + m.labelWidth + 1 // marker and icon + label + " "
 	limit := max(m.width/3, 12)
 	want := 0 // widest git label
 	for _, e := range m.entries {
@@ -692,29 +743,69 @@ func (m *runningModel) sidebarLayout() (width, gitCol int) {
 			want = max(want, gitWidth(g))
 		}
 	}
-	if gw := min(want, maxGitWidth, limit-names-1); gw > 0 && gw >= min(want, minGitWidth) {
-		return names + gw + 1, gw
-	}
-	return max(min(names, limit), 12), 0
-}
-
-// namesWidth is the width of the widest label with its exit code.
-func (m *runningModel) namesWidth() int {
-	w := m.labelWidth
+	status := 0 // widest status
 	for _, e := range m.entries {
-		if code := exitCode(e.info); code != "" {
-			w = max(w, ansi.StringWidth(e.label)+1+len(code))
+		if text, _ := statusText(e.info, m.now()); text != "" {
+			status = max(status, len(text), statusWidth)
 		}
 	}
-	return w
+	withGit := func(names int) (sidebarCols, bool) {
+		gw := min(want, maxGitWidth, limit-names-1)
+		return sidebarCols{width: names + gw + 1, git: gw}, gw > 0 && gw >= min(want, minGitWidth)
+	}
+	if status > 0 {
+		if c, ok := withGit(base + status + 1); ok {
+			c.status = status
+			return c
+		}
+	}
+	if c, ok := withGit(base); ok {
+		return c
+	}
+	if status > 0 && base+status+1 <= limit {
+		return sidebarCols{width: base + status + 1, status: status}
+	}
+	return sidebarCols{width: max(min(base, limit), 12)}
 }
 
-// exitCode returns "exit N" for a crashed project with an exit code.
-func exitCode(info supervisor.ProcessInfo) string {
-	if info.State == supervisor.Crashed && info.Exit.Code > 0 {
-		return "exit " + strconv.Itoa(info.Exit.Code)
+// sidebarCols is the sidebar's layout: its width without borders or the
+// divider, and the widths of its status and git columns, 0 if hidden.
+type sidebarCols struct {
+	width, status, git int
+}
+
+// statusText returns what the status column shows for a process: its
+// uptime while it runs, why it failed (failed is set), or nothing.
+func statusText(info supervisor.ProcessInfo, now time.Time) (text string, failed bool) {
+	switch info.State {
+	case supervisor.Crashed:
+		if info.Exit.Code > 0 {
+			return "exit " + strconv.Itoa(info.Exit.Code), true
+		}
+		return "crashed", true
+	case supervisor.Blocked:
+		return "blocked", true
+	case supervisor.Starting, supervisor.Running, supervisor.Stopping:
+		if !info.StartedAt.IsZero() {
+			return uptime(now.Sub(info.StartedAt)), false
+		}
 	}
-	return ""
+	return "", false
+}
+
+// uptime formats a duration in at most two units: 45s, 4m02s, 1h12m, 3d04h.
+func uptime(d time.Duration) string {
+	s := int(max(d, 0) / time.Second)
+	switch {
+	case s < 60:
+		return fmt.Sprintf("%ds", s)
+	case s < 3600:
+		return fmt.Sprintf("%dm%02ds", s/60, s%60)
+	case s < 86400:
+		return fmt.Sprintf("%dh%02dm", s/3600, s%3600/60)
+	default:
+		return fmt.Sprintf("%dd%02dh", s/86400, s%86400/3600)
+	}
 }
 
 // bodyHeight is the number of log rows: all but the header (or top border),
@@ -797,7 +888,7 @@ func (m *runningModel) render() string {
 	if m.width < minWidth || m.height < minHeight {
 		return "terminal too small"
 	}
-	sw, gitCol := m.sidebarLayout()
+	cols := m.sidebarLayout()
 	var logRows []string
 	if m.picker != nil {
 		logRows = m.picker.view(m.logWidth(), m.bodyHeight())
@@ -805,9 +896,10 @@ func (m *runningModel) render() string {
 		logRows = m.view().view()
 	}
 	if m.panes() {
-		return m.renderPanes(sw, gitCol, logRows)
+		return m.renderPanes(cols, logRows)
 	}
 
+	sw := cols.width
 	var b strings.Builder
 	b.WriteString(m.header())
 	b.WriteByte('\n')
@@ -815,7 +907,7 @@ func (m *runningModel) render() string {
 	b.WriteByte('\n')
 	divider := m.st.rule.Render("│")
 	for r := range m.bodyHeight() {
-		b.WriteString(m.sidebarRow(m.sideTop+r, sw, gitCol))
+		b.WriteString(m.sidebarRow(m.sideTop+r, cols))
 		b.WriteString(divider)
 		b.WriteByte(' ')
 		b.WriteString(logRows[r])
@@ -854,7 +946,7 @@ func (m *runningModel) header() string {
 		states[i] = e.info.State
 	}
 	// The counts go first when narrow, then the right side.
-	if counts := m.st.stateCounts(states, "  "); counts != "" {
+	if counts := m.st.stateCounts(states, "  ", spinner(m.now())); counts != "" {
 		if line, ok := spread(left, counts+"   "+right, m.width); ok {
 			return line
 		}
@@ -877,7 +969,8 @@ func spread(left, right string, width int) (string, bool) {
 
 // renderPanes draws the processes and logs panes, the status bar and the
 // help line.
-func (m *runningModel) renderPanes(sw, gitCol int, logRows []string) string {
+func (m *runningModel) renderPanes(cols sidebarCols, logRows []string) string {
+	sw := cols.width
 	side := m.st.accent
 	title, note, border := m.logPane()
 	logW := m.width - sw - 2
@@ -888,7 +981,7 @@ func (m *runningModel) renderPanes(sw, gitCol int, logRows []string) string {
 	b.WriteByte('\n')
 	for r := range m.bodyHeight() {
 		b.WriteString(side.Render("│"))
-		b.WriteString(m.sidebarRow(m.sideTop+r, sw, gitCol))
+		b.WriteString(m.sidebarRow(m.sideTop+r, cols))
 		b.WriteString(side.Render("│"))
 		b.WriteString(border.Render("│"))
 		b.WriteByte(' ')
@@ -962,7 +1055,7 @@ func (m *runningModel) statusBar() string {
 	for i, e := range m.entries {
 		states[i] = e.info.State
 	}
-	b.info = m.st.stateCounts(states, " ")
+	b.info = m.st.stateCounts(states, " ", spinner(m.now()))
 	if e := m.selectedEntry(); e != nil {
 		b.project = e.style.Bold(true).Render(e.label)
 		if g, ok := m.git.get(e.info.Name); ok {
@@ -983,13 +1076,13 @@ func (m *runningModel) alive() int {
 	return n
 }
 
-func (m *runningModel) sidebarRow(i, width, gitCol int) string {
+func (m *runningModel) sidebarRow(i int, cols sidebarCols) string {
+	full, width := cols.width, cols.width
 	if i >= len(m.entries) {
 		return strings.Repeat(" ", width)
 	}
-	full := width
-	if gitCol > 0 {
-		width -= gitCol + 1 // the git column and the margin after it
+	if cols.git > 0 {
+		width -= cols.git + 1 // the git column and the margin after it
 	}
 	e := m.entries[i]
 	selected := i == m.selected
@@ -1002,23 +1095,29 @@ func (m *runningModel) sidebarRow(i, width, gitCol int) string {
 			style = style.Reverse(true) // no background tint: highlight the name
 		}
 	}
-	code := exitCode(e.info)
 	labelWidth := width - m.sidebarPrefix() - 1 // marker and icon, and the right margin
-	if code != "" {
-		labelWidth -= len(code) + 1
+	if cols.status > 0 {
+		labelWidth -= cols.status + 1
 	}
 	label := ansi.Truncate(e.label, labelWidth, "…")
-	row := " " + marker + " " + m.st.stateIcon(e.info.State) + " " + style.Render(label)
+	icon := m.st.stateIcon(e.info.State, spinner(m.now()))
+	row := " " + marker + " " + icon + " " + style.Render(label)
 	if m.panes() {
-		row = " " + marker + m.st.stateIcon(e.info.State) + " " + style.Render(label)
+		row = " " + marker + icon + " " + style.Render(label)
 	}
-	if code != "" {
-		row += " " + m.st.err.Render(code)
+	if cols.status > 0 {
+		text, failed := statusText(e.info, m.now())
+		row = pad(row, width-cols.status-1) + strings.Repeat(" ", cols.status-len(text))
+		if failed {
+			row += m.st.err.Render(text)
+		} else {
+			row += m.st.faint.Render(text)
+		}
 	}
-	if gitCol > 0 {
+	if cols.git > 0 {
 		row = pad(row, width)
 		if g, ok := m.git.get(e.info.Name); ok {
-			row += gitLabel(m.st, g, gitCol)
+			row += gitLabel(m.st, g, cols.git)
 		}
 	}
 	row = pad(row, full)

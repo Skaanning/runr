@@ -17,7 +17,6 @@ var testNow = func() time.Time { return time.Date(2026, 10, 25, 14, 32, 10, 0, t
 func newPaneModel(t *testing.T, width, height int) (*runningModel, *fakeSession) {
 	t.Helper()
 	m, sess := newTestModel(t, width, height)
-	m.now = testNow
 	m.Update(eventsMsg{events: []supervisor.Event{
 		state("db", supervisor.Running),
 		state("api", supervisor.Starting),
@@ -33,13 +32,13 @@ func TestPaneLayout(t *testing.T) {
 	want := []string{
 		"╭─ processes ──────╮╭─ logs · combined ──────────────────── following ─╮",
 		"│ ▌● db            ││ db     starting: db                              │",
-		"│  ◐ api           ││ api    listening on :8080                        │",
+		"│  ⠋ api           ││ api    listening on :8080                        │",
 		"│  ✗ Worker exit 1 ││                                                  │",
 		"│                  ││                                                  │",
 		"│                  ││                                                  │",
 		"│                  ││                                                  │",
 		"╰──────────────────╯╰──────────────────────────────────────────────────╯",
-		"  FOLLOW  backend  ● 1 ◐ 1 ✗ 1                               db  14:32",
+		"  FOLLOW  backend  ● 1 ⠋ 1 ✗ 1                               db  14:32",
 		"  ↑↓  select  tab  view  r  restart  s  stop  +  start  q  quit",
 	}
 	if got := screen(m); strings.Join(got, "\n") != strings.Join(want, "\n") {
