@@ -7,11 +7,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-const (
-	matchStyle   = "\x1b[7m"     // reverse video
-	currentStyle = "\x1b[30;43m" // black on yellow, for the line jumped to
-)
-
 // search is a plain-text search with smart case: a query without capital
 // letters matches case-insensitively (ASCII letters only).
 type search struct {

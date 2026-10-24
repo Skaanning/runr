@@ -28,7 +28,7 @@ func launcherConfig(t *testing.T) *config.Config {
 }
 
 func newTestLauncher(t *testing.T, cfg *config.Config) *launcherModel {
-	m := newLauncherModel(cfg, nil)
+	m := newLauncherModel(cfg, nil, newStyles(terminalPalette))
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 14})
 	return m
 }
@@ -144,7 +144,7 @@ func TestLauncherScrolls(t *testing.T) {
 	for _, n := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"} {
 		cfg.Projects[n] = &config.Project{Dir: t.TempDir(), Cmd: "x"}
 	}
-	m := newLauncherModel(cfg, nil)
+	m := newLauncherModel(cfg, nil, newStyles(terminalPalette))
 	m.Update(tea.WindowSizeMsg{Width: 60, Height: 8}) // 4 body rows
 	for range 11 {
 		m.Update(key("down"))
@@ -165,7 +165,7 @@ func TestAppStartsRunningView(t *testing.T) {
 	sess := newFakeSession("db", "api")
 	var started [][]string
 	fail := true
-	app := &appModel{cfg: cfg, launcher: newLauncherModel(cfg, nil), start: func(names []string) (Session, error) {
+	app := &appModel{cfg: cfg, launcher: newLauncherModel(cfg, nil, newStyles(terminalPalette)), start: func(names []string) (Session, error) {
 		started = append(started, names)
 		if fail {
 			return nil, errors.New("cannot start:\n  project web: dir missing")

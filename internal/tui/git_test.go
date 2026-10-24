@@ -168,7 +168,7 @@ func TestGitLabel(t *testing.T) {
 		{projectGit{err: errors.New("dubious ownership")}, 24, "?"},
 	}
 	for _, tt := range tests {
-		got := ansi.Strip(gitLabel(tt.g, tt.width))
+		got := ansi.Strip(gitLabel(newStyles(terminalPalette), tt.g, tt.width))
 		if got != tt.want {
 			t.Errorf("gitLabel(%+v, %d) = %q, want %q", tt.g, tt.width, got, tt.want)
 		}
@@ -268,7 +268,7 @@ func TestRunningStopsGitTicksWhenStopping(t *testing.T) {
 
 func TestLauncherShowsGit(t *testing.T) {
 	cfg := testConfig()
-	m := newLauncherModel(cfg, nil)
+	m := newLauncherModel(cfg, nil, newStyles(terminalPalette))
 	m.git = newGitTracker(testGit())
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 12})
 	loadGit(t, func(msg tea.Msg) { m.Update(msg) }, m.git, m.gitDirs())

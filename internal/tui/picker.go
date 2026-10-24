@@ -23,6 +23,7 @@ type picker struct {
 	empty  string                   // shown when there are no items
 	pick   func(pickerItem) tea.Cmd // called with the chosen item
 
+	st       *styles
 	input    textinput.Model
 	items    []pickerItem
 	filtered []int // indexes into items
@@ -30,7 +31,8 @@ type picker struct {
 	top      int   // first filtered item shown
 }
 
-func newPicker(p *picker) (*picker, tea.Cmd) {
+func newPicker(st *styles, p *picker) (*picker, tea.Cmd) {
+	p.st = st
 	p.input = textinput.New()
 	p.input.Prompt = ""
 	styles := textinput.DefaultStyles(true)
@@ -82,9 +84,9 @@ func (p *picker) selected() (pickerItem, bool) {
 // view returns exactly height rows of at most width cells.
 func (p *picker) view(width, height int) []string {
 	p.input.SetWidth(max(width-8, 1))
-	rows := []string{boldStyle.Render(p.action) + " " + p.input.View(), ""}
+	rows := []string{p.st.bold.Render(p.action) + " " + p.input.View(), ""}
 	if p.note != "" {
-		rows = append(rows, warnStyle.Render(p.note), "")
+		rows = append(rows, p.st.warn.Render(p.note), "")
 	}
 
 	listHeight := max(height-len(rows), 0)
@@ -102,18 +104,18 @@ func (p *picker) view(width, height int) []string {
 
 	switch {
 	case len(p.items) == 0:
-		rows = append(rows, faintStyle.Render(p.empty))
+		rows = append(rows, p.st.faint.Render(p.empty))
 	case len(p.filtered) == 0:
-		rows = append(rows, faintStyle.Render("no matches"))
+		rows = append(rows, p.st.faint.Render("no matches"))
 	}
 	for k := p.top; k < len(p.filtered) && len(rows) < height; k++ {
 		it := p.items[p.filtered[k]]
-		marker, style := "  ", plainStyle
+		marker, style := "  ", p.st.plain
 		if k == p.cursor {
-			marker, style = "▸ ", boldStyle
+			marker, style = "▸ ", p.st.bold
 		}
 		name := pad(ansi.Truncate(it.label, nameWidth, "…"), nameWidth)
-		rows = append(rows, marker+style.Render(name)+"  "+faintStyle.Render(it.info))
+		rows = append(rows, marker+style.Render(name)+"  "+p.st.faint.Render(it.info))
 	}
 	for i, r := range rows {
 		rows[i] = ansi.Truncate(r, width, "…")

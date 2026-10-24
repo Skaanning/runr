@@ -167,7 +167,7 @@ func readBranches(owner any, reader GitReader, project string, repo gitinfo.Repo
 // branchPicker returns the picker for the branches in msg. Its note says
 // which branch the project (shown as label) is on and which other projects
 // (others, as shown) switch with it.
-func branchPicker(msg branchesMsg, label string, others []string, pick func(gitinfo.Branch) tea.Cmd) (*picker, tea.Cmd) {
+func branchPicker(st *styles, msg branchesMsg, label string, others []string, pick func(gitinfo.Branch) tea.Cmd) (*picker, tea.Cmd) {
 	byName := map[string]gitinfo.Branch{}
 	current := "a detached HEAD"
 	var items []pickerItem
@@ -192,7 +192,7 @@ func branchPicker(msg branchesMsg, label string, others []string, pick func(giti
 	} else if len(others) > 1 {
 		note += " · " + strings.Join(others, ", ") + " share the repository and switch too"
 	}
-	return newPicker(&picker{
+	return newPicker(st, &picker{
 		action: "switch", note: note, empty: "no branches", items: items,
 		pick: func(it pickerItem) tea.Cmd { return pick(byName[it.name]) },
 	})
@@ -212,7 +212,7 @@ func (m *runningModel) showBranches(msg branchesMsg) tea.Cmd {
 		others[i] = m.entry(name).label
 	}
 	var cmd tea.Cmd
-	m.picker, cmd = branchPicker(msg, m.entry(msg.project).label, others, func(b gitinfo.Branch) tea.Cmd {
+	m.picker, cmd = branchPicker(m.st, msg, m.entry(msg.project).label, others, func(b gitinfo.Branch) tea.Cmd {
 		return m.switchBranch(msg.project, msg.repo, b)
 	})
 	return cmd
@@ -313,10 +313,10 @@ func pullQuestion(msg pullCheckMsg, label string, others []string, yes func() te
 
 // questionLine renders an open question as the help line. The hints stay
 // visible; the question is cut short when narrow.
-func questionLine(q *question, width int) string {
-	hints := "  " + hintList([][2]string{{"enter", q.action}, {"esc", "cancel"}})
+func questionLine(st *styles, q *question, width int) string {
+	hints := "  " + hintList(st, [][2]string{{"enter", q.action}, {"esc", "cancel"}})
 	w := max(width-ansi.StringWidth(hints)-1, 1)
-	return ansi.Truncate(" "+boldStyle.Render(ansi.Truncate(q.prompt, w, "…"))+hints, width, "…")
+	return ansi.Truncate(" "+st.bold.Render(ansi.Truncate(q.prompt, w, "…"))+hints, width, "…")
 }
 
 // answer handles a key while q is open: enter or y answers yes; esc, n or q

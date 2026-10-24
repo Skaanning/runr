@@ -39,7 +39,7 @@ func (a *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.launcher.notice = oneLine(err.Error())
 			return a, nil
 		}
-		a.running = newRunningModel(sess, a.cfg, msg.names)
+		a.running = newRunningModel(sess, a.cfg, msg.names, a.launcher.st)
 		a.running.git = a.launcher.git // already has the git state
 		a.running.Update(a.size)
 		return a, a.running.Init()
@@ -60,7 +60,7 @@ func (a *appModel) View() tea.View {
 // written with save. git reads the projects' git state; nil hides it.
 // Signals received on sigs are handled like Ctrl+C.
 func RunLauncher(cfg *config.Config, start StartFunc, save SaveFunc, git GitReader, sigs <-chan os.Signal) error {
-	launcher := newLauncherModel(cfg, save)
+	launcher := newLauncherModel(cfg, save, newStyles(terminalPalette))
 	launcher.git = newGitTracker(git)
 	return run(&appModel{cfg: cfg, start: start, launcher: launcher}, sigs)
 }
@@ -70,7 +70,7 @@ func RunLauncher(cfg *config.Config, start StartFunc, save SaveFunc, git GitRead
 // the header. git reads the projects' git state; nil hides it. Signals
 // received on sigs are handled like Ctrl+C.
 func Run(sess Session, cfg *config.Config, names []string, git GitReader, sigs <-chan os.Signal) error {
-	m := newRunningModel(sess, cfg, names)
+	m := newRunningModel(sess, cfg, names, newStyles(terminalPalette))
 	m.git = newGitTracker(git)
 	return run(m, sigs)
 }

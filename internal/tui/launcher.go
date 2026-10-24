@@ -27,6 +27,7 @@ type startMsg struct{ names []string }
 // and edits the registry through forms.
 type launcherModel struct {
 	cfg      *config.Config
+	st       *styles
 	save     SaveFunc       // nil: changes are only kept in memory
 	items    []launcherItem // groups first, then projects, each sorted
 	selected map[string]bool
@@ -47,8 +48,8 @@ type launcherModel struct {
 	width, height int
 }
 
-func newLauncherModel(cfg *config.Config, save SaveFunc) *launcherModel {
-	m := &launcherModel{cfg: cfg, save: save, selected: map[string]bool{}}
+func newLauncherModel(cfg *config.Config, save SaveFunc, st *styles) *launcherModel {
+	m := &launcherModel{cfg: cfg, st: st, save: save, selected: map[string]bool{}}
 	m.reload()
 	return m
 }
@@ -103,6 +104,8 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.sizeForm()
+	case tea.ColorProfileMsg:
+		m.st.profile = msg.Profile
 	case interruptMsg:
 		return m, tea.Quit
 	case branchesMsg:
@@ -262,7 +265,7 @@ func (m *launcherModel) showBranches(msg branchesMsg) tea.Cmd {
 		return nil // something else took over the screen meanwhile
 	}
 	var cmd tea.Cmd
-	m.picker, cmd = branchPicker(msg, msg.project, m.sharing(msg.project, msg.repo.Root), func(b gitinfo.Branch) tea.Cmd {
+	m.picker, cmd = branchPicker(m.st, msg, msg.project, m.sharing(msg.project, msg.repo.Root), func(b gitinfo.Branch) tea.Cmd {
 		return m.switchBranch(msg.project, msg.repo, b)
 	})
 	return cmd
@@ -617,7 +620,7 @@ func (m *launcherModel) render() string {
 		for _, l := range m.output {
 			rows = append(rows, "  "+sanitize(l))
 		}
-		rows = append(rows, "", "  "+faintStyle.Render("press any key to close"))
+		rows = append(rows, "", "  "+m.st.faint.Render("press any key to close"))
 		// Keep the end of the output, where git says what went wrong.
 		m.top = max(len(rows)-body, 0)
 	}
@@ -627,19 +630,19 @@ func (m *launcherModel) render() string {
 	if n := len(m.selected); n > 0 {
 		right = fmt.Sprintf("%d selected ", n)
 	}
-	left := " " + boldStyle.Render("runr")
+	left := " " + m.st.bold.Render("runr")
 	if m.form != nil {
 		left += " · " + m.form.title
 	}
 	b.WriteString(left + strings.Repeat(" ", max(m.width-ansi.StringWidth(left)-len(right), 1)) + right)
-	b.WriteString("\n" + ruleStyle.Render(strings.Repeat("─", m.width)) + "\n")
+	b.WriteString("\n" + m.st.rule.Render(strings.Repeat("─", m.width)) + "\n")
 	for r := range body {
 		if i := m.top + r; i < len(rows) {
 			b.WriteString(ansi.Truncate(rows[i], m.width, "…"))
 		}
 		b.WriteByte('\n')
 	}
-	b.WriteString(ruleStyle.Render(strings.Repeat("─", m.width)) + "\n")
+	b.WriteString(m.st.rule.Render(strings.Repeat("─", m.width)) + "\n")
 	b.WriteString(m.help())
 	return b.String()
 }
@@ -674,7 +677,7 @@ func (m *launcherModel) rows() (rows []string, cursorRow int) {
 				rows = append(rows, "")
 			}
 			heading = h
-			rows = append(rows, "  "+faintStyle.Render(h))
+			rows = append(rows, "  "+m.st.faint.Render(h))
 		}
 		if i == m.cursor {
 			cursorRow = len(rows)
@@ -685,9 +688,9 @@ func (m *launcherModel) rows() (rows []string, cursorRow int) {
 }
 
 func (m *launcherModel) itemRow(it launcherItem, current bool, nameWidth, dirWidth, gitCol int) string {
-	marker, nameStyle := "  ", plainStyle
+	marker, nameStyle := "  ", m.st.plain
 	if current {
-		marker, nameStyle = "▸ ", boldStyle
+		marker, nameStyle = "▸ ", m.st.bold
 	}
 	members := m.members(it)
 	check := "[ ]"
@@ -700,17 +703,17 @@ func (m *launcherModel) itemRow(it launcherItem, current bool, nameWidth, dirWid
 	row := " " + marker + check + " " + nameStyle.Render(pad(ansi.Truncate(it.name, nameWidth, "…"), nameWidth)) + "  "
 	if it.group {
 		if len(members) == 0 {
-			return row + faintStyle.Render("(empty)")
+			return row + m.st.faint.Render("(empty)")
 		}
-		return row + faintStyle.Render(strings.Join(members, ", "))
+		return row + m.st.faint.Render(strings.Join(members, ", "))
 	}
 
 	p := m.cfg.Projects[it.name]
 	dir := pad(ansi.Truncate(config.DisplayPath(p.Dir), dirWidth, "…"), dirWidth)
 	if m.missing[it.name] {
-		dir = errStyle.Render(dir)
+		dir = m.st.err.Render(dir)
 	} else {
-		dir = faintStyle.Render(dir)
+		dir = m.st.faint.Render(dir)
 	}
 	details := p.Cmd
 	if len(p.DependsOn) > 0 {
@@ -723,28 +726,28 @@ func (m *launcherModel) itemRow(it launcherItem, current bool, nameWidth, dirWid
 	if gitCol > 0 {
 		label := ""
 		if g, ok := m.git.get(it.name); ok {
-			label = gitLabel(g, gitCol)
+			label = gitLabel(m.st, g, gitCol)
 		}
 		row += pad(label, gitCol) + "  "
 	}
-	return row + faintStyle.Render(details)
+	return row + m.st.faint.Render(details)
 }
 
 func (m *launcherModel) help() string {
 	if m.ask != nil {
-		return questionLine(m.ask, m.width)
+		return questionLine(m.st, m.ask, m.width)
 	}
 	if m.notice != "" {
-		return ansi.Truncate(" "+warnStyle.Render(m.notice), m.width, "…")
+		return ansi.Truncate(" "+m.st.warn.Render(m.notice), m.width, "…")
 	}
 	if m.picker != nil {
-		return ansi.Truncate(" "+hintList([][2]string{
+		return ansi.Truncate(" "+hintList(m.st, [][2]string{
 			{"type", "to filter"}, {"↑↓", "select"}, {"enter", m.picker.action}, {"esc", "cancel"},
 		}), m.width, "…")
 	}
 	if m.form != nil {
 		if errs := m.form.form.Errors(); len(errs) > 0 {
-			return ansi.Truncate(" "+errStyle.Render("✗ "+oneLine(errs[0].Error())), m.width, "…")
+			return ansi.Truncate(" "+m.st.err.Render("✗ "+oneLine(errs[0].Error())), m.width, "…")
 		}
 	}
 	keys := [][2]string{
@@ -765,7 +768,7 @@ func (m *launcherModel) help() string {
 	}
 	parts := make([]string, len(keys))
 	for i, k := range keys {
-		parts[i] = boldStyle.Render(k[0]) + " " + faintStyle.Render(k[1])
+		parts[i] = m.st.hint(k[0], k[1])
 	}
 	return fitHints(parts, m.width)
 }

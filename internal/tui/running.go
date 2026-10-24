@@ -63,6 +63,7 @@ type sidebarEntry struct {
 type runningModel struct {
 	sess   Session
 	cfg    *config.Config
+	st     *styles
 	titles []string // the groups and projects started, for the header
 
 	entries    []*sidebarEntry
@@ -97,8 +98,8 @@ type runningModel struct {
 	forced   bool
 }
 
-func newRunningModel(sess Session, cfg *config.Config, names []string) *runningModel {
-	m := &runningModel{sess: sess, cfg: cfg, titles: names, byName: map[string]*sidebarEntry{}}
+func newRunningModel(sess Session, cfg *config.Config, names []string, st *styles) *runningModel {
+	m := &runningModel{sess: sess, cfg: cfg, st: st, titles: names, byName: map[string]*sidebarEntry{}}
 	for _, info := range sess.Processes() {
 		m.entry(info.Name).info = info
 	}
@@ -121,7 +122,7 @@ func (m *runningModel) entry(name string) *sidebarEntry {
 	e := &sidebarEntry{info: supervisor.ProcessInfo{Name: name}, label: name}
 	if p := m.cfg.Projects[name]; p != nil {
 		e.label = p.Label(name)
-		e.style = lipgloss.NewStyle().Foreground(projectColor(p, &m.nextColor))
+		e.style = lipgloss.NewStyle().Foreground(m.st.projectColor(p, &m.nextColor))
 	}
 	m.entries = append(m.entries, e)
 	m.byName[name] = e
@@ -230,6 +231,8 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.layout()
+	case tea.ColorProfileMsg:
+		m.st.profile = msg.Profile
 	case eventsMsg:
 		m.lastBatch = time.Now()
 		m.handleEvents(msg.events)
@@ -336,7 +339,7 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 			return nil
 		}
 		var cmd tea.Cmd
-		m.picker, cmd = newPicker(&picker{
+		m.picker, cmd = newPicker(m.st, &picker{
 			action: "start", empty: "everything is running", items: m.pickerItems(),
 			pick: func(it pickerItem) tea.Cmd { m.startPicked(it); return nil },
 		})
@@ -708,13 +711,13 @@ func (m *runningModel) formatCombined(line supervisor.LogLine, width int) []stri
 func (m *runningModel) display(line supervisor.LogLine, current uint64) string {
 	text := sanitize(line.Text)
 	if line.Stream == supervisor.System {
-		text = "\x1b[2m" + text
+		text = m.st.system + text
 	}
 	if m.search.active() {
 		if ranges := m.search.find(plain(text)); len(ranges) > 0 {
-			on := matchStyle
+			on := m.st.match
 			if current != 0 && line.Seq == current {
-				on = currentStyle
+				on = m.st.current
 			}
 			text = highlight(text, ranges, on)
 		}
@@ -752,9 +755,9 @@ func (m *runningModel) render() string {
 	var b strings.Builder
 	b.WriteString(m.header())
 	b.WriteByte('\n')
-	b.WriteString(ruleStyle.Render(strings.Repeat("─", sw) + "┬" + strings.Repeat("─", m.width-sw-1)))
+	b.WriteString(m.st.rule.Render(strings.Repeat("─", sw) + "┬" + strings.Repeat("─", m.width-sw-1)))
 	b.WriteByte('\n')
-	divider := ruleStyle.Render("│")
+	divider := m.st.rule.Render("│")
 	for r := range m.bodyHeight() {
 		b.WriteString(m.sidebarRow(m.sideTop+r, sw, gitCol))
 		b.WriteString(divider)
@@ -762,14 +765,14 @@ func (m *runningModel) render() string {
 		b.WriteString(logRows[r])
 		b.WriteByte('\n')
 	}
-	b.WriteString(ruleStyle.Render(strings.Repeat("─", sw) + "┴" + strings.Repeat("─", m.width-sw-1)))
+	b.WriteString(m.st.rule.Render(strings.Repeat("─", sw) + "┴" + strings.Repeat("─", m.width-sw-1)))
 	b.WriteByte('\n')
 	b.WriteString(m.help())
 	return b.String()
 }
 
 func (m *runningModel) header() string {
-	left := " " + boldStyle.Render("runr") + " · " + strings.Join(m.titles, " + ")
+	left := " " + m.st.bold.Render("runr") + " · " + strings.Join(m.titles, " + ")
 	name := "combined"
 	if m.single != nil {
 		e := m.entry(m.singleFor)
@@ -778,15 +781,15 @@ func (m *runningModel) header() string {
 	var right string
 	switch v := m.view(); {
 	case m.forced:
-		right = warnStyle.Render("killing…")
+		right = m.st.warn.Render("killing…")
 	case m.stopping:
-		right = warnStyle.Render(fmt.Sprintf("stopping… %d left · ctrl+c to force", m.alive()))
+		right = m.st.warn.Render(fmt.Sprintf("stopping… %d left · ctrl+c to force", m.alive()))
 	case v.following():
 		right = name + " · following"
 	default:
-		right = name + " · " + warnStyle.Render("paused")
+		right = name + " · " + m.st.warn.Render("paused")
 		if n := v.below(); n > 0 {
-			right += faintStyle.Render(fmt.Sprintf(" · %d more below", n))
+			right += m.st.faint.Render(fmt.Sprintf(" · %d more below", n))
 		}
 	}
 	right += " "
@@ -832,14 +835,14 @@ func (m *runningModel) sidebarRow(i, width, gitCol int) string {
 		labelWidth -= len(code) + 1
 	}
 	label := ansi.Truncate(e.label, labelWidth, "…")
-	row := " " + marker + " " + stateIcon(e.info.State) + " " + style.Render(label)
+	row := " " + marker + " " + m.st.stateIcon(e.info.State) + " " + style.Render(label)
 	if code != "" {
-		row += " " + faintStyle.Render(code)
+		row += " " + m.st.faint.Render(code)
 	}
 	if gitCol > 0 {
 		row = pad(row, width)
 		if g, ok := m.git.get(e.info.Name); ok {
-			row += gitLabel(g, gitCol)
+			row += gitLabel(m.st, g, gitCol)
 		}
 	}
 	return pad(row, full)
@@ -847,20 +850,19 @@ func (m *runningModel) sidebarRow(i, width, gitCol int) string {
 
 func (m *runningModel) help() string {
 	if m.confirm != nil {
-		return questionLine(m.confirm, m.width)
+		return questionLine(m.st, m.confirm, m.width)
 	}
 	if m.notice != "" {
-		return ansi.Truncate(" "+warnStyle.Render(m.notice), m.width, "…")
+		return ansi.Truncate(" "+m.st.warn.Render(m.notice), m.width, "…")
 	}
 	if m.picker != nil {
-		return ansi.Truncate(" "+hintList([][2]string{
+		return ansi.Truncate(" "+hintList(m.st, [][2]string{
 			{"type", "to filter"}, {"↑↓", "select"}, {"enter", m.picker.action}, {"esc", "cancel"},
 		}), m.width, "…")
 	}
 	if m.editing {
-		hints := boldStyle.Render("enter") + " " + faintStyle.Render("search") + "  " +
-			boldStyle.Render("esc") + " " + faintStyle.Render("cancel")
-		return ansi.Truncate(" "+boldStyle.Render("/")+m.input.View()+"  "+hints, m.width, "…")
+		hints := hintList(m.st, [][2]string{{"enter", "search"}, {"esc", "cancel"}})
+		return ansi.Truncate(" "+m.st.bold.Render("/")+m.input.View()+"  "+hints, m.width, "…")
 	}
 	view, stop := "view", "start"
 	if m.single != nil {
@@ -882,13 +884,13 @@ func (m *runningModel) help() string {
 	var parts []string
 	if m.search.active() {
 		keys = append([][2]string{{"n/N", "next/prev"}, {"esc", "clear"}}, keys...)
-		parts = append(parts, boldStyle.Render("/"+m.search.query)+" "+faintStyle.Render(m.matchInfo))
+		parts = append(parts, m.st.bold.Render("/"+m.search.query)+" "+m.st.faint.Render(m.matchInfo))
 	}
 	if m.stopping {
 		keys, parts = [][2]string{{"ctrl+c", "force quit"}}, nil
 	}
 	for _, k := range keys {
-		parts = append(parts, boldStyle.Render(k[0])+" "+faintStyle.Render(k[1]))
+		parts = append(parts, m.st.hint(k[0], k[1]))
 	}
 	return fitHints(parts, m.width)
 }
@@ -913,10 +915,10 @@ func pad(s string, width int) string {
 }
 
 // hintList renders key hints like "enter start  esc cancel".
-func hintList(keys [][2]string) string {
+func hintList(st *styles, keys [][2]string) string {
 	parts := make([]string, len(keys))
 	for i, k := range keys {
-		parts[i] = boldStyle.Render(k[0]) + " " + faintStyle.Render(k[1])
+		parts[i] = st.hint(k[0], k[1])
 	}
 	return strings.Join(parts, "  ")
 }

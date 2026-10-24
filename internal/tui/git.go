@@ -184,10 +184,10 @@ func gitWidth(g projectGit) int {
 
 // gitLabel renders a project's git state in at most width cells. The branch
 // is truncated first, so the markers stay visible.
-func gitLabel(g projectGit, width int) string {
+func gitLabel(st *styles, g projectGit, width int) string {
 	branch, markers := gitParts(g)
 	if g.err != nil {
-		return faintStyle.Render(branch)
+		return st.faint.Render(branch)
 	}
 	plainMarkers := strings.Join(markers, " ")
 	if mw := ansi.StringWidth(plainMarkers); mw > 0 && mw+2 <= width {
@@ -198,12 +198,12 @@ func gitLabel(g projectGit, width int) string {
 	branch = ansi.Truncate(branch, width, "…")
 	out := branch
 	for _, mk := range markers {
-		style := plainStyle
+		style := st.plain
 		switch mk {
 		case "*":
-			style = warnStyle
+			style = st.warn
 		case "!":
-			style = errStyle
+			style = st.err
 		}
 		out += " " + style.Render(mk)
 	}

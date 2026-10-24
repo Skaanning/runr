@@ -71,7 +71,7 @@ func testConfig() *config.Config {
 func newTestModel(t *testing.T, width, height int) (*runningModel, *fakeSession) {
 	t.Helper()
 	sess := newFakeSession("db", "api", "worker")
-	m := newRunningModel(sess, testConfig(), []string{"backend"})
+	m := newRunningModel(sess, testConfig(), []string{"backend"}, newStyles(terminalPalette))
 	m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	return m, sess
 }
@@ -154,7 +154,7 @@ func TestRunningSelectionAndSidebarScroll(t *testing.T) {
 		cfg.Projects[name] = &config.Project{Cmd: "x"}
 		sess.procs = append(sess.procs, supervisor.ProcessInfo{Name: name})
 	}
-	m := newRunningModel(sess, cfg, []string{"all"})
+	m := newRunningModel(sess, cfg, []string{"all"}, newStyles(terminalPalette))
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 7}) // 3 body rows
 
 	m.Update(key("up")) // stays at the first entry
@@ -498,12 +498,12 @@ func TestRunningSearch(t *testing.T) {
 	if got := helpRow(m); !strings.HasPrefix(got, " /error") || !strings.Contains(got, "enter search") {
 		t.Fatalf("help while editing = %q", got)
 	}
-	if !strings.Contains(m.render(), "line 8 "+matchStyle+"Error\x1b[0m") {
+	if !strings.Contains(m.render(), "line 8 "+m.st.match+"Error\x1b[0m") {
 		t.Fatal("matches not highlighted while typing")
 	}
 
 	m.Update(key("enter")) // newest match on screen
-	if !strings.Contains(m.render(), currentStyle+"Error") || !strings.HasPrefix(helpRow(m), " /error 3/3  n/N next/prev  esc clear") {
+	if !strings.Contains(m.render(), m.st.current+"Error") || !strings.HasPrefix(helpRow(m), " /error 3/3  n/N next/prev  esc clear") {
 		t.Fatalf("after enter: help = %q", helpRow(m))
 	}
 
@@ -536,7 +536,7 @@ func TestRunningSearch(t *testing.T) {
 	}
 
 	m.Update(key("esc"))
-	if strings.Contains(m.render(), matchStyle) || strings.Contains(helpRow(m), "/error") {
+	if strings.Contains(m.render(), m.st.match) || strings.Contains(helpRow(m), "/error") {
 		t.Fatal("esc did not clear the search")
 	}
 
@@ -564,7 +564,7 @@ func TestRunningSearchSingleView(t *testing.T) {
 	if !strings.HasPrefix(helpRow(m), " /hit 1/1") {
 		t.Fatalf("single: %q", helpRow(m))
 	}
-	if !strings.Contains(m.render(), "db "+currentStyle+"hit") {
+	if !strings.Contains(m.render(), "db "+m.st.current+"hit") {
 		t.Fatal("current match not highlighted in the single view")
 	}
 }
@@ -576,7 +576,7 @@ func TestRunningSearchKeepsFaintSystemLines(t *testing.T) {
 	typeText(m, "db")
 	out := m.render()
 	// After the highlighted match the faint styling is restored.
-	if !strings.Contains(out, "\x1b[2mstarting: "+matchStyle+"db\x1b[0m\x1b[2m --port 1") {
+	if !strings.Contains(out, "\x1b[2mstarting: "+m.st.match+"db\x1b[0m\x1b[2m --port 1") {
 		t.Fatalf("render = %q", out)
 	}
 }
@@ -600,7 +600,7 @@ func newPickerModel(t *testing.T) (*runningModel, *fakeSession) {
 		},
 	}
 	sess := newFakeSession("db", "api")
-	m := newRunningModel(sess, cfg, []string{"backend"})
+	m := newRunningModel(sess, cfg, []string{"backend"}, newStyles(terminalPalette))
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
 	m.Update(eventsMsg{events: []supervisor.Event{state("db", supervisor.Running), state("api", supervisor.Running)}})
 	return m, sess

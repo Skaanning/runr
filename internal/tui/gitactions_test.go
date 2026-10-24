@@ -372,7 +372,7 @@ func newGitLauncher(t *testing.T) (*launcherModel, *fakeGit) {
 	t.Helper()
 	cfg := testConfig()
 	cfg.Groups = map[string][]string{"backend": {"db", "api"}}
-	m := newLauncherModel(cfg, nil)
+	m := newLauncherModel(cfg, nil, newStyles(terminalPalette))
 	f := testGit()
 	f.status["/r/app"] = gitinfo.Status{Branch: "main", Commit: "0123456789", Upstream: "origin/main"}
 	f.branches = map[string][]gitinfo.Branch{"/r/app": {
