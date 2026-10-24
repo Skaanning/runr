@@ -54,12 +54,12 @@ func runHelper(mode string) {
 		fmt.Println("ready")
 		time.Sleep(time.Hour)
 	case "trap":
-		signal.Ignore(syscall.SIGTERM)
+		signal.Ignore(syscall.SIGTERM, os.Interrupt) // CTRL_BREAK arrives as os.Interrupt on Windows
 		fmt.Println("ready")
 		time.Sleep(time.Hour)
 	case "graceful":
 		c := make(chan os.Signal, 1)
-		signal.Notify(c, syscall.SIGTERM)
+		signal.Notify(c, syscall.SIGTERM, os.Interrupt)
 		fmt.Println("ready")
 		<-c
 		fmt.Println("bye")
