@@ -1,6 +1,15 @@
 package main
 
-import "github.com/spf13/cobra"
+import (
+	"fmt"
+	"io"
+	"strings"
+	"text/tabwriter"
+
+	"github.com/spf13/cobra"
+
+	"runr/internal/config"
+)
 
 func newGroupCmd() *cobra.Command {
 	group := &cobra.Command{
@@ -50,4 +59,13 @@ func newGroupCmd() *cobra.Command {
 		},
 	)
 	return group
+}
+
+func printGroups(w io.Writer, cfg *config.Config) {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "GROUP\tPROJECTS")
+	for _, name := range sortedNames(cfg.Groups) {
+		fmt.Fprintf(tw, "%s\t%s\n", name, strings.Join(cfg.Groups[name], ", "))
+	}
+	tw.Flush()
 }
