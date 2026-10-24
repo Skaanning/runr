@@ -520,6 +520,9 @@ func (m *runningModel) handlePickerKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.picker = nil
 		return m.interrupt()
 	case "esc":
+		if m.picker.cancel != nil {
+			m.picker.cancel()
+		}
 		m.picker = nil
 	case "enter":
 		if it, ok := m.picker.selected(); ok {
@@ -1145,7 +1148,7 @@ func (m *runningModel) statusBar() string {
 	case m.stopping:
 		b.mode, b.color = "STOPPING", m.st.pal.ansi[ansiRed]
 	case m.picker != nil:
-		b.mode, b.color = strings.ToUpper(m.picker.action), m.st.pal.ansi[ansiBlue]
+		b.mode, b.color = m.picker.modeName(), m.st.pal.ansi[ansiBlue]
 	case m.confirm != nil:
 		b.mode, b.color = strings.ToUpper(m.confirm.action), m.st.pal.ansi[ansiBlue]
 	case m.editing || m.search.active():

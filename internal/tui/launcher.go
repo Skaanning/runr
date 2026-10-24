@@ -38,7 +38,7 @@ type launcherModel struct {
 	notice   string          // shown instead of the help line until the next key
 	form     *editForm       // open project or group form, or nil
 	confirm  *confirmation   // open delete confirmation, or nil
-	picker   *picker         // open branch picker, or nil
+	picker   *picker         // open branch or theme picker, or nil
 	ask      *question       // open question in the help line (pull?), or nil
 	output   []string        // output of a failed git action, shown until the next key
 
@@ -216,9 +216,64 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.openBranches()
 		case "p":
 			return m, m.openPull()
+		case "t":
+			return m, m.openThemes()
 		}
 	}
 	return m, nil
+}
+
+// openThemes opens the theme picker, on the current theme. The launcher is
+// drawn in the theme under the cursor until one is picked or esc restores
+// the saved one.
+func (m *launcherModel) openThemes() tea.Cmd {
+	current := m.cfg.Settings.Theme()
+	items := make([]pickerItem, len(config.ThemeNames))
+	for i, name := range config.ThemeNames {
+		t := themeNamed(name)
+		info := t.about
+		if name == current {
+			info += " · current"
+		}
+		items[i] = pickerItem{name: name, label: name, info: info}
+		if m.st.tints() {
+			items[i].swatch = m.st.swatch(t)
+		}
+	}
+	p := &picker{
+		title: "theme", action: "use", mode: "theme", items: items,
+		pick:    func(it pickerItem) tea.Cmd { m.saveTheme(it.name); return nil },
+		preview: func(it pickerItem) { m.st.setTheme(themeNamed(it.name)) },
+		cancel:  m.restoreTheme,
+	}
+	if !m.st.tints() {
+		p.note = "this terminal shows 16 colors, so runr uses the terminal theme here"
+	}
+	var cmd tea.Cmd
+	m.picker, cmd = newPicker(m.st, p)
+	m.picker.cursor = max(slices.Index(config.ThemeNames, current), 0)
+	return cmd
+}
+
+// saveTheme makes the named theme the configured one.
+func (m *launcherModel) saveTheme(name string) {
+	c := *m.cfg // save only reads it
+	c.Settings.ThemeValue = name
+	if m.save != nil {
+		if err := m.save(&c); err != nil {
+			m.notice = "can't save the theme: " + oneLine(err.Error())
+			m.restoreTheme()
+			return
+		}
+	}
+	m.cfg.Settings.ThemeValue = name
+	m.st.setTheme(themeNamed(name))
+	m.notice = "theme set to " + name
+}
+
+// restoreTheme draws the launcher in the configured theme again.
+func (m *launcherModel) restoreTheme() {
+	m.st.setTheme(themeNamed(m.cfg.Settings.Theme()))
 }
 
 // openBranches checks the repository of the project under the cursor and
@@ -297,6 +352,9 @@ func (m *launcherModel) updatePicker(msg tea.Msg) tea.Cmd {
 	case "ctrl+c":
 		return tea.Quit
 	case "esc":
+		if m.picker.cancel != nil {
+			m.picker.cancel()
+		}
 		m.picker = nil
 	case "enter":
 		if it, ok := m.picker.selected(); ok {
@@ -665,7 +723,7 @@ func (m *launcherModel) statusBar() string {
 	case m.output != nil:
 		b.mode, b.color = "FAILED", m.st.pal.ansi[ansiRed]
 	case m.picker != nil:
-		b.mode, b.color = strings.ToUpper(m.picker.action), m.st.pal.ansi[ansiBlue]
+		b.mode, b.color = m.picker.modeName(), m.st.pal.ansi[ansiBlue]
 	case m.ask != nil:
 		b.mode, b.color = strings.ToUpper(m.ask.action), m.st.pal.ansi[ansiBlue]
 	}
@@ -806,7 +864,7 @@ func (m *launcherModel) help() string {
 			keys = append(keys, [2]string{"b", "branch"}, [2]string{"p", "pull"})
 		}
 	}
-	keys = append(keys, [2]string{"q", "quit"})
+	keys = append(keys, [2]string{"t", "theme"}, [2]string{"q", "quit"})
 	switch {
 	case m.form != nil:
 		keys = [][2]string{{"tab/enter", "next"}, {"shift+tab", "back"}, {"space", "toggle"}, {"esc", "cancel"}}

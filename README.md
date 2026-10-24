@@ -85,6 +85,7 @@ complete config file.
 | `runr group rm <group> <project...>` | Remove projects from a group |
 | `runr group delete <group>` | Delete a group (its projects are kept) |
 | `runr group ls` | List groups |
+| `runr theme [name]` | List the color themes (the current one marked with `*`), or set one |
 | `runr completion <shell>` | Shell completion script (bash, zsh, fish, powershell), completes project and group names |
 
 Flags for `add` and `edit`:
@@ -165,6 +166,9 @@ color the text only; your terminal's background shows through. Named project col
 Themes need a 256-color or true-color terminal; with 16 colors runr uses the `terminal`
 theme.
 
+To try them, press `t` in the launcher: it shows each theme as you move through the list and
+saves the one you pick. `runr theme` lists them and `runr theme <name>` sets one.
+
 ### Project fields
 
 | Field | Required | Description |
@@ -207,6 +211,7 @@ start them in the running view, or manage the registry with in-TUI forms.
 | `d` | Delete, after confirmation that lists the affected groups and dependents |
 | `b` | Switch the git branch of the project under the cursor (see [Git](#git)) |
 | `p` | Pull the git repository of the project under the cursor (`git pull --ff-only`), after confirming |
+| `t` | Pick a color theme; the launcher previews the theme under the cursor, `enter` saves it, `esc` keeps the old one |
 | `q`, `esc` | Quit |
 
 In forms: `tab`/`enter` next field, `shift+tab` back, `space` toggles a checkbox,

@@ -435,7 +435,7 @@ func TestLauncherSwitchBranch(t *testing.T) {
 	}
 
 	launcherPress(t, m, "down") // api
-	if got := launcherHelp(m); !strings.Contains(got, "d  delete  b  branch  p  pull  q  quit") {
+	if got := launcherHelp(m); !strings.Contains(got, "d  delete  b  branch  p  pull  t  theme  q  quit") {
 		t.Errorf("help = %q", got)
 	}
 	launcherPress(t, m, "b")

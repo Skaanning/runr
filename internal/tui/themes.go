@@ -24,6 +24,12 @@ func themeNamed(name string) theme {
 	return terminalTheme
 }
 
+// ThemeAbout describes the variants of the theme with a name from the
+// config, e.g. "mocha · latte".
+func ThemeAbout(name string) string {
+	return themeNamed(name).about
+}
+
 // truecolor builds a palette from hex colors. The tints are mixed from them
 // as in the mock-ups: rules are the accent mixed 40% into the background,
 // toasts 18% of red, search matches 35% of yellow.
@@ -61,6 +67,7 @@ var (
 			"#5c5f77", "#d20f39", "#40a02b", "#df8e1d", "#1e66f5", "#ea76cb", "#179299", "#acb0be",
 			"#6c6f85", "#de293e", "#49af3d", "#eea02d", "#456eff", "#fe85d8", "#2d9fa8", "#bcc0cc",
 		}),
+		about: "mocha · latte",
 	}
 	tokyoNight = theme{
 		dark: truecolor("#c0caf5", "#1a1b26", "#737aa2", "#7aa2f7", "#283457", [16]string{ // night
@@ -71,6 +78,7 @@ var (
 			"#b4b5b9", "#f52a65", "#587539", "#8c6c3e", "#2e7de9", "#9854f1", "#007197", "#6172b0",
 			"#a1a6c5", "#ff4774", "#5c8524", "#a27629", "#358aff", "#a463ff", "#007ea8", "#3760bf",
 		}),
+		about: "night · day",
 	}
 	gruvbox = theme{
 		dark: truecolor("#ebdbb2", "#282828", "#928374", "#fe8019", "#3c3836", [16]string{
@@ -81,6 +89,7 @@ var (
 			"#fbf1c7", "#cc241d", "#98971a", "#d79921", "#458588", "#b16286", "#689d6a", "#7c6f64",
 			"#928374", "#9d0006", "#79740e", "#b57614", "#076678", "#8f3f71", "#427b58", "#3c3836",
 		}),
+		about: "dark · light",
 	}
 	// nord has no light variant: on a light background, runr uses the
 	// terminal theme instead.
@@ -90,5 +99,6 @@ var (
 			"#4c566a", "#bf616a", "#a3be8c", "#ebcb8b", "#81a1c1", "#b48ead", "#8fbcbb", "#eceff4",
 		}),
 		darkOnly: true,
+		about:    "dark only",
 	}
 )

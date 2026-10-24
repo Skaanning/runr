@@ -48,7 +48,8 @@ type palette struct {
 // theme is a palette for dark and one for light terminal backgrounds.
 type theme struct {
 	dark, light palette
-	darkOnly    bool // no light palette: light terminals get the terminal theme's
+	darkOnly    bool   // no light palette: light terminals get the terminal theme's
+	about       string // its variants, shown in the theme picker and runr theme
 }
 
 // terminalANSI are the terminal's own 16 colors.
@@ -77,6 +78,7 @@ var terminalTheme = theme{
 		alert:     ansi.IndexedColor(224), // #ffd7d7
 		ansi:      terminalANSI,
 	},
+	about: "the terminal's own colors",
 }
 
 // styles are the styles the UI is drawn with, built from a theme for the
@@ -131,9 +133,21 @@ func (s *styles) setDark(dark bool) {
 	s.build()
 }
 
+// setTheme rebuilds the styles with another theme.
+func (s *styles) setTheme(t theme) {
+	s.theme = t
+	s.build()
+}
+
+// tints reports whether the terminal shows background tints and subtle
+// colors well, and so the themes' own colors.
+func (s *styles) tints() bool {
+	return s.profile >= colorprofile.ANSI256
+}
+
 func (s *styles) build() {
 	t := s.theme
-	tints := s.profile >= colorprofile.ANSI256 // background tints and subtle colors read well
+	tints := s.tints()
 	if !tints {
 		// A theme's colors would be approximated badly on 16 colors; the
 		// terminal's own read better.
@@ -216,6 +230,20 @@ func (p palette) color(c string) color.Color {
 		}
 	}
 	return lipgloss.Color(c)
+}
+
+// swatch shows a theme's accent and its six colors as dots, for the
+// terminal's background.
+func (s *styles) swatch(t theme) string {
+	p := t.variant(s.dark)
+	var b strings.Builder
+	for _, c := range []color.Color{
+		p.accent, p.ansi[ansiRed], p.ansi[ansiGreen], p.ansi[ansiYellow],
+		p.ansi[ansiBlue], p.ansi[ansiMagenta], p.ansi[ansiCyan],
+	} {
+		b.WriteString(lipgloss.NewStyle().Foreground(c).Render("●"))
+	}
+	return b.String()
 }
 
 // ProjectColor resolves a valid project color in the named theme, for a dark

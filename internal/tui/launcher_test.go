@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Skaanning/runr/internal/config"
@@ -60,7 +61,7 @@ func TestLauncherList(t *testing.T) {
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("list:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	if help := launcherScreen(m)[13]; help != "  ↑↓  move  space  select  enter  start  n  new  e  edit  g  group  d  delete  q  quit" {
+	if help := launcherScreen(m)[13]; help != "  ↑↓  move  space  select  enter  start  n  new  e  edit  g  group  d  delete  t  theme  q  quit" {
 		t.Fatalf("help = %q", help)
 	}
 }
@@ -193,5 +194,118 @@ func TestAppStartsRunningView(t *testing.T) {
 	}
 	if len(started) != 2 {
 		t.Fatalf("started = %q", started)
+	}
+}
+
+// newThemeLauncher returns a launcher whose saves are recorded in saved, or
+// fail with *fail if set.
+func newThemeLauncher(t *testing.T, theme string, saved *[]*config.Config, fail *error) *launcherModel {
+	cfg := launcherConfig(t)
+	cfg.Settings.ThemeValue = theme
+	m := newLauncherModel(cfg, func(c *config.Config) error {
+		if *fail != nil {
+			return *fail
+		}
+		*saved = append(*saved, c)
+		return nil
+	}, newStyles(themeNamed(cfg.Settings.Theme())))
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 14})
+	return m
+}
+
+func TestLauncherThemePicker(t *testing.T) {
+	var saved []*config.Config
+	var fail error
+	m := newThemeLauncher(t, "", &saved, &fail)
+	m.Update(key("t"))
+	if m.picker == nil {
+		t.Fatal("t did not open the theme picker")
+	}
+	rows := launcherScreen(m)
+	want := []string{
+		" use",
+		"",
+		" ▸ terminal     ●●●●●●●  the terminal's own colors · current",
+		"   catppuccin   ●●●●●●●  mocha · latte",
+		"   tokyo-night  ●●●●●●●  night · day",
+		"   gruvbox      ●●●●●●●  dark · light",
+		"   nord         ●●●●●●●  dark only",
+	}
+	if got := strings.Join(rows[2:9], "\n"); got != strings.Join(want, "\n") {
+		t.Fatalf("picker:\n%s\nwant:\n%s", got, strings.Join(want, "\n"))
+	}
+	if status := rows[12]; !strings.HasPrefix(status, "  THEME  ") {
+		t.Fatalf("status bar = %q", status)
+	}
+
+	// Moving the cursor previews the theme under it.
+	m.Update(key("down"))
+	if m.st.theme.about != catppuccin.about {
+		t.Fatalf("preview = %q, want catppuccin", m.st.theme.about)
+	}
+	m.Update(key("enter"))
+	if m.picker != nil || len(saved) != 1 || saved[0].Settings.ThemeValue != "catppuccin" {
+		t.Fatalf("picker open %v, saved %d", m.picker != nil, len(saved))
+	}
+	if m.cfg.Settings.Theme() != "catppuccin" || m.st.theme.about != catppuccin.about || m.notice != "theme set to catppuccin" {
+		t.Fatalf("theme %q, styles %q, notice %q", m.cfg.Settings.Theme(), m.st.theme.about, m.notice)
+	}
+
+	// Reopened, the cursor starts on the saved theme.
+	m.Update(key("t"))
+	if it, _ := m.picker.selected(); it.name != "catppuccin" {
+		t.Fatalf("cursor on %q, want catppuccin", it.name)
+	}
+}
+
+func TestLauncherThemePickerCancel(t *testing.T) {
+	var saved []*config.Config
+	var fail error
+	m := newThemeLauncher(t, "nord", &saved, &fail)
+	m.Update(key("t"))
+	if it, _ := m.picker.selected(); it.name != "nord" {
+		t.Fatalf("cursor on %q, want nord", it.name)
+	}
+	// Filtering previews the first match.
+	m.Update(key("g"))
+	m.Update(key("r"))
+	if m.st.theme.about != gruvbox.about {
+		t.Fatalf("preview = %q, want gruvbox", m.st.theme.about)
+	}
+	m.Update(key("esc"))
+	if m.picker != nil || len(saved) != 0 || m.cfg.Settings.Theme() != "nord" || m.st.theme.about != nord.about {
+		t.Fatalf("picker open %v, saved %d, theme %q, styles %q", m.picker != nil, len(saved), m.cfg.Settings.Theme(), m.st.theme.about)
+	}
+}
+
+func TestLauncherThemePickerSaveFails(t *testing.T) {
+	var saved []*config.Config
+	fail := errors.New("permission denied")
+	m := newThemeLauncher(t, "", &saved, &fail)
+	m.Update(key("t"))
+	m.Update(key("up")) // stays on terminal
+	m.Update(key("down"))
+	m.Update(key("down")) // tokyo-night
+	m.Update(key("enter"))
+	if m.cfg.Settings.ThemeValue != "" || m.st.theme.about != terminalTheme.about {
+		t.Fatalf("theme %q, styles %q, want the terminal theme kept", m.cfg.Settings.ThemeValue, m.st.theme.about)
+	}
+	if m.notice != "can't save the theme: permission denied" {
+		t.Fatalf("notice = %q", m.notice)
+	}
+}
+
+func TestLauncherThemePicker16Colors(t *testing.T) {
+	var saved []*config.Config
+	var fail error
+	m := newThemeLauncher(t, "", &saved, &fail)
+	m.Update(tea.ColorProfileMsg{Profile: colorprofile.ANSI})
+	m.Update(key("t"))
+	rows := launcherScreen(m)
+	if rows[4] != " this terminal shows 16 colors, so runr uses the terminal theme here" {
+		t.Fatalf("note = %q", rows[4])
+	}
+	if rows[7] != "   catppuccin   mocha · latte" {
+		t.Fatalf("row = %q (no swatch on 16 colors)", rows[7])
 	}
 }

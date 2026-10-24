@@ -8,12 +8,14 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// pickerItem is something to pick: a group or project to start, or a branch.
+// pickerItem is something to pick: a group or project to start, a branch or
+// a theme.
 type pickerItem struct {
-	name  string // identifies the item
-	label string // shown name
-	group bool
-	info  string // details shown after the name
+	name   string // identifies the item
+	label  string // shown name
+	group  bool
+	swatch string // styled text shown between the name and info, if set
+	info   string // details shown after the name
 }
 
 // picker is a filterable list of items, shown in place of the log.
@@ -22,7 +24,12 @@ type picker struct {
 	action string                   // what enter does, e.g. "start"; also the input's prompt
 	note   string                   // shown under the input, if set
 	empty  string                   // shown when there are no items
+	mode   string                   // status bar pill, if not the action upper-cased
 	pick   func(pickerItem) tea.Cmd // called with the chosen item
+	// preview, if set, is called with the item under the cursor whenever it
+	// changes; cancel, if set, when the picker is closed with esc.
+	preview func(pickerItem)
+	cancel  func()
 
 	st       *styles
 	input    textinput.Model
@@ -43,8 +50,22 @@ func newPicker(st *styles, p *picker) (*picker, tea.Cmd) {
 	return p, p.input.Focus()
 }
 
+// modeName is the status bar pill shown while the picker is open.
+func (p *picker) modeName() string {
+	if p.mode != "" {
+		return strings.ToUpper(p.mode)
+	}
+	return strings.ToUpper(p.action)
+}
+
 // update handles a key other than enter and esc.
 func (p *picker) update(msg tea.KeyPressMsg) tea.Cmd {
+	before, _ := p.selected()
+	defer func() {
+		if after, ok := p.selected(); ok && after.name != before.name && p.preview != nil {
+			p.preview(after)
+		}
+	}()
 	switch msg.String() {
 	case "up":
 		p.cursor = max(p.cursor-1, 0)
@@ -54,9 +75,9 @@ func (p *picker) update(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	var cmd tea.Cmd
-	before := p.input.Value()
+	query := p.input.Value()
 	p.input, cmd = p.input.Update(msg)
-	if p.input.Value() != before {
+	if p.input.Value() != query {
 		p.filter()
 	}
 	return cmd
@@ -116,7 +137,11 @@ func (p *picker) view(width, height int) []string {
 			marker, style = "▸ ", p.st.bold
 		}
 		name := pad(ansi.Truncate(it.label, nameWidth, "…"), nameWidth)
-		rows = append(rows, marker+style.Render(name)+"  "+p.st.faint.Render(it.info))
+		row := marker + style.Render(name) + "  "
+		if it.swatch != "" {
+			row += it.swatch + "  "
+		}
+		rows = append(rows, row+p.st.faint.Render(it.info))
 	}
 	for i, r := range rows {
 		rows[i] = ansi.Truncate(r, width, "…")
