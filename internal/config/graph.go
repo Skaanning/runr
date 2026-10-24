@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -191,4 +193,48 @@ func sortedKeys[V any](m map[string]V) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// Rename gives a project or group a new name and updates every reference
+// to it: group members and depends_on entries for a project. It reports the
+// groups and projects whose references changed, sorted.
+func (c *Config) Rename(old, name string) (groups, dependents []string, err error) {
+	if old == name {
+		return nil, nil, nil
+	}
+	if !namePattern.MatchString(name) {
+		return nil, nil, fmt.Errorf("invalid name %q (use letters, digits, '.', '_' and '-', starting with a letter or digit)", name)
+	}
+	if c.Projects[name] != nil || c.Groups[name] != nil {
+		return nil, nil, fmt.Errorf("a project or group named %q already exists", name)
+	}
+	if members, ok := c.Groups[old]; ok {
+		delete(c.Groups, old)
+		c.Groups[name] = members
+		return nil, nil, nil
+	}
+	p := c.Projects[old]
+	if p == nil {
+		return nil, nil, fmt.Errorf("unknown project or group %q", old)
+	}
+	delete(c.Projects, old)
+	c.Projects[name] = p
+	rename := func(list []string) bool {
+		i := slices.Index(list, old)
+		if i >= 0 {
+			list[i] = name
+		}
+		return i >= 0
+	}
+	for _, other := range slices.Sorted(maps.Keys(c.Projects)) {
+		if rename(c.Projects[other].DependsOn) {
+			dependents = append(dependents, other)
+		}
+	}
+	for _, g := range slices.Sorted(maps.Keys(c.Groups)) {
+		if rename(c.Groups[g]) {
+			groups = append(groups, g)
+		}
+	}
+	return groups, dependents, nil
 }

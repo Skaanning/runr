@@ -41,8 +41,8 @@ func TestProjectValuesCheck(t *testing.T) {
 	}{
 		{"valid", func(v *projectValues) {}, "", ""},
 		{"name required", func(v *projectValues) { v.name = " " }, "", "is required"},
-		{"name taken", func(v *projectValues) { v.name = "db" }, "", "a project with this name already exists"},
-		{"name used by group", func(v *projectValues) { v.name = "backend" }, "", "a group has the same name"},
+		{"name taken", func(v *projectValues) { v.name = "db" }, "", "a project or group with this name already exists"},
+		{"name used by group", func(v *projectValues) { v.name = "backend" }, "", "a project or group with this name already exists"},
 		{"bad name", func(v *projectValues) { v.name = "-x" }, "", "invalid name"},
 		{"cmd required", func(v *projectValues) { v.cmd = "" }, "cmd", "is required"},
 		{"bad color", func(v *projectValues) { v.color = "puce" }, "color", `unknown color "puce"`},
@@ -118,13 +118,13 @@ func TestProjectValuesNormalizesDir(t *testing.T) {
 func TestGroupValues(t *testing.T) {
 	cfg := launcherConfig(t)
 	cfg.Groups["backend"] = []string{"db", "api"}
-	v := &groupValues{original: "backend", members: []string{"api", "web", "db"}}
-	if got := v.candidate(cfg).Groups["backend"]; !slices.Equal(got, []string{"db", "api", "web"}) {
-		t.Fatalf("members = %q, want the existing order kept", got)
+	v := &groupValues{original: "backend", name: "backend", members: []string{"api", "web", "db"}}
+	if c, _ := v.candidate(cfg); !slices.Equal(c.Groups["backend"], []string{"db", "api", "web"}) {
+		t.Fatalf("members = %q, want the existing order kept", c.Groups["backend"])
 	}
-	v = &groupValues{}
-	if got := v.candidate(cfg).Groups[""]; got == nil || len(got) != 0 {
-		t.Fatalf("empty group = %#v", got)
+	v = &groupValues{name: "jobs"}
+	if c, _ := v.candidate(cfg); c.Groups["jobs"] == nil || len(c.Groups["jobs"]) != 0 {
+		t.Fatalf("empty group = %#v", c.Groups["jobs"])
 	}
 
 	for name, want := range map[string]string{
@@ -286,6 +286,93 @@ func TestLauncherDeleteFlow(t *testing.T) {
 		t.Fatalf("delete: confirm open = %v, groups = %v, saves = %d", m.confirm != nil, cfg.Groups, saves)
 	}
 	if it, _ := m.current(); it.name != "empty" {
+		t.Fatalf("cursor on %q", it.name)
+	}
+}
+
+func TestProjectFormRename(t *testing.T) {
+	cfg := launcherConfig(t) // api depends on db; backend = db, api
+	v := newProjectValues(cfg, "db")
+	if err := v.check(cfg, ""); err != nil {
+		t.Fatalf("unchanged name: %v", err)
+	}
+	v.name = "postgres"
+	if err := v.check(cfg, ""); err != nil {
+		t.Fatal(err)
+	}
+	c, err := v.candidate(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Projects["db"] != nil || c.Projects["postgres"] == nil ||
+		!slices.Equal(c.Projects["api"].DependsOn, []string{"postgres"}) ||
+		!slices.Equal(c.Groups["backend"], []string{"postgres", "api"}) {
+		t.Fatalf("after rename: %+v %v", c.Projects, c.Groups)
+	}
+	if cfg.Projects["db"] == nil {
+		t.Fatal("the original config changed")
+	}
+
+	for name, want := range map[string]string{
+		"api":     "a project or group with this name already exists",
+		"backend": "a project or group with this name already exists",
+		"bad one": "invalid name",
+		"":        "is required",
+	} {
+		v.name = name
+		if err := v.check(cfg, ""); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("rename to %q: %v, want %q", name, err, want)
+		}
+		if err := v.check(cfg, "cmd"); err != nil {
+			t.Errorf("rename to %q reported on cmd: %v", name, err)
+		}
+	}
+}
+
+func TestGroupFormRename(t *testing.T) {
+	cfg := launcherConfig(t)
+	v := &groupValues{original: "backend", name: "server", members: []string{"db"}}
+	if err := v.checkName(cfg); err != nil {
+		t.Fatal(err)
+	}
+	c, err := v.candidate(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Groups["backend"] != nil || !slices.Equal(c.Groups["server"], []string{"db"}) {
+		t.Fatalf("groups = %v", c.Groups)
+	}
+	v.name = "api"
+	if err := v.checkName(cfg); err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("err = %v", err)
+	}
+	v.name = "backend"
+	if err := v.checkName(cfg); err != nil {
+		t.Fatalf("unchanged name: %v", err)
+	}
+}
+
+func TestLauncherRenameKeepsSelection(t *testing.T) {
+	cfg := launcherConfig(t)
+	m := newLauncherModel(cfg, nil)
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
+	m.selected["db"] = true
+
+	c := cfg.Clone()
+	if _, _, err := c.Rename("db", "postgres"); err != nil {
+		t.Fatal(err)
+	}
+	f := fakeForm(c, launcherItem{name: "postgres"}, true)
+	f.original = launcherItem{name: "db"}
+	submit(m, f)
+
+	if !m.selected["postgres"] || m.selected["db"] {
+		t.Fatalf("selected = %v", m.selected)
+	}
+	if m.notice != `saved project "postgres" (renamed from "db")` {
+		t.Fatalf("notice = %q", m.notice)
+	}
+	if it, _ := m.current(); it.name != "postgres" {
 		t.Fatalf("cursor on %q", it.name)
 	}
 }

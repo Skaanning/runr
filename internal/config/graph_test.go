@@ -2,6 +2,7 @@ package config
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -143,5 +144,58 @@ func TestDependents(t *testing.T) {
 	}
 	if got := c.Dependents("gateway"); got != nil {
 		t.Errorf("Dependents(gateway) = %v", got)
+	}
+}
+
+func TestRename(t *testing.T) {
+	newCfg := func() *Config {
+		return &Config{
+			Projects: map[string]*Project{
+				"db":  {Cmd: "db"},
+				"api": {Cmd: "api", DependsOn: []string{"cache", "db"}},
+				"web": {Cmd: "web", DependsOn: []string{"db"}},
+			},
+			Groups: map[string][]string{"backend": {"db", "api"}, "front": {"web"}},
+		}
+	}
+
+	c := newCfg()
+	groups, dependents, err := c.Rename("db", "postgres")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(groups, ",") != "backend" || strings.Join(dependents, ",") != "api,web" {
+		t.Fatalf("groups = %v, dependents = %v", groups, dependents)
+	}
+	if c.Projects["db"] != nil || c.Projects["postgres"].Cmd != "db" ||
+		strings.Join(c.Projects["api"].DependsOn, ",") != "cache,postgres" ||
+		strings.Join(c.Groups["backend"], ",") != "postgres,api" {
+		t.Fatalf("after rename: %+v %v", c.Projects, c.Groups)
+	}
+
+	c = newCfg()
+	if _, _, err := c.Rename("backend", "server"); err != nil {
+		t.Fatal(err)
+	}
+	if c.Groups["backend"] != nil || strings.Join(c.Groups["server"], ",") != "db,api" {
+		t.Fatalf("groups = %v", c.Groups)
+	}
+
+	c = newCfg()
+	if _, _, err := c.Rename("db", "db"); err != nil {
+		t.Fatalf("same name: %v", err)
+	}
+	for _, tt := range []struct{ old, name, want string }{
+		{"db", "api", `a project or group named "api" already exists`},
+		{"db", "front", `a project or group named "front" already exists`},
+		{"db", "-x", `invalid name "-x"`},
+		{"nope", "x", `unknown project or group "nope"`},
+	} {
+		if _, _, err := c.Rename(tt.old, tt.name); err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("Rename(%q, %q) = %v, want %q", tt.old, tt.name, err, tt.want)
+		}
+	}
+	if c.Projects["db"] == nil {
+		t.Fatal("a failed rename changed the config")
 	}
 }

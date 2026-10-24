@@ -194,6 +194,11 @@ func (m *launcherModel) submitForm() tea.Cmd {
 		return f.form.Init()
 	}
 	m.form = nil
+	renamed := f.original.name != "" && f.original.name != focus.name
+	if renamed && m.selected[f.original.name] {
+		delete(m.selected, f.original.name)
+		m.selected[focus.name] = true
+	}
 	m.apply(c)
 	if i := slices.Index(m.items, focus); i >= 0 {
 		m.cursor = i
@@ -203,6 +208,9 @@ func (m *launcherModel) submitForm() tea.Cmd {
 		kind = "group"
 	}
 	m.notice = fmt.Sprintf("saved %s %q", kind, focus.name)
+	if renamed {
+		m.notice += fmt.Sprintf(" (renamed from %q)", f.original.name)
+	}
 	return nil
 }
 

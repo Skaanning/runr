@@ -18,8 +18,9 @@ type SaveFunc func(*config.Config) error
 
 // editForm is an open project or group form.
 type editForm struct {
-	title string // shown in the header, e.g. "new project"
-	form  *huh.Form
+	title    string       // shown in the header, e.g. "new project"
+	original launcherItem // the item being edited; empty name for a new one
+	form     *huh.Form
 	// result returns the changed config and the item to put the cursor on.
 	result func() (cfg *config.Config, focus launcherItem, err error)
 	// rebuild recreates the form with the same values, after a failed save.
@@ -62,25 +63,46 @@ func newProjectValues(cfg *config.Config, name string) *projectValues {
 }
 
 func (v *projectValues) projectName() string {
-	if v.original != "" {
-		return v.original
-	}
 	return strings.TrimSpace(v.name)
 }
 
-// candidate returns cfg with the form's project applied.
+// fieldError is a problem with the form's input that the config validator
+// can't report, because the input can't be applied in the first place.
+type fieldError struct {
+	field string // as in config.Issue; "" for the name
+	err   error
+}
+
+func (e *fieldError) Error() string { return e.err.Error() }
+
+// fieldErr returns err if it is a fieldError for field.
+func fieldErr(err error, field string) error {
+	var fe *fieldError
+	if errors.As(err, &fe) && fe.field == field {
+		return fe.err
+	}
+	return nil
+}
+
+// candidate returns cfg with the form's project applied: renamed if its
+// name changed, then with the new field values.
 func (v *projectValues) candidate(cfg *config.Config) (*config.Config, error) {
 	env, err := parseEnv(v.env)
 	if err != nil {
-		return nil, err
+		return nil, &fieldError{"env", err}
 	}
 	dir, err := config.NormalizeDir(strings.TrimSpace(v.dir))
 	if err != nil {
-		return nil, err
+		return nil, &fieldError{"dir", err}
 	}
 	c := cfg.Clone()
 	if c.Projects == nil {
 		c.Projects = map[string]*config.Project{}
+	}
+	if v.original != "" {
+		if _, _, err := c.Rename(v.original, v.projectName()); err != nil {
+			return nil, &fieldError{"", err}
+		}
 	}
 	var deps []string
 	if len(v.deps) > 0 {
@@ -103,22 +125,28 @@ func (v *projectValues) candidate(cfg *config.Config) (*config.Config, error) {
 // config with the form applied, using the same rules as the CLI.
 func (v *projectValues) check(cfg *config.Config, field string) error {
 	name := v.projectName()
-	if field == "" && v.original == "" {
-		switch {
-		case name == "":
-			return errors.New("is required")
-		case cfg.Projects[name] != nil:
-			return errors.New("a project with this name already exists")
+	if field == "" {
+		if err := checkNewName(cfg, v.original, name); err != nil {
+			return err
 		}
 	}
 	c, err := v.candidate(cfg)
 	if err != nil {
-		if field == "env" {
-			return err
-		}
-		return nil // reported by the field it belongs to
+		return fieldErr(err, field) // nil if it belongs to another field
 	}
 	return issueFor(c, "project", name, field)
+}
+
+// checkNewName checks a name typed into a form for an item currently named
+// original ("" for a new item).
+func checkNewName(cfg *config.Config, original, name string) error {
+	switch {
+	case name == "":
+		return errors.New("is required")
+	case name != original && (cfg.Projects[name] != nil || cfg.Groups[name] != nil):
+		return errors.New("a project or group with this name already exists")
+	}
+	return nil
 }
 
 // issueFor returns the validation error for a project or group field, if any.
@@ -167,9 +195,11 @@ func newProjectForm(cfg *config.Config, name string) *editForm {
 		check := func(field string) func(string) error {
 			return func(string) error { return v.check(cfg, field) }
 		}
-		var fields []huh.Field
-		if v.original == "" {
-			fields = append(fields, huh.NewInput().Title("Name").Value(&v.name).Validate(check("")))
+		fields := []huh.Field{
+			huh.NewInput().Title("Name").Value(&v.name).Validate(check("")),
+		}
+		if v.original != "" {
+			fields[0].(*huh.Input).Description("renaming also updates groups and depends_on")
 		}
 		fields = append(fields,
 			huh.NewInput().Title("Command").Description("run with the system shell in the directory").
@@ -178,7 +208,7 @@ func newProjectForm(cfg *config.Config, name string) *editForm {
 		)
 		var others []huh.Option[string]
 		for _, p := range slices.Sorted(maps.Keys(cfg.Projects)) {
-			if p != v.projectName() {
+			if p != v.original {
 				others = append(others, huh.NewOption(p, p).Selected(slices.Contains(v.deps, p)))
 			}
 		}
@@ -205,8 +235,9 @@ func newProjectForm(cfg *config.Config, name string) *editForm {
 		return newForm(fields...)
 	}
 	return &editForm{
-		title: title,
-		form:  build(),
+		title:    title,
+		original: launcherItem{name: v.original},
+		form:     build(),
 		result: func() (*config.Config, launcherItem, error) {
 			c, err := v.candidate(cfg)
 			return c, launcherItem{name: v.projectName()}, err
@@ -225,16 +256,20 @@ type groupValues struct {
 }
 
 func (v *groupValues) groupName() string {
-	if v.original != "" {
-		return v.original
-	}
 	return strings.TrimSpace(v.name)
 }
 
-func (v *groupValues) candidate(cfg *config.Config) *config.Config {
+// candidate returns cfg with the form's group applied: renamed if its name
+// changed, then with the new members.
+func (v *groupValues) candidate(cfg *config.Config) (*config.Config, error) {
 	c := cfg.Clone()
 	if c.Groups == nil {
 		c.Groups = map[string][]string{}
+	}
+	if v.original != "" {
+		if _, _, err := c.Rename(v.original, v.groupName()); err != nil {
+			return nil, err
+		}
 	}
 	// Keep the existing order of members that stay, then add new ones.
 	var members []string
@@ -252,34 +287,33 @@ func (v *groupValues) candidate(cfg *config.Config) *config.Config {
 		members = []string{}
 	}
 	c.Groups[v.groupName()] = members
-	return c
+	return c, nil
 }
 
 func (v *groupValues) checkName(cfg *config.Config) error {
 	name := v.groupName()
-	switch {
-	case name == "":
-		return errors.New("is required")
-	case cfg.Groups[name] != nil, cfg.Projects[name] != nil:
-		return errors.New("a project or group with this name already exists")
+	if err := checkNewName(cfg, v.original, name); err != nil {
+		return err
 	}
-	return issueFor(v.candidate(cfg), "group", name, "")
+	c, err := v.candidate(cfg)
+	if err != nil {
+		return err
+	}
+	return issueFor(c, "group", name, "")
 }
 
 // newGroupForm opens a form for an existing group, or for a new one with
 // the given members preselected.
 func newGroupForm(cfg *config.Config, name string, preselect []string) *editForm {
-	v := &groupValues{original: name, members: slices.Clone(preselect), save: true}
+	v := &groupValues{original: name, name: name, members: slices.Clone(preselect), save: true}
 	title := "new group"
 	if name != "" {
 		v.members = slices.Clone(cfg.Groups[name])
 		title = "edit group " + name
 	}
 	build := func() *huh.Form {
-		var fields []huh.Field
-		if v.original == "" {
-			fields = append(fields, huh.NewInput().Title("Name").Value(&v.name).
-				Validate(func(string) error { return v.checkName(cfg) }))
+		fields := []huh.Field{
+			huh.NewInput().Title("Name").Value(&v.name).Validate(func(string) error { return v.checkName(cfg) }),
 		}
 		var options []huh.Option[string]
 		for _, p := range slices.Sorted(maps.Keys(cfg.Projects)) {
@@ -294,10 +328,12 @@ func newGroupForm(cfg *config.Config, name string, preselect []string) *editForm
 		return newForm(fields...)
 	}
 	return &editForm{
-		title: title,
-		form:  build(),
+		title:    title,
+		original: launcherItem{name: name, group: true},
+		form:     build(),
 		result: func() (*config.Config, launcherItem, error) {
-			return v.candidate(cfg), launcherItem{name: v.groupName(), group: true}, nil
+			c, err := v.candidate(cfg)
+			return c, launcherItem{name: v.groupName(), group: true}, err
 		},
 		rebuild: build,
 		save:    &v.save,
