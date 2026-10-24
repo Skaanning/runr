@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"slices"
-	"strings"
 	"testing"
 
 	"runr/internal/supervisor"
@@ -126,21 +125,82 @@ func TestLogViewWrapping(t *testing.T) {
 	)
 	checkRows(t, v, "bbbb", "bb", "c") // top of the wrapped line is cut
 	v.pageUp()
-	checkRows(t, v, "bbbb", "bbbb", "bb") // the cut line moves to the bottom edge, fully
-	v.pageUp()
-	checkRows(t, v, "a", "bbbb", "bbbb")
+	checkRows(t, v, "a", "bbbb", "bbbb") // the old top row is now at the bottom
+	if v.below() != 1 {
+		t.Fatalf("below = %d, want 1", v.below())
+	}
+	v.pageDown()
+	checkRows(t, v, "bbbb", "bb", "c")
+	v.pageDown()
+	if !v.following() {
+		t.Fatal("not following after paging to the end")
+	}
 }
 
 func TestLogViewHugeLine(t *testing.T) {
 	v := newLogView(100, plainFormat)
-	v.setSize(2, 2)
+	v.setSize(2, 3)
 	v.append(
 		supervisor.LogLine{Text: "a"},
-		supervisor.LogLine{Text: strings.Repeat("x", 20)},
+		supervisor.LogLine{Text: "0123456789ab"}, // 6 rows
+		supervisor.LogLine{Text: "c"},
 	)
-	checkRows(t, v, "xx", "xx")
-	v.pageUp() // the huge line fills the screen; paging must still move
-	checkRows(t, v, "a", "xx")
+	checkRows(t, v, "89", "ab", "c")
+	// Paging moves through the line taller than the screen.
+	v.pageUp()
+	checkRows(t, v, "45", "67", "89")
+	v.pageUp()
+	checkRows(t, v, "01", "23", "45")
+	v.pageUp()
+	checkRows(t, v, "a", "01", "23")
+	v.pageUp()
+	checkRows(t, v, "a", "01", "23")
+
+	v.pageDown()
+	checkRows(t, v, "23", "45", "67")
+	v.pageDown()
+	checkRows(t, v, "67", "89", "ab")
+	if v.following() {
+		t.Fatal("following before reaching the end")
+	}
+	v.toggleFollow()
+	v.toggleFollow() // keeps the exact rows
+	checkRows(t, v, "89", "ab", "c")
+	v.pageUp()
+	v.pageUp()
+	v.toggleFollow()
+	v.toggleFollow()
+	checkRows(t, v, "89", "ab", "c")
+}
+
+func TestLogViewHugeLinePausedRowsStable(t *testing.T) {
+	v := newLogView(100, plainFormat)
+	v.setSize(2, 2)
+	v.append(supervisor.LogLine{Text: "0123456789"}) // 5 rows
+	v.pageUp()
+	checkRows(t, v, "45", "67")
+	v.append(supervisor.LogLine{Text: "x"})
+	checkRows(t, v, "45", "67")
+	v.scrollTop()
+	v.pageDown()
+	checkRows(t, v, "23", "45")
+	v.append(supervisor.LogLine{Text: "y"})
+	checkRows(t, v, "23", "45")
+}
+
+func TestLogViewHeightOne(t *testing.T) {
+	v := newLogView(100, plainFormat)
+	v.setSize(2, 1)
+	v.append(supervisor.LogLine{Text: "a"}, supervisor.LogLine{Text: "0123"})
+	checkRows(t, v, "23")
+	v.pageUp()
+	checkRows(t, v, "01")
+	v.pageUp()
+	checkRows(t, v, "a")
+	v.pageDown()
+	checkRows(t, v, "01")
+	v.pageDown()
+	checkRows(t, v, "23")
 }
 
 func TestLogViewTrimKeepsPosition(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"sync"
 	"syscall"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -117,6 +118,10 @@ func (s *jobState) killLocked() error {
 	}
 	return nil
 }
+
+// stopLeftovers is a no-op on Windows: release closes the job, which kills
+// anything the command left running.
+func (s *jobState) stopLeftovers(time.Duration) bool { return false }
 
 // release closes the job once the command has exited. Because of
 // KILL_ON_JOB_CLOSE this also stops any children it left running.

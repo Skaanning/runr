@@ -96,3 +96,83 @@ func TestSignalAfterExitIsNoop(t *testing.T) {
 		t.Errorf("Kill after exit: %v", err)
 	}
 }
+
+// waitGone waits until pid no longer exists.
+func waitGone(t *testing.T, pid int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for !errors.Is(syscall.Kill(pid, 0), syscall.ESRCH) {
+		if time.Now().After(deadline) {
+			t.Fatalf("process %d still alive", pid)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func childPid(t *testing.T, c *collector) int {
+	t.Helper()
+	line := c.waitForPrefix(t, "child ")
+	pid, err := strconv.Atoi(strings.TrimPrefix(line, "child "))
+	if err != nil {
+		t.Fatalf("bad child line %q", line)
+	}
+	return pid
+}
+
+func TestLeftoversStoppedAfterExit(t *testing.T) {
+	p, c := startHelper(t, "orphan", Spec{LeftoverTimeout: 5 * time.Second})
+	pid := childPid(t, c)
+
+	status := waitDone(t, p, 5*time.Second)
+	if !status.Success() || !status.Leftovers {
+		t.Errorf("status = %+v, want success with leftovers", status)
+	}
+	waitGone(t, pid, time.Second)
+}
+
+func TestLeftoversKilledAfterTimeout(t *testing.T) {
+	start := time.Now()
+	p, c := startHelper(t, "orphan-trap", Spec{LeftoverTimeout: 300 * time.Millisecond})
+	pid := childPid(t, c)
+
+	status := waitDone(t, p, 5*time.Second)
+	if !status.Leftovers {
+		t.Errorf("status = %+v, want leftovers", status)
+	}
+	if elapsed := time.Since(start); elapsed < 300*time.Millisecond {
+		t.Errorf("done after %v, before the leftover timeout", elapsed)
+	}
+	waitGone(t, pid, time.Second)
+}
+
+func TestLeftoversOutliveTerminatedLeader(t *testing.T) {
+	// The leader exits on SIGTERM while its child ignores it: Done waits for
+	// the child until Kill.
+	p, c := startHelper(t, "grandchild-trap", Spec{LeftoverTimeout: time.Hour})
+	pid := childPid(t, c)
+	c.waitForPrefix(t, "ready")
+
+	if err := p.Terminate(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-p.Done():
+		t.Fatal("done while the child is still running")
+	case <-time.After(300 * time.Millisecond):
+	}
+	if err := p.Kill(); err != nil {
+		t.Fatal(err)
+	}
+	status := waitDone(t, p, 5*time.Second)
+	if status.Signal != "terminated" {
+		t.Errorf("status = %+v, want the leader's SIGTERM", status)
+	}
+	waitGone(t, pid, time.Second)
+}
+
+func TestNoLeftovers(t *testing.T) {
+	p, _ := startHelper(t, "echo", Spec{})
+	if status := waitDone(t, p, 5*time.Second); status.Leftovers {
+		t.Errorf("status = %+v, want no leftovers", status)
+	}
+}

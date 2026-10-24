@@ -17,6 +17,12 @@ type Spec struct {
 	Command string   // command line, run through the system shell
 	Dir     string   // working directory
 	Env     []string // complete environment as KEY=VALUE pairs (see BuildEnv)
+
+	// LeftoverTimeout is how long processes the command leaves running in
+	// its process group after it exits get to stop after SIGTERM before they
+	// are killed (Unix; on Windows they are killed right away). Zero means
+	// 500ms.
+	LeftoverTimeout time.Duration
 }
 
 // Stream identifies which output a line came from.
@@ -47,6 +53,10 @@ type ExitStatus struct {
 	Code   int    // exit code, or -1 if killed by a signal or never waited on
 	Signal string // signal that killed the process (Unix), e.g. "terminated"
 	Err    error  // error waiting for the process, if any
+
+	// Leftovers reports that processes started by the command were still
+	// running after it exited, and had to be stopped (Unix only).
+	Leftovers bool
 }
 
 // Success reports whether the process exited with code 0.
@@ -142,6 +152,11 @@ func Start(spec Spec, onLine func(Line)) (*Process, error) {
 	go func() {
 		err := cmd.Wait()
 		p.status = exitStatus(cmd.ProcessState, err)
+		leftoverTimeout := spec.LeftoverTimeout
+		if leftoverTimeout <= 0 {
+			leftoverTimeout = drainTimeout
+		}
+		p.status.Leftovers = p.handle.stopLeftovers(leftoverTimeout)
 		select {
 		case <-drained:
 		case <-time.After(drainTimeout):
@@ -157,7 +172,8 @@ func (p *Process) Pid() int {
 	return p.cmd.Process.Pid
 }
 
-// Done is closed once the process has exited and its output has been read.
+// Done is closed once the process and anything it left running in its process
+// group have exited, and their output has been read.
 func (p *Process) Done() <-chan struct{} {
 	return p.done
 }

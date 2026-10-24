@@ -2,6 +2,7 @@ package proc
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -16,6 +17,9 @@ import (
 // helperEnv selects a helper mode: when set, the test binary acts as the
 // child process under test instead of running tests.
 const helperEnv = "RUNR_PROC_HELPER"
+
+// readyFDEnv tells a helper that fd 3 is a pipe to close once it is set up.
+const readyFDEnv = "RUNR_PROC_READY_FD"
 
 func TestMain(m *testing.M) {
 	if mode := os.Getenv(helperEnv); mode != "" {
@@ -51,11 +55,11 @@ func runHelper(mode string) {
 	case "badutf8":
 		os.Stdout.Write([]byte("a\xffb\n"))
 	case "sleep":
-		fmt.Println("ready")
+		signalReady()
 		time.Sleep(time.Hour)
 	case "trap":
 		signal.Ignore(syscall.SIGTERM, os.Interrupt) // CTRL_BREAK arrives as os.Interrupt on Windows
-		fmt.Println("ready")
+		signalReady()
 		time.Sleep(time.Hour)
 	case "graceful":
 		c := make(chan os.Signal, 1)
@@ -63,18 +67,49 @@ func runHelper(mode string) {
 		fmt.Println("ready")
 		<-c
 		fmt.Println("bye")
-	case "grandchild":
+	case "grandchild", "grandchild-trap", "orphan", "orphan-trap":
+		// Starts a child sharing stdout ("-trap": one that ignores SIGTERM),
+		// then waits ("grandchild") or exits right away ("orphan").
+		childMode := "sleep"
+		if strings.HasSuffix(mode, "-trap") {
+			childMode = "trap"
+		}
 		child := exec.Command(os.Args[0])
-		child.Env = append(os.Environ(), helperEnv+"=sleep")
+		child.Env = append(os.Environ(), helperEnv+"="+childMode)
+		child.Stdout = os.Stdout
+		var ready *os.File
+		if strings.HasPrefix(mode, "orphan") {
+			// Don't exit before the child is set up (ExtraFiles is Unix only).
+			r, w, err := os.Pipe()
+			if err != nil {
+				fmt.Println("error", err)
+				os.Exit(1)
+			}
+			ready = r
+			child.ExtraFiles = []*os.File{w}
+			child.Env = append(child.Env, readyFDEnv+"=1")
+		}
 		if err := child.Start(); err != nil {
 			fmt.Println("error", err)
 			os.Exit(1)
 		}
 		fmt.Println("child", child.Process.Pid)
-		time.Sleep(time.Hour)
+		if ready == nil {
+			time.Sleep(time.Hour)
+		}
+		child.ExtraFiles[0].Close()
+		_, _ = io.Copy(io.Discard, ready) // EOF once the child closes its end
 	default:
 		fmt.Fprintln(os.Stderr, "unknown helper mode", mode)
 		os.Exit(2)
+	}
+}
+
+// signalReady prints "ready" and, when asked to, closes the ready pipe.
+func signalReady() {
+	fmt.Println("ready")
+	if os.Getenv(readyFDEnv) != "" {
+		os.NewFile(3, "ready").Close()
 	}
 }
 

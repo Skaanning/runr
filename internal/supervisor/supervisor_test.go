@@ -5,6 +5,7 @@ package supervisor
 import (
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -137,7 +138,8 @@ func TestCrash(t *testing.T) {
 func TestStartErrors(t *testing.T) {
 	cfg := config.New()
 	cfg.Projects["sleepy"] = &config.Project{Dir: t.TempDir(), Cmd: "sleep 30"}
-	cfg.Projects["nodir"] = &config.Project{Dir: filepath.Join(t.TempDir(), "gone"), Cmd: "true"}
+	missing := filepath.Join(t.TempDir(), "gone")
+	cfg.Projects["nodir"] = &config.Project{Dir: missing, Cmd: "true"}
 	s, r := newTestSupervisorWithConfig(t, cfg)
 
 	if err := s.Start("nope"); err == nil || err.Error() != `unknown project or group "nope"` {
@@ -165,7 +167,7 @@ func TestStartErrors(t *testing.T) {
 	if info.Exit.Err == nil {
 		t.Errorf("exit = %+v", info.Exit)
 	}
-	if logs := logLines(s, "nodir"); !strings.HasPrefix(logs[len(logs)-1], "sys:failed to start:") {
+	if logs := logLines(s, "nodir"); logs[len(logs)-1] != "sys:failed to start: dir "+missing+" does not exist" {
 		t.Errorf("logs = %q", logs)
 	}
 }
@@ -213,6 +215,48 @@ func TestStopKillsAfterTimeout(t *testing.T) {
 	}
 	if !containsLine(logLines(s, "api"), "sys:still running after 300ms, killing") {
 		t.Errorf("logs = %q", logLines(s, "api"))
+	}
+}
+
+func TestLeftoversStoppedAfterExit(t *testing.T) {
+	s, r := newTestSupervisor(t, map[string]string{"api": "sleep 30 & echo pid $!"})
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "api", Exited)
+	logs := logLines(s, "api")
+	if !containsLine(logs, "sys:stopped processes the command left running") {
+		t.Errorf("logs = %q", logs)
+	}
+	for _, l := range logs {
+		if pid, ok := strings.CutPrefix(l, "out:pid "); ok {
+			if out, err := exec.Command("ps", "-p", pid).Output(); err == nil {
+				t.Errorf("leftover still running:\n%s", out)
+			}
+		}
+	}
+}
+
+func TestStopWaitsForLeftovers(t *testing.T) {
+	// The shell exits on SIGTERM, its background child ignores it.
+	s, r := newTestSupervisor(t, map[string]string{"api": "(trap '' TERM; echo ready; sleep 30) & wait"})
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	waitLog(t, s, "api", "out:ready")
+
+	start := time.Now()
+	if err := s.Stop("api"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "api", Stopped)
+	if elapsed := time.Since(start); elapsed < testTimeout {
+		t.Errorf("stopped after %v, before the %v timeout", elapsed, testTimeout)
+	}
+	logs := logLines(s, "api")
+	if !containsLine(logs, "sys:still running after 300ms, killing") ||
+		containsLine(logs, "sys:stopped processes the command left running") {
+		t.Errorf("logs = %q", logs)
 	}
 }
 

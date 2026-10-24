@@ -1,6 +1,8 @@
 package supervisor
 
 import (
+	"fmt"
+	"os"
 	"regexp"
 	"sync/atomic"
 	"time"
@@ -149,6 +151,9 @@ func (s *Supervisor) exited(m *managed, gen int, status proc.ExitStatus) {
 	m.info.Pid = 0
 	m.info.Exit = status
 
+	if status.Leftovers && !m.stopRequested {
+		s.system(m, "stopped processes the command left running")
+	}
 	switch {
 	case m.stopRequested:
 		s.system(m, "stopped (%s)", status)
@@ -176,6 +181,13 @@ func (s *Supervisor) spec(p *config.Project) (proc.Spec, error) {
 	if err != nil {
 		return proc.Spec{}, err
 	}
+	// The dir is checked before starting (config.Validate), but it can
+	// disappear later, e.g. before a restart.
+	if fi, err := os.Stat(dir); err != nil {
+		return proc.Spec{}, fmt.Errorf("dir %s does not exist", dir)
+	} else if !fi.IsDir() {
+		return proc.Spec{}, fmt.Errorf("dir %s is not a directory", dir)
+	}
 	envFile, err := p.ResolvedEnvFile()
 	if err != nil {
 		return proc.Spec{}, err
@@ -190,6 +202,9 @@ func (s *Supervisor) spec(p *config.Project) (proc.Spec, error) {
 		Command: p.Cmd,
 		Dir:     dir,
 		Env:     proc.BuildEnv(s.baseEnv, proc.DefaultEnv, fileVars, p.Env),
+		// Processes left behind by the command get as long to stop as the
+		// command itself does.
+		LeftoverTimeout: s.timeout,
 	}, nil
 }
 
