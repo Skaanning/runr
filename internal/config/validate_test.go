@@ -234,3 +234,20 @@ func TestColorCode(t *testing.T) {
 		}
 	}
 }
+
+func TestExampleConfigIsValid(t *testing.T) {
+	c, err := Load(filepath.Join("..", "..", "examples", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Projects) == 0 || len(c.Groups) == 0 {
+		t.Fatalf("example has %d projects, %d groups", len(c.Projects), len(c.Groups))
+	}
+	// Warnings are expected: the example's dirs don't exist here.
+	if _, err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if c.Settings.ShutdownTimeout() != 5*time.Second || c.Settings.ScrollbackLines() != 10000 {
+		t.Errorf("settings = %+v", c.Settings)
+	}
+}

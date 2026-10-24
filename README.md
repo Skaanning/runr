@@ -1,0 +1,257 @@
+# runr
+
+Run several local programs at once — a database, a few services, a frontend — and watch
+all their output in one terminal UI.
+
+You register each project once (directory + command), optionally put projects into named
+groups, and then start any combination with one command. runr starts dependencies first,
+waits until they are ready, interleaves everyone's output, and shuts everything down in
+reverse order when you quit.
+
+```
+ runr · backend + web                                          combined · following
+ ──────────────┬────────────────────────────────────────────────────────────────────
+ ▸ ● db        │ db     database system is ready to accept connections
+   ● api       │ api    listening on :8080
+   ✗ worker  1 │ worker panic: missing QUEUE_URL
+   ◐ web       │ web    waiting for api
+ ──────────────┴────────────────────────────────────────────────────────────────────
+ ↑↓ select  tab view  r restart  s stop  + start  / search  f follow  q quit
+```
+
+Works on Linux, macOS and Windows.
+
+## Install
+
+runr is built from source and needs Go 1.27 or newer.
+
+```bash
+git clone <this repo> runr && cd runr
+go install ./cmd/runr        # puts runr in $(go env GOPATH)/bin, usually ~/go/bin
+```
+
+Make sure that directory is on your `PATH`. Alternatively `make build` writes `bin/runr`,
+and `make cross` builds binaries for Linux, macOS and Windows into `dist/`.
+
+## Quick start
+
+Register your projects. `--dir` defaults to the current directory; everything after `--`
+is the command.
+
+```bash
+runr add db --dir ~/code/infra --ready-log 'ready to accept connections' -- docker compose up postgres
+runr add api --dir ~/code/api --depends-on db --env PORT=8080 -- go run ./cmd/server
+cd ~/code/web && runr add web --depends-on api -- npm run dev
+```
+
+Group them, if you like:
+
+```bash
+runr group create backend db api
+```
+
+Then start what you need:
+
+```bash
+runr up backend        # db first, api once db printed "ready to accept connections"
+runr up web            # pulls in api and db automatically
+runr                   # or pick from a list in the launcher
+```
+
+Press `q` to stop everything. See [examples/config.toml](examples/config.toml) for a
+complete config file.
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `runr` | Open the launcher |
+| `runr up <name...>` | Start groups and/or projects (plus their dependencies) and open the running view |
+| `runr add <name> [flags] -- <cmd>` | Register a project |
+| `runr edit <name> [flags] [-- <cmd>]` | Change a project; only the given flags change |
+| `runr rm <name> [--force]` | Remove a project (and from its groups); refuses if others depend on it unless `--force` |
+| `runr rename <name> <new-name>` | Rename a project or group; groups and `depends_on` are updated |
+| `runr ls` | List projects and groups, with warnings such as missing directories |
+| `runr group create <group> <project...>` | Create a group |
+| `runr group add <group> <project...>` | Add projects to a group |
+| `runr group rm <group> <project...>` | Remove projects from a group |
+| `runr group delete <group>` | Delete a group (its projects are kept) |
+| `runr group ls` | List groups |
+| `runr completion <shell>` | Shell completion script (bash, zsh, fish, powershell), completes project and group names |
+
+Flags for `add` and `edit`:
+
+| Flag | Field |
+|---|---|
+| `--dir <path>` | `dir` (`add`: defaults to the current directory) |
+| `--env KEY=VALUE` | `env`, repeatable; `edit` sets/overrides single variables |
+| `--unset-env KEY` | `edit` only: remove a variable, repeatable |
+| `--env-file <path>` | `env_file` |
+| `--depends-on <name>` | `depends_on`, repeatable or comma-separated; `edit` replaces the list, `--depends-on=` clears it |
+| `--ready-log <regex>` | `ready_log` |
+| `--color <color>` | `color` |
+| `--display-name <label>` | `display_name` |
+
+With `edit`, a flag given an empty value (e.g. `--color=`) clears that field.
+
+If `runr up` isn't connected to a terminal (piped, or run from a script), it prints the
+interleaved output with a name prefix instead of opening the UI, and exits once all
+processes have finished — with exit code 1 if any crashed. Ctrl+C stops everything.
+
+## Configuration
+
+Everything lives in one file:
+
+| OS | Path |
+|---|---|
+| Linux | `~/.config/runr/config.toml` (or `$XDG_CONFIG_HOME/runr/config.toml`) |
+| macOS | `~/Library/Application Support/runr/config.toml` |
+| Windows | `%AppData%\runr\config.toml` |
+
+Set `RUNR_CONFIG=/path/to/config.toml` to use a different file. The file is created on the
+first change and is readable only by you, since `env` values may hold secrets.
+
+You can edit it by hand, but `runr add`/`edit`, `runr group …` and the launcher's forms all
+validate before saving and are usually easier. runr rewrites the whole file when it saves,
+so **comments in a hand-edited file are lost** after the next change made through runr.
+
+```toml
+[settings]
+shutdown_timeout = "5s"
+scrollback_lines = 10000
+
+[projects.api]
+dir = "~/code/api"
+cmd = "go run ./cmd/server"
+env = { PORT = "8080" }
+env_file = ".env"
+depends_on = ["db"]
+ready_log = 'listening on :\d+'
+color = "cyan"
+display_name = "API"
+
+[groups]
+backend = ["db", "api"]
+```
+
+### Settings
+
+| Key | Default | Description |
+|---|---|---|
+| `shutdown_timeout` | `"5s"` | How long a stopping process gets before it is killed (Go duration: `500ms`, `10s`, `1m`) |
+| `scrollback_lines` | `10000` | Lines of output kept per process |
+
+### Project fields
+
+| Field | Required | Description |
+|---|---|---|
+| `dir` | yes | Working directory. `~` is expanded. |
+| `cmd` | yes | Command line, run with `sh -c` (Unix) or `cmd /c` (Windows), so pipes, `&&` and variables work |
+| `env` | no | Environment variables, e.g. `{ PORT = "8080" }` |
+| `env_file` | no | A `.env` file, relative to `dir` (absolute and `~` paths work too) |
+| `depends_on` | no | Projects that must be ready before this one starts |
+| `ready_log` | no | Regular expression ([Go syntax](https://pkg.go.dev/regexp/syntax)); the project is ready once an output line matches. Colors are stripped before matching. Without it, a project is ready as soon as it has started. |
+| `color` | no | Color of the name in the TUI: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, their `bright-` variants (`bright-red`, …), an ANSI number `0`–`255`, or a hex code `#f80` / `#ff8800`. Projects without one get a color from a fixed palette. |
+| `display_name` | no | Label shown in the TUI instead of the project name |
+
+Names of projects and groups may contain letters, digits, `.`, `_` and `-` (starting with a
+letter or digit), and share one namespace so `runr up <name>` is never ambiguous.
+
+### Validation
+
+runr checks the config when it loads it and before every save:
+
+- group members and `depends_on` entries must exist, and dependencies can't form a cycle
+  (reported as e.g. `api → auth → api`)
+- `ready_log` must be a valid regex, `color` a known color
+- `dir` and `env_file` should exist — only a warning in `runr ls` and the forms, but
+  `runr up` refuses to start a project whose directory is missing
+
+## The launcher
+
+`runr` without arguments lists your groups and projects. Select some and press `enter` to
+start them in the running view, or manage the registry with in-TUI forms.
+
+| Key | Action |
+|---|---|
+| `↑` `↓`, `home` `end` | Move |
+| `space` | Select / unselect; on a group, selects all its projects (or unselects them if all are selected) |
+| `enter` | Start the selection, or the item under the cursor if nothing is selected |
+| `n` | New project |
+| `e` | Edit the project (or group) under the cursor; changing the name renames it |
+| `g` | On a group: edit it. On a project: create a group, preselecting the selected projects |
+| `d` | Delete, after confirmation that lists the affected groups and dependents |
+| `q`, `esc` | Quit |
+
+In forms: `tab`/`enter` next field, `shift+tab` back, `space` toggles a checkbox,
+`esc` cancels. Errors show at the bottom as you go; the form can't be saved until they are
+fixed.
+
+## The running view
+
+The sidebar lists the processes with their state; the main area shows their output —
+either all of them interleaved (the combined view) or just the selected one.
+
+| Icon | State |
+|---|---|
+| `○` | pending |
+| `◐` | waiting for dependencies, or started but its `ready_log` hasn't matched yet |
+| `●` | running (ready) |
+| `✓` | exited with code 0 |
+| `✗` | crashed — non-zero exit code shown next to it |
+| `■` | stopped by you |
+| `⊘` | blocked: a dependency ended before it became ready |
+
+| Key | Action |
+|---|---|
+| `↑` `↓` | Select a process |
+| `tab` | Toggle between the combined view and the selected process's output |
+| `r` | Restart the selected process |
+| `s` | Stop the selected process, or start it (with its dependencies) if it isn't running |
+| `+` | Start another registered project or group (type to filter, `enter` to start, `esc` to close) |
+| `/` | Search the output; `enter` jumps to the newest match, `esc` cancels |
+| `n` / `N` | Next newer / older match |
+| `esc` | Clear the search |
+| `PgUp` / `PgDn` | Scroll a page |
+| `g` / `G` (`home` / `end`) | Jump to the top / bottom |
+| `f` | Toggle follow (auto-scroll); scrolling to the bottom resumes it |
+| `q`, `Ctrl+C` | Stop everything and quit; a second `Ctrl+C` kills everything immediately |
+
+Search is plain text (no regex) and smart-case: an all-lowercase query ignores case, any
+uppercase letter makes it case-sensitive.
+
+runr adds its own lines to each process's log, such as `starting: <cmd>`,
+`waiting for db`, `ready` and `crashed (exit code 1)`, so you can see what happened when.
+
+## How processes are run
+
+- **Dependencies.** Starting a project starts everything in its `depends_on`, transitively.
+  Independent projects start in parallel; a project starts once all its dependencies are
+  ready. A dependency that exits with code 0 (a migration, a build step) counts as ready. If
+  a dependency exits or crashes *before* it was ready, its dependents are blocked (`⊘`);
+  restarting the dependency unblocks them. A crash *after* it was ready leaves dependents
+  running.
+- **Environment**, later entries win: runr's own environment → `FORCE_COLOR=1`,
+  `CLICOLOR_FORCE=1`, `PYTHONUNBUFFERED=1` → `env_file` → `env`.
+- **Output** is read from pipes, not a terminal. The variables above get most tools to keep
+  colors and not buffer their output; tools that ignore them may print without colors or
+  in bursts. Processes get no input (stdin is empty). Lines longer than 64 KiB are split.
+- **Stopping** (`s`, `r`, `q`): each process and everything it started gets SIGTERM
+  (`CTRL_BREAK` on Windows) and `shutdown_timeout` to exit before it is killed. On quit,
+  projects stop in reverse dependency order: dependents first, then what they depend on.
+- **Processes left behind.** If a command exits but something it started keeps running in
+  the background, runr stops that too (on Unix it gets SIGTERM and `shutdown_timeout`
+  first). Programs that fully detach themselves (daemons) are not affected.
+- runr never restarts a process on its own.
+
+## Troubleshooting
+
+- **No colors, or output arrives late:** the program thinks it isn't writing to a terminal.
+  Look for a flag or variable that forces colors / line buffering (e.g. `--color=always`)
+  and add it to `cmd` or `env`.
+- **`stopped (signal: terminated)` although the program shut down cleanly:** wrappers like
+  `go run` report the signal rather than the program's own exit code. Harmless.
+- **npm prints an update notice when stopping:** add
+  `--env NPM_CONFIG_UPDATE_NOTIFIER=false`.
+- **A project is stuck at `◐`:** it is waiting for a dependency, or its `ready_log` hasn't
+  matched. Select it and press `tab` to see its log; runr's lines say what it's waiting for.

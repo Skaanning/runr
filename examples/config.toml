@@ -1,0 +1,57 @@
+# Example runr config. Copy it to the config location to try it out:
+#
+#   Linux:   ~/.config/runr/config.toml
+#   macOS:   ~/Library/Application Support/runr/config.toml
+#   Windows: %AppData%\runr\config.toml
+#
+# or point runr at it for one command: RUNR_CONFIG=examples/config.toml runr ls
+#
+# Usually you don't edit this file by hand: `runr add`, `runr edit`, `runr group …` and the
+# launcher's forms write it for you. Note that runr rewrites the whole file when it saves,
+# so comments like these are lost after the first change made through runr.
+
+[settings]
+shutdown_timeout = "5s"   # how long a stopping process gets before it is killed (default 5s)
+scrollback_lines = 10000  # lines of output kept per process (default 10000)
+
+# A database that takes a moment to boot. Dependents wait until a line of its
+# output matches ready_log.
+[projects.db]
+dir = "~/code/infra"
+cmd = "docker compose up postgres"
+ready_log = "ready to accept connections"
+
+# One-shot jobs are fine too: a dependency that exits with code 0 counts as ready.
+[projects.migrate]
+dir = "~/code/api"
+cmd = "go run ./cmd/migrate up"
+depends_on = ["db"]
+
+[projects.api]
+dir = "~/code/api"
+cmd = "go run ./cmd/server"
+env = { PORT = "8080", LOG_LEVEL = "debug" }  # wins over env_file and the inherited environment
+env_file = ".env"                             # relative to dir
+depends_on = ["db", "migrate"]
+ready_log = 'listening on :\d+'               # a regex; single quotes keep the backslash literal
+color = "cyan"                                # a name, an ANSI number (0-255) or "#rrggbb"
+display_name = "API"                          # shown in the TUI instead of "api"
+
+[projects.worker]
+dir = "~/code/api"
+cmd = "go run ./cmd/worker"
+depends_on = ["db"]
+color = "#ff8800"
+
+[projects.web]
+dir = "~/code/web"
+cmd = "npm run dev"
+depends_on = ["api"]
+# npm prints an update notice when it exits; this turns it off.
+env = { NPM_CONFIG_UPDATE_NOTIFIER = "false" }
+
+# Groups are named sets of projects: `runr up backend` starts db, migrate, api
+# and worker. Projects and groups share one namespace.
+[groups]
+backend = ["db", "migrate", "api", "worker"]
+all = ["db", "migrate", "api", "worker", "web"]
