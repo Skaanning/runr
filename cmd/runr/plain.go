@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/x/term"
+
 	"runr/internal/config"
 	"runr/internal/supervisor"
 )
@@ -189,13 +191,11 @@ func pad(s string, width int) string {
 
 // colorEnabled reports whether w is a terminal and NO_COLOR is not set.
 func colorEnabled(w io.Writer) bool {
-	if os.Getenv("NO_COLOR") != "" {
-		return false
-	}
-	f, ok := w.(*os.File)
-	if !ok {
-		return false
-	}
-	fi, err := f.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
+	return os.Getenv("NO_COLOR") == "" && isTerminal(w)
+}
+
+// isTerminal reports whether f (a reader or writer) is a terminal.
+func isTerminal(f any) bool {
+	file, ok := f.(*os.File)
+	return ok && term.IsTerminal(file.Fd())
 }

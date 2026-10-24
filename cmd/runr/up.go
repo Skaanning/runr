@@ -36,10 +36,12 @@ func newUpCmd() *cobra.Command {
 			sigs := make(chan os.Signal, 2)
 			signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 			defer signal.Stop(sigs)
-			if plain {
+			// The TUI needs a terminal for both keys and drawing; otherwise
+			// (e.g. piped to a file) behave like --plain.
+			if plain || !isTerminal(cmd.InOrStdin()) || !isTerminal(cmd.OutOrStdout()) {
 				return runPlain(cmd.OutOrStdout(), s.cfg, args, projects, sigs, colorEnabled(cmd.OutOrStdout()))
 			}
-			return runTUI(s.cfg, args, sigs)
+			return runTUI(cmd.ErrOrStderr(), s.cfg, args, sigs)
 		},
 	}
 	// Plain interleaved output, for debugging and non-interactive use.
@@ -48,17 +50,38 @@ func newUpCmd() *cobra.Command {
 	return cmd
 }
 
-// runTUI starts the projects and shows the running view until the user quits.
-func runTUI(cfg *config.Config, names []string, sigs <-chan os.Signal) error {
+// runTUI starts the projects and shows the running view until the user
+// quits. Projects that ended crashed or blocked are listed on stderr
+// afterwards, since the TUI's screen is gone by then.
+func runTUI(stderr io.Writer, cfg *config.Config, names []string, sigs <-chan os.Signal) error {
 	sup := supervisor.New(cfg, supervisor.Options{})
 	err := sup.Start(names...)
 	if err == nil {
 		err = tui.Run(sup, cfg, names, sigs)
 	}
+	final := sup.Processes()
 	sup.Close() // kills anything still alive if the TUI failed
 	for range sup.Events() {
 	}
+	if s := summarize(final); s != "" {
+		fmt.Fprintf(stderr, "runr: %s\n", s)
+	}
 	return err
+}
+
+// summarize describes the projects that ended crashed or blocked, or
+// returns "" if there are none.
+func summarize(infos []supervisor.ProcessInfo) string {
+	var parts []string
+	for _, info := range infos {
+		switch info.State {
+		case supervisor.Crashed:
+			parts = append(parts, fmt.Sprintf("%s crashed (%s)", info.Name, info.Exit))
+		case supervisor.Blocked:
+			parts = append(parts, info.Name+" was blocked")
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // prepareUp validates the config and checks that every project that would be
