@@ -60,7 +60,7 @@ func (a *appModel) View() tea.View {
 // written with save. git reads the projects' git state; nil hides it.
 // Signals received on sigs are handled like Ctrl+C.
 func RunLauncher(cfg *config.Config, start StartFunc, save SaveFunc, git GitReader, sigs <-chan os.Signal) error {
-	launcher := newLauncherModel(cfg, save, newStyles(terminalTheme))
+	launcher := newLauncherModel(cfg, save, newStyles(themeNamed(cfg.Settings.Theme())))
 	launcher.git = newGitTracker(git)
 	return run(&appModel{cfg: cfg, start: start, launcher: launcher}, sigs)
 }
@@ -70,7 +70,7 @@ func RunLauncher(cfg *config.Config, start StartFunc, save SaveFunc, git GitRead
 // the header. git reads the projects' git state; nil hides it. Signals
 // received on sigs are handled like Ctrl+C.
 func Run(sess Session, cfg *config.Config, names []string, git GitReader, sigs <-chan os.Signal) error {
-	m := newRunningModel(sess, cfg, names, newStyles(terminalTheme))
+	m := newRunningModel(sess, cfg, names, newStyles(themeNamed(cfg.Settings.Theme())))
 	m.git = newGitTracker(git)
 	return run(m, sigs)
 }

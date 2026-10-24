@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"image/color"
 	"strconv"
 	"strings"
 	"time"
@@ -47,13 +46,13 @@ func (s *styles) stateIcon(state supervisor.State, spin string) string {
 
 // projectColor returns a project's configured color, or the next default
 // color for projects without one.
-func (s *styles) projectColor(p *config.Project, next *int) color.Color {
+func projectColor(p *config.Project, next *int) string {
 	c := p.Color
 	if c == "" {
 		c = config.DefaultColors[*next%len(config.DefaultColors)]
 		*next++
 	}
-	return s.color(c)
+	return c
 }
 
 // hint renders a key hint like "enter start", with the key as a keycap

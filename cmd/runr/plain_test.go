@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/colorprofile"
+
 	"github.com/Skaanning/runr/internal/config"
 	"github.com/Skaanning/runr/internal/supervisor"
 )
@@ -58,7 +60,7 @@ func startPlain(t *testing.T, cfg *config.Config, names ...string) (*syncBuffer,
 	out := &syncBuffer{}
 	sigs := make(chan os.Signal, 2)
 	result := make(chan error, 1)
-	go func() { result <- runPlain(out, cfg, names, projects, sigs, false) }()
+	go func() { result <- runPlain(out, cfg, names, projects, sigs, plainColors{}) }()
 	return out, sigs, result
 }
 
@@ -200,13 +202,15 @@ func TestPrepareUp(t *testing.T) {
 	}
 }
 
+var truecolor = plainColors{profile: colorprofile.TrueColor, dark: true}
+
 func TestPlainPrinterColors(t *testing.T) {
 	cfg := plainConfig(t, map[string]*config.Project{
 		"api": {Cmd: "x", Color: "bright-red"},
 		"db":  {Cmd: "x"},
 		"web": {Cmd: "x", Color: "#ff8800"},
 	})
-	p := newPlainPrinter(&bytes.Buffer{}, cfg, []string{"db", "api", "web"}, true)
+	p := newPlainPrinter(&bytes.Buffer{}, cfg, []string{"db", "api", "web"}, truecolor)
 
 	tests := map[string]string{
 		"db":  "\x1b[36mdb  \x1b[0m",             // first default color: cyan
@@ -223,7 +227,7 @@ func TestPlainPrinterColors(t *testing.T) {
 func TestPlainPrinterSystemLines(t *testing.T) {
 	cfg := plainConfig(t, map[string]*config.Project{"db": {Cmd: "x", Color: "cyan"}})
 	var out bytes.Buffer
-	p := newPlainPrinter(&out, cfg, []string{"db"}, true)
+	p := newPlainPrinter(&out, cfg, []string{"db"}, truecolor)
 	p.event(supervisor.LineEvent{Line: supervisor.LogLine{Project: "db", Stream: supervisor.System, Text: "ready"}})
 	p.event(supervisor.LineEvent{Line: supervisor.LogLine{Project: "db", Stream: supervisor.SystemError, Text: "crashed (exit code 1)"}})
 	want := "\x1b[36mdb  \x1b[0m » \x1b[2mready\x1b[0m\n" +
@@ -233,18 +237,26 @@ func TestPlainPrinterSystemLines(t *testing.T) {
 	}
 }
 
-func TestSgrColor(t *testing.T) {
-	tests := map[string]string{
-		"1":       "31",
-		"9":       "91",
-		"208":     "38;5;208",
-		"#f80":    "38;2;255;136;0",
-		"#00ff7f": "38;2;0;255;127",
-		"bogus":   "",
+func TestPlainPrinterThemeColors(t *testing.T) {
+	cfg := plainConfig(t, map[string]*config.Project{
+		"api": {Cmd: "x", Color: "red"},
+		"db":  {Cmd: "x", Color: "208"},
+	})
+	cfg.Settings.ThemeValue = "catppuccin"
+	tests := []struct {
+		colors  plainColors
+		api, db string
+	}{
+		{truecolor, "\x1b[38;2;243;139;168mapi \x1b[0m", "\x1b[38;5;208mdb  \x1b[0m"},                                  // mocha red
+		{plainColors{profile: colorprofile.TrueColor}, "\x1b[38;2;210;15;57mapi \x1b[0m", "\x1b[38;5;208mdb  \x1b[0m"}, // latte red
+		{plainColors{profile: colorprofile.ANSI256, dark: true}, "\x1b[38;5;211mapi \x1b[0m", "\x1b[38;5;208mdb  \x1b[0m"},
+		{plainColors{profile: colorprofile.ANSI, dark: true}, "\x1b[91mapi \x1b[0m", "\x1b[91mdb  \x1b[0m"},
+		{plainColors{}, "api ", "db  "},
 	}
-	for in, want := range tests {
-		if got := sgrColor(in); got != want {
-			t.Errorf("sgrColor(%q) = %q, want %q", in, got, want)
+	for _, tt := range tests {
+		p := newPlainPrinter(&bytes.Buffer{}, cfg, []string{"api", "db"}, tt.colors)
+		if p.labels["api"] != tt.api || p.labels["db"] != tt.db {
+			t.Errorf("%+v: labels %q, %q, want %q, %q", tt.colors, p.labels["api"], p.labels["db"], tt.api, tt.db)
 		}
 	}
 }

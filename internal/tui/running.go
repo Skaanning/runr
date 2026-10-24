@@ -63,7 +63,8 @@ const (
 type sidebarEntry struct {
 	info  supervisor.ProcessInfo
 	label string
-	style lipgloss.Style // label color
+	color string         // the project's color, configured or a default
+	style lipgloss.Style // label color, from color
 	rate  outputRate     // the project's output lines per second
 }
 
@@ -142,7 +143,8 @@ func (m *runningModel) entry(name string) *sidebarEntry {
 	e := &sidebarEntry{info: supervisor.ProcessInfo{Name: name}, label: name}
 	if p := m.cfg.Projects[name]; p != nil {
 		e.label = p.Label(name)
-		e.style = lipgloss.NewStyle().Foreground(m.st.projectColor(p, &m.nextColor))
+		e.color = projectColor(p, &m.nextColor)
+		e.style = lipgloss.NewStyle().Foreground(m.st.color(e.color))
 	}
 	m.entries = append(m.entries, e)
 	m.byName[name] = e
@@ -154,6 +156,19 @@ func (m *runningModel) entry(name string) *sidebarEntry {
 		m.layout()
 	}
 	return e
+}
+
+// restyle resolves the projects' colors again after the palette changed.
+func (m *runningModel) restyle() {
+	for _, e := range m.entries {
+		if e.color != "" {
+			e.style = lipgloss.NewStyle().Foreground(m.st.color(e.color))
+		}
+	}
+	m.combined.invalidate()
+	if m.single != nil {
+		m.single.invalidate()
+	}
 }
 
 // view returns the log view on screen.
@@ -295,8 +310,10 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 		m.layout()
 	case tea.ColorProfileMsg:
 		m.st.setProfile(msg.Profile)
+		m.restyle()
 	case tea.BackgroundColorMsg:
 		m.st.setDark(msg.IsDark())
+		m.restyle()
 	case clockMsg:
 		if msg.owner == m {
 			return clockTick(m, m.now())

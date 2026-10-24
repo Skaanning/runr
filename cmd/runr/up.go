@@ -40,7 +40,7 @@ func newUpCmd() *cobra.Command {
 			// The TUI needs a terminal for both keys and drawing; otherwise
 			// (e.g. piped to a file) behave like --plain.
 			if plain || !isTerminal(cmd.InOrStdin()) || !isTerminal(cmd.OutOrStdout()) {
-				return runPlain(cmd.OutOrStdout(), s.cfg, args, projects, sigs, colorEnabled(cmd.OutOrStdout()))
+				return runPlain(cmd.OutOrStdout(), s.cfg, args, projects, sigs, colorsFor(cmd.OutOrStdout()))
 			}
 			return runTUI(cmd.ErrOrStderr(), s.cfg, args, sigs)
 		},

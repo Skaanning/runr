@@ -4,20 +4,28 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/colorprofile"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/term"
 
 	"github.com/Skaanning/runr/internal/config"
 	"github.com/Skaanning/runr/internal/supervisor"
+	"github.com/Skaanning/runr/internal/tui"
 )
+
+// plainColors is how plain output is colored.
+type plainColors struct {
+	profile colorprofile.Profile // below ANSI: no colors
+	dark    bool                 // the terminal's background, for the theme's palette
+}
 
 // runPlain starts the projects and prints their output interleaved, one line
 // per output line, until every project has finished. The first signal on
 // sigs stops everything gracefully; a second one kills it.
-func runPlain(out io.Writer, cfg *config.Config, names, projects []string, sigs <-chan os.Signal, color bool) error {
-	pr := newPlainPrinter(out, cfg, projects, color)
+func runPlain(out io.Writer, cfg *config.Config, names, projects []string, sigs <-chan os.Signal, colors plainColors) error {
+	pr := newPlainPrinter(out, cfg, projects, colors)
 	sup := supervisor.New(cfg, supervisor.Options{})
 	if err := sup.Start(names...); err != nil {
 		sup.Close()
@@ -107,8 +115,8 @@ type plainPrinter struct {
 	noticeP string
 }
 
-func newPlainPrinter(w io.Writer, cfg *config.Config, projects []string, color bool) *plainPrinter {
-	p := &plainPrinter{w: w, color: color, labels: map[string]string{}}
+func newPlainPrinter(w io.Writer, cfg *config.Config, projects []string, colors plainColors) *plainPrinter {
+	p := &plainPrinter{w: w, color: colors.profile >= colorprofile.ANSI, labels: map[string]string{}}
 	for _, name := range projects {
 		p.width = max(p.width, len(cfg.Projects[name].Label(name)))
 	}
@@ -122,7 +130,9 @@ func newPlainPrinter(w io.Writer, cfg *config.Config, projects []string, color b
 			c = config.DefaultColors[next%len(config.DefaultColors)]
 			next++
 		}
-		p.labels[name] = p.paint(sgrColor(config.ColorCode(c)), pad(proj.Label(name), p.width))
+		// Named colors come from the theme, converted for the terminal.
+		fg := colors.profile.Convert(tui.ProjectColor(cfg.Settings.Theme(), c, colors.dark))
+		p.labels[name] = p.paint(strings.Join(ansi.Style{}.ForegroundColor(fg), ";"), pad(proj.Label(name), p.width))
 	}
 	p.noticeP = p.paint("1", pad("runr", p.width))
 	return p
@@ -161,31 +171,6 @@ func (p *plainPrinter) paint(sgr, s string) string {
 	return "\x1b[" + sgr + "m" + s + "\x1b[0m"
 }
 
-// sgrColor converts a color code (ANSI index or hex) to an SGR foreground parameter.
-func sgrColor(code string) string {
-	if strings.HasPrefix(code, "#") {
-		hex := code[1:]
-		if len(hex) == 3 {
-			hex = string([]byte{hex[0], hex[0], hex[1], hex[1], hex[2], hex[2]})
-		}
-		r, _ := strconv.ParseUint(hex[0:2], 16, 8)
-		g, _ := strconv.ParseUint(hex[2:4], 16, 8)
-		b, _ := strconv.ParseUint(hex[4:6], 16, 8)
-		return fmt.Sprintf("38;2;%d;%d;%d", r, g, b)
-	}
-	n, err := strconv.Atoi(code)
-	switch {
-	case err != nil:
-		return ""
-	case n < 8:
-		return strconv.Itoa(30 + n)
-	case n < 16:
-		return strconv.Itoa(90 + n - 8)
-	default:
-		return "38;5;" + code
-	}
-}
-
 func pad(s string, width int) string {
 	if n := width - len([]rune(s)); n > 0 {
 		return s + strings.Repeat(" ", n)
@@ -196,6 +181,16 @@ func pad(s string, width int) string {
 // colorEnabled reports whether w is a terminal and NO_COLOR is not set.
 func colorEnabled(w io.Writer) bool {
 	return os.Getenv("NO_COLOR") == "" && isTerminal(w)
+}
+
+// colorsFor returns how to color plain output to w: not at all unless
+// colorEnabled; with the terminal's color profile otherwise. The background
+// is assumed dark: asking the terminal blocks when it doesn't answer.
+func colorsFor(w io.Writer) plainColors {
+	if !colorEnabled(w) {
+		return plainColors{}
+	}
+	return plainColors{profile: colorprofile.Detect(w, os.Environ()), dark: true}
 }
 
 // isTerminal reports whether f (a reader or writer) is a terminal.

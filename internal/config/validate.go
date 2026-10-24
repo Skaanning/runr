@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -68,6 +69,9 @@ func (c *Config) Validate() (warnings []Issue, err error) {
 	}
 	if c.Settings.ScrollbackLinesValue < 0 {
 		addErr("settings", "", "scrollback_lines", "must not be negative")
+	}
+	if t := c.Settings.ThemeValue; t != "" && !slices.Contains(ThemeNames, t) {
+		addErr("settings", "", "theme", "unknown theme %q (one of %s)", t, strings.Join(ThemeNames, ", "))
 	}
 
 	for _, name := range sortedKeys(c.Projects) {
@@ -171,6 +175,9 @@ var ColorNames = []string{
 	"bright-black", "bright-red", "bright-green", "bright-yellow",
 	"bright-blue", "bright-magenta", "bright-cyan", "bright-white",
 }
+
+// ThemeNames are the UI's color themes; the first is the default.
+var ThemeNames = []string{"terminal", "catppuccin", "tokyo-night", "gruvbox", "nord"}
 
 // DefaultColors are assigned in order to projects without a configured color.
 var DefaultColors = []string{

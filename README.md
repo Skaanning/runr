@@ -128,6 +128,7 @@ so **comments in a hand-edited file are lost** after the next change made throug
 shutdown_timeout = "5s"
 scrollback_lines = 10000
 show_all = true
+theme = "tokyo-night"
 
 [projects.api]
 dir = "~/code/api"
@@ -149,7 +150,20 @@ backend = ["db", "api"]
 |---|---|---|
 | `shutdown_timeout` | `"5s"` | How long a stopping process gets before it is killed (Go duration: `500ms`, `10s`, `1m`) |
 | `scrollback_lines` | `10000` | Lines of output kept per process |
+| `theme` | `"terminal"` | Colors of the TUI: `terminal` (your terminal's own colors), `catppuccin`, `tokyo-night`, `gruvbox` or `nord`. See [Themes](#themes). |
 | `show_all` | `true` | List the registered projects that aren't running in the running view's sidebar, below the session's (`a` toggles it for a session) |
+
+### Themes
+
+`terminal` uses your terminal's 16 colors, so runr matches whatever scheme the terminal has.
+The others bring their own colors: `catppuccin` (mocha on dark terminals, latte on light
+ones), `tokyo-night` (night / day), `gruvbox` (dark / light) and `nord` (dark only; on a
+light terminal runr uses the `terminal` theme instead). runr asks the terminal whether its
+background is light or dark when it starts, and assumes dark if it doesn't answer. Themes
+color the text only; your terminal's background shows through. Named project colors
+(`cyan`, `bright-red`, …) come from the theme; numbers and hex codes are used as they are.
+Themes need a 256-color or true-color terminal; with 16 colors runr uses the `terminal`
+theme.
 
 ### Project fields
 

@@ -411,6 +411,7 @@ func (m *launcherModel) current() (launcherItem, bool) {
 
 func (m *launcherModel) openForm(f *editForm) tea.Cmd {
 	m.form = f
+	f.form.WithTheme(m.st.formTheme())
 	m.sizeForm()
 	return f.form.Init()
 }
@@ -459,7 +460,7 @@ func (m *launcherModel) submitForm() tea.Cmd {
 	}
 	if err != nil {
 		m.notice = oneLine(err.Error())
-		f.form = f.rebuild()
+		f.form = f.rebuild().WithTheme(m.st.formTheme())
 		m.sizeForm()
 		return f.form.Init()
 	}

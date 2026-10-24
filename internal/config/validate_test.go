@@ -119,6 +119,11 @@ func TestValidateErrors(t *testing.T) {
 			},
 			[]string{`settings: shutdown_timeout: must not be negative`, `settings: scrollback_lines: must not be negative`},
 		},
+		{
+			"unknown theme",
+			func(c *Config) { c.Settings.ThemeValue = "solarized" },
+			[]string{`settings: theme: unknown theme "solarized" (one of terminal, catppuccin, tokyo-night, gruvbox, nord)`},
+		},
 	}
 
 	for _, tt := range tests {

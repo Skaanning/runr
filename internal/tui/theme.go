@@ -41,12 +41,14 @@ type palette struct {
 	selection color.Color // background of the selected row and keycaps
 	rule      color.Color // separator lines
 	alert     color.Color // background of toasts about failures
+	match     color.Color // background of search matches
 	ansi      [16]color.Color
 }
 
 // theme is a palette for dark and one for light terminal backgrounds.
 type theme struct {
 	dark, light palette
+	darkOnly    bool // no light palette: light terminals get the terminal theme's
 }
 
 // terminalANSI are the terminal's own 16 colors.
@@ -130,12 +132,15 @@ func (s *styles) setDark(dark bool) {
 }
 
 func (s *styles) build() {
-	p := s.theme.dark
-	if !s.dark {
-		p = s.theme.light
-	}
-	s.pal = p
+	t := s.theme
 	tints := s.profile >= colorprofile.ANSI256 // background tints and subtle colors read well
+	if !tints {
+		// A theme's colors would be approximated badly on 16 colors; the
+		// terminal's own read better.
+		t = terminalTheme
+	}
+	p := t.variant(s.dark)
+	s.pal = p
 
 	s.plain = lipgloss.NewStyle()
 	s.bold = lipgloss.NewStyle().Bold(true)
@@ -181,18 +186,42 @@ func (s *styles) build() {
 	}
 	s.systemErr = ansi.Style{}.ForegroundColor(p.ansi[ansiRed]).Italic(true).String()
 	s.match = ansi.Style{}.Reverse(true).String()
-	s.current = ansi.Style{}.ForegroundColor(p.ansi[ansiBlack]).BackgroundColor(p.ansi[ansiYellow]).String()
+	if p.match != nil {
+		s.match = ansi.Style{}.BackgroundColor(p.match).String()
+	}
+	s.current = ansi.Style{}.ForegroundColor(s.onAccent).BackgroundColor(p.ansi[ansiYellow]).String()
+}
+
+// variant returns the palette for a dark or light background.
+func (t theme) variant(dark bool) palette {
+	switch {
+	case dark:
+		return t.dark
+	case t.darkOnly:
+		return terminalTheme.light
+	}
+	return t.light
 }
 
 // color resolves a valid project color: a named color through the palette,
 // an ANSI index or hex code as is.
 func (s *styles) color(c string) color.Color {
+	return s.pal.color(c)
+}
+
+func (p palette) color(c string) color.Color {
 	for i, name := range config.ColorNames {
 		if c == name {
-			return s.pal.ansi[i]
+			return p.ansi[i]
 		}
 	}
 	return lipgloss.Color(c)
+}
+
+// ProjectColor resolves a valid project color in the named theme, for a dark
+// or light terminal background. It's for output outside the TUI.
+func ProjectColor(themeName, c string, dark bool) color.Color {
+	return themeNamed(themeName).variant(dark).color(c)
 }
 
 // onBackground gives styled text the background set by the SGR sequence

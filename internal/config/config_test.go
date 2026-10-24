@@ -304,3 +304,19 @@ func TestShowAll(t *testing.T) {
 		t.Errorf("show_all = false lost on save (err %v)", err)
 	}
 }
+
+func TestTheme(t *testing.T) {
+	if got := (Settings{}).Theme(); got != "terminal" {
+		t.Errorf("default theme = %q", got)
+	}
+	c, err := Load(writeFile(t, "[settings]\ntheme = \"nord\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Settings.Theme(); got != "nord" {
+		t.Errorf("theme = %q", got)
+	}
+	if _, err := c.Validate(); err != nil {
+		t.Error(err)
+	}
+}

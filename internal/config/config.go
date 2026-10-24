@@ -36,6 +36,15 @@ type Settings struct {
 	ShutdownTimeoutValue Duration `toml:"shutdown_timeout,omitempty"`
 	ScrollbackLinesValue int      `toml:"scrollback_lines,omitempty"`
 	ShowAllValue         *bool    `toml:"show_all,omitempty"`
+	ThemeValue           string   `toml:"theme,omitempty"`
+}
+
+// Theme is the name of the UI's color theme, one of ThemeNames.
+func (s Settings) Theme() string {
+	if s.ThemeValue == "" {
+		return ThemeNames[0]
+	}
+	return s.ThemeValue
 }
 
 // ShutdownTimeout is the graceful stop window before processes are force-killed.

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"charm.land/huh/v2"
+	"charm.land/lipgloss/v2"
 
 	"github.com/Skaanning/runr/internal/config"
 )
@@ -342,9 +343,9 @@ func newGroupForm(cfg *config.Config, name string, preselect []string) *editForm
 
 func newForm(fields ...huh.Field) *huh.Form {
 	// Errors are shown in the launcher's help line: huh would put them below
-	// the form, which is cut off when the form fills the screen.
-	return huh.NewForm(huh.NewGroup(fields...)).WithTheme(huh.ThemeFunc(huh.ThemeBase)).
-		WithShowHelp(false).WithShowErrors(false)
+	// the form, which is cut off when the form fills the screen. The theme
+	// is set when the launcher opens the form (fields keep the first one).
+	return huh.NewForm(huh.NewGroup(fields...)).WithShowHelp(false).WithShowErrors(false)
 }
 
 // confirmation is an open delete confirmation.
@@ -374,4 +375,44 @@ func newDeleteConfirmation(cfg *config.Config, it launcherItem) *confirmation {
 		lines = append(lines, fmt.Sprintf("Required by %s; it is removed from their depends_on.", strings.Join(dependents, ", ")))
 	}
 	return &confirmation{lines: lines, result: func() *config.Config { return c }}
+}
+
+// formTheme returns the forms' theme, built from the palette: the focused
+// field's title, border and cursor in the accent, descriptions dim, errors
+// red. It follows the styles when they are rebuilt.
+func (s *styles) formTheme() huh.Theme {
+	return huh.ThemeFunc(func(bool) *huh.Styles {
+		t := huh.ThemeBase(s.dark)
+		f := &t.Focused
+		f.Base = f.Base.BorderForeground(s.pal.accent)
+		f.Card = f.Base
+		f.Title = s.accent.Bold(true)
+		f.NoteTitle = f.Title
+		f.Directory = s.accent
+		f.Description = s.faint
+		f.ErrorIndicator = f.ErrorIndicator.Foreground(s.pal.ansi[ansiRed])
+		f.ErrorMessage = f.ErrorMessage.Foreground(s.pal.ansi[ansiRed])
+		for _, st := range []*lipgloss.Style{&f.SelectSelector, &f.MultiSelectSelector, &f.NextIndicator, &f.PrevIndicator, &f.SelectedPrefix} {
+			*st = st.Foreground(s.pal.accent)
+		}
+		f.UnselectedPrefix = f.UnselectedPrefix.Inherit(s.faint)
+		f.TextInput.Cursor = s.accent
+		f.TextInput.Prompt = s.accent
+		f.TextInput.Placeholder = s.faint
+		if s.keycaps { // background tints read well
+			f.FocusedButton = f.FocusedButton.Foreground(s.onAccent).Background(s.pal.accent).Bold(true)
+			f.BlurredButton = f.BlurredButton.Background(s.pal.selection).Foreground(s.pal.fg)
+		}
+		f.Next = f.FocusedButton
+
+		t.Blurred = t.Focused
+		b := &t.Blurred
+		b.Base = b.Base.BorderStyle(lipgloss.HiddenBorder())
+		b.Card = b.Base
+		b.Title = s.bold
+		b.NextIndicator, b.PrevIndicator = lipgloss.NewStyle(), lipgloss.NewStyle()
+		b.MultiSelectSelector = lipgloss.NewStyle().SetString("  ")
+		t.Group.Title, t.Group.Description = f.Title, f.Description
+		return t
+	})
 }
