@@ -79,8 +79,13 @@ type runningModel struct {
 	byName     map[string]*sidebarEntry
 	nextColor  int
 	labelWidth int
-	selected   int
+	selected   int // index into entries, then idle
 	sideTop    int // first sidebar entry shown
+
+	showAll   bool     // the sidebar lists the projects not started too
+	idle      []string // registered projects not in the session, sorted; empty unless showAll
+	idleWidth int      // widest label in idle
+	idleTop   int      // first of idle shown
 
 	combined  *logView // always kept up to date, so switching back is instant
 	single    *logView // the selected process's output; nil in the combined view
@@ -113,9 +118,11 @@ type runningModel struct {
 
 func newRunningModel(sess Session, cfg *config.Config, names []string, st *styles) *runningModel {
 	m := &runningModel{sess: sess, cfg: cfg, st: st, titles: names, byName: map[string]*sidebarEntry{}, now: time.Now}
+	m.showAll = cfg.Settings.ShowAll()
 	for _, info := range sess.Processes() {
 		m.entry(info.Name).info = info
 	}
+	m.refreshIdle()
 	limit := cfg.Settings.ScrollbackLines() * max(len(m.entries), 1)
 	m.combined = newLogView(limit, m.formatCombined)
 
@@ -143,6 +150,7 @@ func (m *runningModel) entry(name string) *sidebarEntry {
 	if m.combined != nil { // added after startup
 		m.combined.limit += m.cfg.Settings.ScrollbackLines()
 		m.combined.invalidate()
+		m.refreshIdle()
 		m.layout()
 	}
 	return e
@@ -175,9 +183,9 @@ func (m *runningModel) Init() tea.Cmd {
 
 // gitDirs returns the directories of the projects in the sidebar.
 func (m *runningModel) gitDirs() map[string]string {
-	names := make([]string, len(m.entries))
-	for i, e := range m.entries {
-		names[i] = e.info.Name
+	names := slices.Clone(m.idle)
+	for _, e := range m.entries {
+		names = append(names, e.info.Name)
 	}
 	return projectDirs(m.cfg, names)
 }
@@ -427,16 +435,29 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		if m.single != nil {
 			m.single = nil
 			m.layout()
-		} else if e := m.selectedEntry(); e != nil {
-			m.showSingle(e.info.Name)
+		} else if name := m.selectedName(); name != "" {
+			m.showSingle(name)
+		}
+	case "a":
+		m.toggleAll()
+		if m.showAll {
+			return m.git.refresh(m.gitDirs())
+		}
+	case "enter":
+		if name := m.selectedIdle(); name != "" {
+			m.startIdle(name)
 		}
 	case "+":
 		if m.stopping {
 			return nil
 		}
+		empty := "everything is running"
+		if m.showAll {
+			empty = "no groups to start (projects start from the sidebar)"
+		}
 		var cmd tea.Cmd
 		m.picker, cmd = newPicker(m.st, &picker{
-			title: "start", action: "start", empty: "everything is running", items: m.pickerItems(),
+			title: "start", action: "start", empty: empty, items: m.pickerItems(),
 			pick: func(it pickerItem) tea.Cmd { m.startPicked(it); return nil },
 		})
 		return cmd
@@ -509,8 +530,9 @@ func (m *runningModel) handleConfirmKey(msg tea.KeyPressMsg) tea.Cmd {
 	return cmd
 }
 
-// pickerItems lists the groups with something left to start and the
-// projects that are not running or waiting to run.
+// pickerItems lists the groups with something left to start and, unless
+// the sidebar lists every project, the projects that are not running or
+// waiting to run.
 func (m *runningModel) pickerItems() []pickerItem {
 	running := func(name string) bool {
 		e := m.byName[name]
@@ -526,7 +548,7 @@ func (m *runningModel) pickerItems() []pickerItem {
 		items = append(items, pickerItem{name: g, label: g, group: true, info: info})
 	}
 	for _, name := range slices.Sorted(maps.Keys(m.cfg.Projects)) {
-		if running(name) {
+		if running(name) || m.showAll {
 			continue
 		}
 		p := m.cfg.Projects[name]
@@ -564,7 +586,7 @@ func (m *runningModel) startPicked(it pickerItem) {
 		m.titles = append(m.titles, it.name)
 	}
 	if !it.group {
-		m.selectEntry(slices.IndexFunc(m.entries, func(e *sidebarEntry) bool { return e.info.Name == it.name }))
+		m.selectEntry(m.indexOf(it.name))
 	}
 }
 
@@ -574,7 +596,7 @@ func (m *runningModel) checkDirs(projects []string) error {
 	warnings, _ := m.cfg.Validate()
 	var missing []string
 	for _, w := range warnings {
-		if w.Field == "dir" && slices.Contains(projects, w.Name) && !canStop(m.entry(w.Name).info.State) {
+		if e := m.byName[w.Name]; w.Field == "dir" && slices.Contains(projects, w.Name) && (e == nil || !canStop(e.info.State)) {
 			missing = append(missing, w.String())
 		}
 	}
@@ -678,6 +700,10 @@ func (m *runningModel) selectedEntry() *sidebarEntry {
 }
 
 func (m *runningModel) restart() {
+	if name := m.selectedIdle(); name != "" {
+		m.startIdle(name) // restarting what isn't running starts it
+		return
+	}
 	e := m.selectedEntry()
 	if e == nil || m.stopping {
 		return
@@ -688,6 +714,10 @@ func (m *runningModel) restart() {
 // stopOrStart stops the selected project if it is running or waiting to
 // run, and starts it (with its dependencies) otherwise.
 func (m *runningModel) stopOrStart() {
+	if name := m.selectedIdle(); name != "" {
+		m.startIdle(name)
+		return
+	}
 	e := m.selectedEntry()
 	if e == nil || m.stopping {
 		return
@@ -731,9 +761,9 @@ func (m *runningModel) interrupt() tea.Cmd {
 }
 
 func (m *runningModel) selectEntry(i int) {
-	m.selected = max(min(i, len(m.entries)-1), 0)
-	if e := m.selectedEntry(); m.single != nil && e != nil && e.info.Name != m.singleFor {
-		m.showSingle(e.info.Name)
+	m.selected = max(min(i, m.rows()-1), 0)
+	if name := m.selectedName(); m.single != nil && name != "" && name != m.singleFor {
+		m.showSingle(name)
 	}
 	m.layout()
 }
@@ -866,13 +896,25 @@ func (m *runningModel) layout() {
 	if m.single != nil {
 		m.single.setSize(m.logWidth(), h)
 	}
-	switch {
-	case m.selected < m.sideTop:
-		m.sideTop = m.selected
-	case h > 0 && m.selected >= m.sideTop+h:
-		m.sideTop = m.selected - h + 1
+	// The session's projects scroll in the rows the ones not started leave.
+	idle := m.idleRows(h)
+	sh, ih := h-idle, max(idle-1, 0)
+	switch sel := m.selected; {
+	case sel >= len(m.entries):
+	case sel < m.sideTop:
+		m.sideTop = sel
+	case sh > 0 && sel >= m.sideTop+sh:
+		m.sideTop = sel - sh + 1
 	}
-	m.sideTop = max(min(m.sideTop, len(m.entries)-h), 0)
+	m.sideTop = max(min(m.sideTop, len(m.entries)-sh), 0)
+	switch sel := m.selected - len(m.entries); {
+	case sel < 0:
+	case sel < m.idleTop:
+		m.idleTop = sel
+	case ih > 0 && sel >= m.idleTop+ih:
+		m.idleTop = sel - ih + 1
+	}
+	m.idleTop = max(min(m.idleTop, len(m.idle)-ih), 0)
 }
 
 // formatCombined renders a line with its project's label in front.
@@ -951,8 +993,8 @@ func (m *runningModel) render() string {
 	b.WriteString(m.st.rule.Render(strings.Repeat("─", sw) + "┬" + strings.Repeat("─", m.width-sw-1)))
 	b.WriteByte('\n')
 	divider := m.st.rule.Render("│")
-	for r := range m.bodyHeight() {
-		b.WriteString(m.sidebarRow(m.sideTop+r, cols))
+	for r, side := range m.sidebarRows(m.bodyHeight(), cols) {
+		b.WriteString(side)
 		b.WriteString(divider)
 		b.WriteByte(' ')
 		b.WriteString(logRows[r])
@@ -968,8 +1010,7 @@ func (m *runningModel) header() string {
 	left := " " + m.st.badge + "  " + m.st.bold.Render(strings.Join(m.titles, " + "))
 	name := "combined"
 	if m.single != nil {
-		e := m.entry(m.singleFor)
-		name = e.style.Render(e.label)
+		name = m.styleOf(m.singleFor).Render(m.labelOf(m.singleFor))
 	}
 	var right string
 	switch v := m.view(); {
@@ -1024,9 +1065,9 @@ func (m *runningModel) renderPanes(cols sidebarCols, logRows []string) string {
 	b.WriteString(paneTop(sw+2, m.st.accent.Bold(true).Render("processes"), "", side))
 	b.WriteString(paneTop(logW, title, note, border))
 	b.WriteByte('\n')
-	for r := range m.bodyHeight() {
+	for r, row := range m.sidebarRows(m.bodyHeight(), cols) {
 		b.WriteString(side.Render("│"))
-		b.WriteString(m.sidebarRow(m.sideTop+r, cols))
+		b.WriteString(row)
 		b.WriteString(side.Render("│"))
 		b.WriteString(border.Render("│"))
 		b.WriteByte(' ')
@@ -1061,8 +1102,7 @@ func (m *runningModel) logPane() (title, note string, border lipgloss.Style) {
 
 	title = m.st.bold.Render("logs") + m.st.faint.Render(" · combined")
 	if m.single != nil {
-		e := m.entry(m.singleFor)
-		title = m.st.bold.Render("logs") + m.st.faint.Render(" · ") + e.style.Render(e.label)
+		title = m.st.bold.Render("logs") + m.st.faint.Render(" · ") + m.styleOf(m.singleFor).Render(m.labelOf(m.singleFor))
 	}
 	switch {
 	case m.forced:
@@ -1101,9 +1141,9 @@ func (m *runningModel) statusBar() string {
 		states[i] = e.info.State
 	}
 	b.info = m.st.stateCounts(states, " ", spinner(m.now()))
-	if e := m.selectedEntry(); e != nil {
-		b.project = e.style.Bold(true).Render(e.label)
-		if g, ok := m.git.get(e.info.Name); ok {
+	if name := m.selectedName(); name != "" {
+		b.project = m.styleOf(name).Bold(true).Render(m.labelOf(name))
+		if g, ok := m.git.get(name); ok {
 			b.project += m.st.faint.Render(" · ") + gitLabel(m.st, g, gitWidth(g))
 		}
 	}
@@ -1209,14 +1249,28 @@ func (m *runningModel) help() string {
 	}
 	// Hints are dropped from the end of the middle when narrow.
 	keys := [][2]string{{"↑↓", "select"}, {"tab", view}, {"r", "restart"}, {"s", stop}, {"+", "start"}}
-	if e := m.selectedEntry(); e != nil {
-		if _, ok := m.git.get(e.info.Name); ok {
+	if m.selectedIdle() != "" {
+		keys = [][2]string{{"↑↓", "select"}, {"tab", view}, {"s", "start"}, {"+", "start"}}
+	}
+	if m.showAll {
+		keys[len(keys)-1][1] = "group" // projects start from the sidebar
+	}
+	if name := m.selectedName(); name != "" {
+		if _, ok := m.git.get(name); ok {
 			keys = append(keys, [2]string{"b", "branch"}, [2]string{"p", "pull"})
 		}
 	}
 	keys = append(keys, [][2]string{
-		{"/", "search"}, {"pgup/pgdn", "scroll"}, {"g/G", "top/bottom"}, {"f", "follow"}, {"q", "quit"},
+		{"/", "search"}, {"pgup/pgdn", "scroll"}, {"g/G", "top/bottom"}, {"f", "follow"},
 	}...)
+	if len(m.idle) > 0 || !m.showAll && len(m.entries) < len(m.cfg.Projects) {
+		all := "hide others"
+		if !m.showAll {
+			all = "show all"
+		}
+		keys = append(keys, [2]string{"a", all})
+	}
+	keys = append(keys, [2]string{"q", "quit"})
 	var parts []string
 	if m.search.active() {
 		keys = append([][2]string{{"n/N", "next/prev"}, {"esc", "clear"}}, keys...)

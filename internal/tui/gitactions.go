@@ -95,7 +95,7 @@ func (t *gitTracker) inRepo(project, root string, names []string) []string {
 // gitTarget returns the repository of a project for a git action. If there
 // is none, or another action is running, it sets a notice saying why.
 func (m *runningModel) gitTarget(name string) (gitinfo.Repo, bool) {
-	repo, notice := m.git.target(name, m.entry(name).label, m.gitAction)
+	repo, notice := m.git.target(name, m.labelOf(name), m.gitAction)
 	m.notice = notice
 	return repo, notice == ""
 }
@@ -110,10 +110,19 @@ func (m *runningModel) sharing(project, root string) []string {
 	return m.git.inRepo(project, root, names)
 }
 
+// outputNote points to the log for a git action's output, if the project
+// has one (projects not started don't).
+func (m *runningModel) outputNote(project string) string {
+	if m.byName[project] == nil {
+		return ""
+	}
+	return " (output in the log)"
+}
+
 func (m *runningModel) labels(names []string) string {
 	labels := make([]string, len(names))
 	for i, n := range names {
-		labels[i] = m.entry(n).label
+		labels[i] = m.labelOf(n)
 	}
 	return strings.Join(labels, ", ")
 }
@@ -141,15 +150,15 @@ func pullPreflight(reader GitReader, repo gitinfo.Repo) (gitinfo.Status, error) 
 // openBranches checks the selected project's repository and reads its
 // branches in the background; the picker opens when they arrive.
 func (m *runningModel) openBranches() tea.Cmd {
-	e := m.selectedEntry()
-	if e == nil || m.stopping {
+	name := m.selectedName()
+	if name == "" || m.stopping {
 		return nil
 	}
-	repo, ok := m.gitTarget(e.info.Name)
+	repo, ok := m.gitTarget(name)
 	if !ok {
 		return nil
 	}
-	return readBranches(m, m.git.reader, e.info.Name, repo)
+	return readBranches(m, m.git.reader, name, repo)
 }
 
 // readBranches checks repo and reads its branches in the background, for
@@ -209,10 +218,10 @@ func (m *runningModel) showBranches(msg branchesMsg) tea.Cmd {
 	}
 	others := m.sharing(msg.project, msg.repo.Root)
 	for i, name := range others {
-		others[i] = m.entry(name).label
+		others[i] = m.labelOf(name)
 	}
 	var cmd tea.Cmd
-	m.picker, cmd = branchPicker(m.st, msg, m.entry(msg.project).label, others, func(b gitinfo.Branch) tea.Cmd {
+	m.picker, cmd = branchPicker(m.st, msg, m.labelOf(msg.project), others, func(b gitinfo.Branch) tea.Cmd {
 		return m.switchBranch(msg.project, msg.repo, b)
 	})
 	return cmd
@@ -230,7 +239,7 @@ func (m *runningModel) switchBranch(project string, repo gitinfo.Repo, b gitinfo
 		return nil
 	}
 	m.gitAction = "git switch"
-	m.notice = fmt.Sprintf("switching %s to %s…", m.entry(project).label, b.LocalName())
+	m.notice = fmt.Sprintf("switching %s to %s…", m.labelOf(project), b.LocalName())
 	return runSwitch(m, m.git.reader, project, repo, b)
 }
 
@@ -260,11 +269,11 @@ func (m *runningModel) switched(msg switchedMsg) tea.Cmd {
 		m.notice = "can't switch branches: " + msg.err.Error()
 		return nil
 	}
-	label, branch := m.entry(msg.project).label, msg.branch.LocalName()
+	label, branch := m.labelOf(msg.project), msg.branch.LocalName()
 	lines := switchLines(msg)
 	if msg.err != nil {
 		_ = m.sess.Note(msg.project, append(lines, "git switch failed")...)
-		m.notice = msg.err.Error() + " (output in the log)"
+		m.notice = msg.err.Error() + m.outputNote(msg.project)
 		return m.git.refresh(m.gitDirs())
 	}
 	_ = m.sess.Note(msg.project, append(lines, "switched to "+branch)...)
@@ -281,15 +290,15 @@ func (m *runningModel) switched(msg switchedMsg) tea.Cmd {
 // openPull checks the selected project's repository in the background; the
 // confirmation opens when it is done.
 func (m *runningModel) openPull() tea.Cmd {
-	e := m.selectedEntry()
-	if e == nil || m.stopping {
+	name := m.selectedName()
+	if name == "" || m.stopping {
 		return nil
 	}
-	repo, ok := m.gitTarget(e.info.Name)
+	repo, ok := m.gitTarget(name)
 	if !ok {
 		return nil
 	}
-	return checkPull(m, m.git.reader, e.info.Name, repo)
+	return checkPull(m, m.git.reader, name, repo)
 }
 
 // checkPull checks repo in the background before asking whether to pull.
@@ -343,10 +352,10 @@ func (m *runningModel) confirmPull(msg pullCheckMsg) {
 	}
 	others := m.sharing(msg.project, msg.repo.Root)
 	for i, name := range others {
-		others[i] = m.entry(name).label
+		others[i] = m.labelOf(name)
 	}
 	m.notice = ""
-	m.confirm = pullQuestion(msg, m.entry(msg.project).label, others, func() tea.Cmd { return m.pull(msg.project, msg.repo) })
+	m.confirm = pullQuestion(msg, m.labelOf(msg.project), others, func() tea.Cmd { return m.pull(msg.project, msg.repo) })
 }
 
 // pull checks the repository again and pulls in the background.
@@ -356,7 +365,7 @@ func (m *runningModel) pull(project string, repo gitinfo.Repo) tea.Cmd {
 		return nil
 	}
 	m.gitAction = "git pull"
-	m.notice = fmt.Sprintf("pulling %s…", m.entry(project).label)
+	m.notice = fmt.Sprintf("pulling %s…", m.labelOf(project))
 	return runPull(m, m.git.reader, project, repo)
 }
 
@@ -382,11 +391,11 @@ func (m *runningModel) pulled(msg pulledMsg) tea.Cmd {
 		m.notice = "can't pull: " + msg.err.Error()
 		return nil
 	}
-	label := m.entry(msg.project).label
+	label := m.labelOf(msg.project)
 	lines := pullLines(msg)
 	if msg.err != nil {
 		_ = m.sess.Note(msg.project, append(lines, "git pull failed")...)
-		m.notice = msg.err.Error() + " (output in the log)"
+		m.notice = msg.err.Error() + m.outputNote(msg.project)
 		return m.git.refresh(m.gitDirs())
 	}
 	change := pullChange(msg)

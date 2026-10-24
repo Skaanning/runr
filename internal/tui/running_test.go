@@ -593,10 +593,12 @@ func TestRunningSearchKeepsFaintSystemLines(t *testing.T) {
 	}
 }
 
-func newPickerModel(t *testing.T) (*runningModel, *fakeSession) {
+// pickerConfig has projects outside the session, with dependencies and a
+// missing directory, and groups.
+func pickerConfig(t *testing.T) *config.Config {
 	t.Helper()
 	dir := t.TempDir()
-	cfg := &config.Config{
+	return &config.Config{
 		Projects: map[string]*config.Project{
 			"db":     {Dir: dir, Cmd: "db"},
 			"api":    {Dir: dir, Cmd: "api", DependsOn: []string{"db"}},
@@ -611,6 +613,15 @@ func newPickerModel(t *testing.T) (*runningModel, *fakeSession) {
 			"empty":   {},
 		},
 	}
+}
+
+// newPickerModel has the sidebar list only the session's projects, so the
+// picker lists the others.
+func newPickerModel(t *testing.T) (*runningModel, *fakeSession) {
+	t.Helper()
+	cfg := pickerConfig(t)
+	off := false
+	cfg.Settings.ShowAllValue = &off
 	sess := newFakeSession("db", "api")
 	m := newRunningModel(sess, cfg, []string{"backend"}, newStyles(terminalTheme))
 	m.now = testNow

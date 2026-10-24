@@ -284,3 +284,23 @@ func TestRemoveProject(t *testing.T) {
 		t.Fatalf("config after removal: %+v %v", c.Projects, c.Groups)
 	}
 }
+
+func TestShowAll(t *testing.T) {
+	if !(Settings{}).ShowAll() {
+		t.Error("ShowAll defaults to false")
+	}
+	c, err := Load(writeFile(t, "[settings]\nshow_all = false\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Settings.ShowAll() {
+		t.Error("show_all = false not applied")
+	}
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	if c, err = Load(path); err != nil || c.Settings.ShowAll() {
+		t.Errorf("show_all = false lost on save (err %v)", err)
+	}
+}

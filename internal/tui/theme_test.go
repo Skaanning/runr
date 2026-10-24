@@ -116,7 +116,7 @@ func TestSixteenColorFallbacks(t *testing.T) {
 	if !strings.HasPrefix(rows[1], "\x1b[2m─") {
 		t.Errorf("rule = %q, want faint", rows[1])
 	}
-	if got := helpRow(m); got != " ↑↓ select  tab view  r restart  s start  + start  q quit" {
+	if got := helpRow(m); got != " ↑↓ select  tab view  r restart  s start  + group  q quit" {
 		t.Errorf("help = %q, want bold keys without caps", got)
 	}
 	if !strings.Contains(rows[0], "\x1b[1;30;46m runr ") {

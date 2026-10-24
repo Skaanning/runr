@@ -127,6 +127,7 @@ so **comments in a hand-edited file are lost** after the next change made throug
 [settings]
 shutdown_timeout = "5s"
 scrollback_lines = 10000
+show_all = true
 
 [projects.api]
 dir = "~/code/api"
@@ -148,6 +149,7 @@ backend = ["db", "api"]
 |---|---|---|
 | `shutdown_timeout` | `"5s"` | How long a stopping process gets before it is killed (Go duration: `500ms`, `10s`, `1m`) |
 | `scrollback_lines` | `10000` | Lines of output kept per process |
+| `show_all` | `true` | List the registered projects that aren't running in the running view's sidebar, below the session's (`a` toggles it for a session) |
 
 ### Project fields
 
@@ -200,7 +202,11 @@ fixed.
 ## The running view
 
 The sidebar lists the processes with their state; the main area shows their output —
-either all of them interleaved (the combined view) or just the selected one.
+either all of them interleaved (the combined view) or just the selected one. Below them,
+under `not running`, the sidebar lists the other registered projects, dimmed; select one and
+press `s` or `enter` to start it (with its dependencies). Turn that list off with
+`show_all = false` in `[settings]`, or toggle it for a session with `a`. When something
+crashes or is blocked, a toast in the corner of the output says so for 5 seconds.
 
 | Icon | State |
 |---|---|
@@ -218,7 +224,10 @@ either all of them interleaved (the combined view) or just the selected one.
 | `tab` | Toggle between the combined view and the selected process's output |
 | `r` | Restart the selected process |
 | `s` | Stop the selected process, or start it (with its dependencies) if it isn't running |
-| `+` | Start another registered project or group (type to filter, `enter` to start, `esc` to close) |
+| `enter` | Start the selected project if it's one of those not running |
+| `+` | Start a group, or another project when the sidebar doesn't list them all (type to filter, `enter` to start, `esc` to close) |
+| `a` | Show or hide the projects that aren't running |
+| `!` | Select the project of the newest crash toast |
 | `b` | Switch the selected project's git repository to another branch (see [Git](#git)) |
 | `p` | Pull the selected project's git repository (`git pull --ff-only`), after confirming |
 | `/` | Search the output; `enter` jumps to the newest match, `esc` cancels |

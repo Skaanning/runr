@@ -13,6 +13,7 @@
 [settings]
 shutdown_timeout = "5s"   # how long a stopping process gets before it is killed (default 5s)
 scrollback_lines = 10000  # lines of output kept per process (default 10000)
+show_all = true           # list projects that aren't running in the sidebar too (default true)
 
 # A database that takes a moment to boot. Dependents wait until a line of its
 # output matches ready_log.

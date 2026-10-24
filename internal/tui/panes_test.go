@@ -39,7 +39,7 @@ func TestPaneLayout(t *testing.T) {
 		"│                           ││                                         │",
 		"╰───────────────────────────╯╰─────────────────────────────────────────╯",
 		"  FOLLOW  backend  ● 1 ⠋ 1 ✗ 1                               db  14:32",
-		"  ↑↓  select  tab  view  r  restart  s  stop  +  start  q  quit",
+		"  ↑↓  select  tab  view  r  restart  s  stop  +  group  q  quit",
 	}
 	if got := screen(m); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("screen:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

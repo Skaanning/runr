@@ -35,6 +35,7 @@ type Config struct {
 type Settings struct {
 	ShutdownTimeoutValue Duration `toml:"shutdown_timeout,omitempty"`
 	ScrollbackLinesValue int      `toml:"scrollback_lines,omitempty"`
+	ShowAllValue         *bool    `toml:"show_all,omitempty"`
 }
 
 // ShutdownTimeout is the graceful stop window before processes are force-killed.
@@ -51,6 +52,12 @@ func (s Settings) ScrollbackLines() int {
 		return DefaultScrollbackLines
 	}
 	return s.ScrollbackLinesValue
+}
+
+// ShowAll reports whether the running view's sidebar also lists the
+// registered projects that haven't been started (default true).
+func (s Settings) ShowAll() bool {
+	return s.ShowAllValue == nil || *s.ShowAllValue
 }
 
 // Project is a single runnable program. Its name is the key in Config.Projects.
