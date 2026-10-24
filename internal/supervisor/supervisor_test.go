@@ -140,7 +140,7 @@ func TestStartErrors(t *testing.T) {
 	cfg.Projects["nodir"] = &config.Project{Dir: filepath.Join(t.TempDir(), "gone"), Cmd: "true"}
 	s, r := newTestSupervisorWithConfig(t, cfg)
 
-	if err := s.Start("nope"); err == nil || err.Error() != `unknown project "nope"` {
+	if err := s.Start("nope"); err == nil || err.Error() != `unknown project or group "nope"` {
 		t.Errorf("unknown: %v", err)
 	}
 
@@ -148,8 +148,13 @@ func TestStartErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.waitState(t, "sleepy", Running)
-	if err := s.Start("sleepy"); err == nil || err.Error() != "sleepy is already running" {
+	// Starting a live project again is a no-op.
+	pid := r.waitState(t, "sleepy", Running).Pid
+	if err := s.Start("sleepy"); err != nil {
 		t.Errorf("double start: %v", err)
+	}
+	if got := s.Processes()[0]; got.Pid != pid || got.Restarts != 0 {
+		t.Errorf("double start changed the process: %+v", got)
 	}
 
 	// A start failure is not an API error; it shows up as Crashed.
@@ -343,8 +348,8 @@ func TestProcesses(t *testing.T) {
 	r.waitState(t, "a", Exited)
 	r.waitState(t, "b", Running)
 
-	got := s.Processes()
-	if len(got) != 2 || got[0].Name != "a" || got[0].State != Exited || got[1].Name != "b" || got[1].State != Running {
+	got := s.Processes() // session order, not alphabetical
+	if len(got) != 2 || got[0].Name != "b" || got[0].State != Running || got[1].Name != "a" || got[1].State != Exited {
 		t.Errorf("Processes() = %+v", got)
 	}
 }

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sort"
+	"regexp"
 	"sync"
 	"time"
 
@@ -12,8 +12,12 @@ import (
 	"runr/internal/proc"
 )
 
-// ErrClosed is returned by commands sent after Close.
-var ErrClosed = errors.New("supervisor is closed")
+var (
+	// ErrClosed is returned by commands sent after Close.
+	ErrClosed = errors.New("supervisor is closed")
+	// ErrShuttingDown is returned by Start and Restart while StopAll is in progress.
+	ErrShuttingDown = errors.New("shutting down")
+)
 
 // Options configures a Supervisor.
 type Options struct {
@@ -40,13 +44,16 @@ type Supervisor struct {
 	running   sync.WaitGroup // live processes, for Close
 
 	// Owned by the loop goroutine.
-	procs   map[string]*managed
-	closing bool // set by Close; no new processes are started
+	procs    map[string]*managed
+	order    []string // session order: the order projects were first added
+	closing  bool     // set by Close; no new processes are started
+	shutdown *shutdown
 }
 
 type managed struct {
 	name    string
 	project *config.Project
+	readyRe *regexp.Regexp // nil: ready as soon as spawned
 	info    ProcessInfo
 
 	proc           *proc.Process
@@ -56,8 +63,9 @@ type managed struct {
 	killTimer      *time.Timer
 }
 
-// New creates a supervisor for the projects in cfg. Nothing is started until
-// Start is called. The caller must keep reading Events until it is closed.
+// New creates a supervisor for the projects in cfg, which should be valid
+// (see config.Validate). Nothing is started until Start is called. The caller
+// must keep reading Events until it is closed.
 func New(cfg *config.Config, opts Options) *Supervisor {
 	baseEnv := opts.BaseEnv
 	if baseEnv == nil {
@@ -123,46 +131,55 @@ func (s *Supervisor) call(fn func() error) error {
 	}
 }
 
-// Processes returns a snapshot of every project in the session, sorted by name.
+// Processes returns a snapshot of every project in the session, in the order
+// they were added (dependencies before the projects that need them).
 func (s *Supervisor) Processes() []ProcessInfo {
 	var out []ProcessInfo
 	_ = s.call(func() error {
-		s.closing = true
-		for _, m := range s.procs {
-			out = append(out, m.info)
+		for _, name := range s.order {
+			out = append(out, s.procs[name].info)
 		}
 		return nil
 	})
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
 
-// Start starts a project. It fails if the project is unknown or already alive.
-func (s *Supervisor) Start(name string) error {
+// Start starts the given projects and groups, plus all their dependencies.
+// Projects that are already alive or waiting are left alone. Each project
+// starts as soon as its dependencies are ready; until then it is Waiting.
+func (s *Supervisor) Start(names ...string) error {
 	return s.call(func() error {
-		m, err := s.managed(name)
+		if err := s.acceptingStarts(); err != nil {
+			return err
+		}
+		resolved, err := s.cfg.Resolve(names...)
 		if err != nil {
 			return err
 		}
-		if m.info.State.Alive() {
-			return fmt.Errorf("%s is already %s", name, m.info.State)
+		ms := make([]*managed, len(resolved))
+		for i, name := range resolved {
+			if ms[i], err = s.managed(name); err != nil {
+				return err
+			}
 		}
-		if s.closing {
-			return ErrClosed
+		// Resolve orders dependencies first, so they are requested first.
+		for _, m := range ms {
+			if !m.info.State.Alive() && m.info.State != Waiting {
+				s.request(m)
+			}
 		}
-		s.spawn(m)
 		return nil
 	})
 }
 
 // Stop asks a project to stop: it is terminated gracefully and killed if it
-// is still alive after the shutdown timeout. Stop returns immediately; the
-// outcome is reported through Events. Stopping a project that is not alive
-// is a no-op.
+// is still alive after the shutdown timeout. A project that is waiting to
+// start is cancelled. Stop returns immediately; the outcome is reported
+// through Events.
 func (s *Supervisor) Stop(name string) error {
 	return s.call(func() error {
-		m, err := s.managed(name)
-		if err != nil {
+		m, err := s.existing(name)
+		if m == nil {
 			return err
 		}
 		m.restartPending = false
@@ -171,18 +188,31 @@ func (s *Supervisor) Stop(name string) error {
 	})
 }
 
-// Restart stops a project (if alive) and starts it again once it has exited.
+// Restart stops a live project and starts it again once it has exited. A
+// project that is not alive is started like Start, dependencies included.
 func (s *Supervisor) Restart(name string) error {
 	return s.call(func() error {
+		if err := s.acceptingStarts(); err != nil {
+			return err
+		}
 		m, err := s.managed(name)
 		if err != nil {
 			return err
 		}
-		if s.closing {
-			return ErrClosed
-		}
 		if !m.info.State.Alive() {
-			s.spawn(m)
+			resolved, err := s.cfg.Resolve(name)
+			if err != nil {
+				return err
+			}
+			for _, dep := range resolved {
+				dm, err := s.managed(dep)
+				if err != nil {
+					return err
+				}
+				if !dm.info.State.Alive() && dm.info.State != Waiting {
+					s.request(dm)
+				}
+			}
 			return nil
 		}
 		m.restartPending = true
@@ -194,15 +224,37 @@ func (s *Supervisor) Restart(name string) error {
 // Kill force-kills a project immediately.
 func (s *Supervisor) Kill(name string) error {
 	return s.call(func() error {
-		m, err := s.managed(name)
-		if err != nil {
+		m, err := s.existing(name)
+		if m == nil {
 			return err
 		}
-		if m.info.State.Alive() {
-			m.stopRequested = true
-			m.restartPending = false
-			s.setState(m, Stopping)
-			_ = m.proc.Kill()
+		s.kill(m)
+		return nil
+	})
+}
+
+// StopAll gracefully stops every project in reverse dependency order: a
+// project is only asked to stop once everything depending on it has exited.
+// Projects in the same dependency level stop concurrently, each with its own
+// shutdown timeout. Waiting projects are cancelled. The returned channel is
+// closed once no process is alive.
+func (s *Supervisor) StopAll() <-chan struct{} {
+	done := make(chan struct{})
+	if err := s.call(func() error {
+		s.beginShutdown(done)
+		return nil
+	}); err != nil {
+		close(done)
+	}
+	return done
+}
+
+// KillAll force-kills every live process immediately, e.g. on a second
+// Ctrl+C during StopAll.
+func (s *Supervisor) KillAll() {
+	_ = s.call(func() error {
+		for _, name := range s.order {
+			s.kill(s.procs[name])
 		}
 		return nil
 	})
@@ -213,12 +265,8 @@ func (s *Supervisor) Kill(name string) error {
 func (s *Supervisor) Close() {
 	_ = s.call(func() error {
 		s.closing = true
-		for _, m := range s.procs {
-			if m.info.State.Alive() {
-				m.stopRequested = true
-				m.restartPending = false
-				_ = m.proc.Kill()
-			}
+		for _, name := range s.order {
+			s.kill(s.procs[name])
 		}
 		return nil
 	})
@@ -229,8 +277,29 @@ func (s *Supervisor) Close() {
 	})
 }
 
+func (s *Supervisor) acceptingStarts() error {
+	switch {
+	case s.closing:
+		return ErrClosed
+	case s.shutdown != nil:
+		return ErrShuttingDown
+	}
+	return nil
+}
+
+// existing returns the session entry for a project. It returns nil and no
+// error for a known project that is not in the session yet.
+func (s *Supervisor) existing(name string) (*managed, error) {
+	if m := s.procs[name]; m != nil {
+		return m, nil
+	}
+	if s.cfg.Projects[name] == nil {
+		return nil, fmt.Errorf("unknown project %q", name)
+	}
+	return nil, nil
+}
+
 // managed returns the session entry for a project, adding it if needed.
-// Must run on the loop goroutine.
 func (s *Supervisor) managed(name string) (*managed, error) {
 	if m := s.procs[name]; m != nil {
 		return m, nil
@@ -240,134 +309,16 @@ func (s *Supervisor) managed(name string) (*managed, error) {
 		return nil, fmt.Errorf("unknown project %q", name)
 	}
 	m := &managed{name: name, project: p, info: ProcessInfo{Name: name, State: Pending}}
-	s.procs[name] = m
-	return m, nil
-}
-
-// spawn starts the process for m. Failures to start are reported as Crashed.
-// Must run on the loop goroutine.
-func (s *Supervisor) spawn(m *managed) {
-	if !m.info.StartedAt.IsZero() {
-		m.info.Restarts++
-	}
-	m.gen++
-	m.stopRequested = false
-	m.restartPending = false
-	m.info.StartedAt = time.Now()
-	m.info.Exit = proc.ExitStatus{}
-	m.info.Pid = 0
-
-	// Logged before spawning so it precedes the process's first output.
-	s.system(m, "starting: %s", m.project.Cmd)
-	spec, err := s.spec(m.project)
-	if err == nil {
-		name := m.name
-		m.proc, err = proc.Start(spec, func(l proc.Line) {
-			stream := Stdout
-			if l.Stream == proc.Stderr {
-				stream = Stderr
-			}
-			s.events.push(LineEvent{Line: s.logs.Append(name, stream, l.Text)})
-		})
-	}
-	if err != nil {
-		m.proc = nil
-		m.info.Exit = proc.ExitStatus{Code: -1, Err: err}
-		s.system(m, "failed to start: %v", err)
-		s.setState(m, Crashed)
-		return
-	}
-
-	m.info.Pid = m.proc.Pid()
-	s.setState(m, Running)
-
-	gen, p := m.gen, m.proc
-	s.running.Add(1)
-	go func() {
-		<-p.Done()
-		s.post(func() { s.exited(m, gen, p.Status()) })
-		s.running.Done()
-	}()
-}
-
-// stop begins a graceful stop of m. Must run on the loop goroutine.
-func (s *Supervisor) stop(m *managed) {
-	if !m.info.State.Alive() {
-		return
-	}
-	m.stopRequested = true
-	if m.info.State == Stopping {
-		return // already on its way down
-	}
-	s.setState(m, Stopping)
-	if err := m.proc.Terminate(); err != nil {
-		s.system(m, "terminate failed (%v), killing", err)
-		_ = m.proc.Kill()
-		return
-	}
-	gen := m.gen
-	m.killTimer = time.AfterFunc(s.timeout, func() {
-		s.post(func() {
-			if m.gen == gen && m.info.State == Stopping {
-				s.system(m, "still running after %v, killing", s.timeout)
-				_ = m.proc.Kill()
-			}
-		})
-	})
-}
-
-// exited handles the end of a run. Must run on the loop goroutine.
-func (s *Supervisor) exited(m *managed, gen int, status proc.ExitStatus) {
-	if gen != m.gen {
-		return
-	}
-	if m.killTimer != nil {
-		m.killTimer.Stop()
-		m.killTimer = nil
-	}
-	m.proc = nil
-	m.info.Pid = 0
-	m.info.Exit = status
-
-	switch {
-	case m.stopRequested:
-		s.system(m, "stopped (%s)", status)
-		s.setState(m, Stopped)
-	case status.Success():
-		s.system(m, "exited (%s)", status)
-		s.setState(m, Exited)
-	default:
-		s.system(m, "crashed (%s)", status)
-		s.setState(m, Crashed)
-	}
-
-	if m.restartPending && !s.closing {
-		s.spawn(m)
-	}
-}
-
-// spec builds the process spec for a project: resolved dir and the layered
-// environment (base, runr defaults, env_file, env).
-func (s *Supervisor) spec(p *config.Project) (proc.Spec, error) {
-	dir, err := p.ResolvedDir()
-	if err != nil {
-		return proc.Spec{}, err
-	}
-	envFile, err := p.ResolvedEnvFile()
-	if err != nil {
-		return proc.Spec{}, err
-	}
-	var fileVars map[string]string
-	if envFile != "" {
-		if fileVars, err = proc.LoadEnvFile(envFile); err != nil {
-			return proc.Spec{}, err
+	if p.ReadyLog != "" {
+		re, err := regexp.Compile(p.ReadyLog)
+		if err != nil {
+			return nil, fmt.Errorf("project %q: invalid ready_log: %w", name, err)
 		}
+		m.readyRe = re
 	}
-	return proc.Spec{
-		Command: p.Cmd,
-		Dir:     dir,
-		Env:     proc.BuildEnv(s.baseEnv, proc.DefaultEnv, fileVars, p.Env),
-	}, nil
+	s.procs[name] = m
+	s.order = append(s.order, name)
+	return m, nil
 }
 
 func (s *Supervisor) setState(m *managed, state State) {
