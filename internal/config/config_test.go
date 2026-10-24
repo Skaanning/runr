@@ -1,0 +1,252 @@
+package config
+
+import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+)
+
+const specExample = `
+[settings]
+shutdown_timeout = "5s"
+scrollback_lines = 10000
+
+[projects.db]
+dir = "~/code/infra"
+cmd = "docker compose up postgres"
+ready_log = "ready to accept connections"
+
+[projects.api]
+dir = "~/code/api"
+cmd = "go run ./cmd/server"
+env = { PORT = "8080" }
+env_file = ".env"
+depends_on = ["db"]
+color = "cyan"
+display_name = "API"
+
+[groups]
+backend = ["db", "api", "auth", "worker"]
+`
+
+func writeFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestLoadSpecExample(t *testing.T) {
+	c, err := Load(writeFile(t, specExample))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := c.Settings.ShutdownTimeout(); got != 5*time.Second {
+		t.Errorf("ShutdownTimeout = %v", got)
+	}
+	if got := c.Settings.ScrollbackLines(); got != 10000 {
+		t.Errorf("ScrollbackLines = %v", got)
+	}
+
+	want := &Project{
+		Dir:         "~/code/api",
+		Cmd:         "go run ./cmd/server",
+		Env:         map[string]string{"PORT": "8080"},
+		EnvFile:     ".env",
+		DependsOn:   []string{"db"},
+		Color:       "cyan",
+		DisplayName: "API",
+	}
+	if got := c.Projects["api"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("api = %+v, want %+v", got, want)
+	}
+	if got := c.Projects["db"].ReadyLog; got != "ready to accept connections" {
+		t.Errorf("db.ReadyLog = %q", got)
+	}
+	if got := c.Groups["backend"]; !reflect.DeepEqual(got, []string{"db", "api", "auth", "worker"}) {
+		t.Errorf("backend = %v", got)
+	}
+}
+
+func TestRoundTrip(t *testing.T) {
+	c, err := Load(writeFile(t, specExample))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	path := filepath.Join(t.TempDir(), "out.toml")
+	if err := Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	c2, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(c, c2) {
+		t.Errorf("round trip mismatch:\n%+v\n%+v", c, c2)
+	}
+}
+
+func TestSaveIsStable(t *testing.T) {
+	c, err := Load(writeFile(t, specExample))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a.toml"), filepath.Join(dir, "b.toml")
+	if err := Save(a, c); err != nil {
+		t.Fatal(err)
+	}
+	if err := Save(b, c); err != nil {
+		t.Fatal(err)
+	}
+	da, _ := os.ReadFile(a)
+	db, _ := os.ReadFile(b)
+	if string(da) != string(db) {
+		t.Errorf("output differs between saves:\n%s\n---\n%s", da, db)
+	}
+	if !strings.Contains(string(da), "env = {PORT = '8080'}") {
+		t.Errorf("env not written as inline table:\n%s", da)
+	}
+	if strings.Index(string(da), "[projects.api]") > strings.Index(string(da), "[projects.db]") {
+		t.Errorf("projects not sorted:\n%s", da)
+	}
+}
+
+func TestLoadMissingFile(t *testing.T) {
+	c, err := Load(filepath.Join(t.TempDir(), "nope.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Projects == nil || c.Groups == nil || len(c.Projects) != 0 {
+		t.Errorf("expected empty initialized config, got %+v", c)
+	}
+	if c.Settings.ShutdownTimeout() != DefaultShutdownTimeout || c.Settings.ScrollbackLines() != DefaultScrollbackLines {
+		t.Errorf("defaults not applied: %+v", c.Settings)
+	}
+}
+
+func TestLoadErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		wantErr string
+	}{
+		{"unknown field", "[projects.api]\ndir = \"x\"\ncmdd = \"y\"\n", "cmdd"},
+		{"bad duration", "[settings]\nshutdown_timeout = \"soon\"\n", "invalid duration"},
+		{"syntax error", "[projects.api\n", "config"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Load(writeFile(t, tt.content))
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Errorf("err = %v, want containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestSaveCreatesDirsAndLeavesNoTempFiles(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "nested", "runr")
+	path := filepath.Join(dir, "config.toml")
+
+	c := New()
+	c.Projects["api"] = &Project{Dir: "/srv/api", Cmd: "make run"}
+	if err := Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+	// Overwrite an existing file too.
+	if err := Save(path, c); err != nil {
+		t.Fatal(err)
+	}
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != "config.toml" {
+		t.Errorf("unexpected files in config dir: %v", entries)
+	}
+}
+
+func TestSaveEmptyConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	if err := Save(path, New()); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(path)
+	if strings.TrimSpace(string(data)) != "" {
+		t.Errorf("expected empty file, got %q", data)
+	}
+}
+
+func TestPath(t *testing.T) {
+	t.Setenv(EnvVar, "/custom/runr.toml")
+	if p, err := Path(); err != nil || p != "/custom/runr.toml" {
+		t.Errorf("Path() = %q, %v", p, err)
+	}
+
+	t.Setenv(EnvVar, "")
+	p, err := Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(p, filepath.Join("runr", "config.toml")) {
+		t.Errorf("Path() = %q", p)
+	}
+}
+
+func TestExpandHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("no home dir")
+	}
+	tests := map[string]string{
+		"~":          home,
+		"~/code/api": filepath.Join(home, "code", "api"),
+		"/abs/path":  "/abs/path",
+		"rel/path":   "rel/path",
+		"~user/x":    "~user/x",
+	}
+	for in, want := range tests {
+		if got, err := ExpandHome(in); err != nil || got != want {
+			t.Errorf("ExpandHome(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+}
+
+func TestResolvedEnvFile(t *testing.T) {
+	abs := filepath.Join(t.TempDir(), "secrets.env")
+	tests := []struct {
+		name string
+		p    Project
+		want string
+	}{
+		{"none", Project{Dir: "/srv/api"}, ""},
+		{"relative", Project{Dir: "/srv/api", EnvFile: ".env"}, filepath.Join("/srv/api", ".env")},
+		{"absolute", Project{Dir: "/srv/api", EnvFile: abs}, abs},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := tt.p.ResolvedEnvFile()
+			if err != nil || got != tt.want {
+				t.Errorf("got %q, %v; want %q", got, err, tt.want)
+			}
+		})
+	}
+}
+
+func TestLabel(t *testing.T) {
+	if got := (&Project{}).Label("api"); got != "api" {
+		t.Errorf("Label = %q", got)
+	}
+	if got := (&Project{DisplayName: "API"}).Label("api"); got != "API" {
+		t.Errorf("Label = %q", got)
+	}
+}
