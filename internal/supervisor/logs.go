@@ -11,8 +11,12 @@ type Stream int
 const (
 	Stdout Stream = iota
 	Stderr
-	System // lines written by runr itself, e.g. "started", "exited with code 1"
+	System      // lines written by runr itself, e.g. "starting: npm run dev"
+	SystemError // runr's lines about failures, e.g. "crashed (exit code 1)"
 )
+
+// Runr reports whether the line was written by runr itself.
+func (s Stream) Runr() bool { return s == System || s == SystemError }
 
 // LogLine is one line of a project's output.
 type LogLine struct {

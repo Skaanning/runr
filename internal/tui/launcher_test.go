@@ -28,7 +28,7 @@ func launcherConfig(t *testing.T) *config.Config {
 }
 
 func newTestLauncher(t *testing.T, cfg *config.Config) *launcherModel {
-	m := newLauncherModel(cfg, nil, newStyles(terminalPalette))
+	m := newLauncherModel(cfg, nil, newStyles(terminalTheme))
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 14})
 	return m
 }
@@ -60,7 +60,7 @@ func TestLauncherList(t *testing.T) {
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("list:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	if help := launcherScreen(m)[13]; help != " ↑↓ move  space select  enter start  n new  e edit  g group  d delete  q quit" {
+	if help := launcherScreen(m)[13]; help != "  ↑↓  move  space  select  enter  start  n  new  e  edit  g  group  d  delete  q  quit" {
 		t.Fatalf("help = %q", help)
 	}
 }
@@ -144,7 +144,7 @@ func TestLauncherScrolls(t *testing.T) {
 	for _, n := range []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"} {
 		cfg.Projects[n] = &config.Project{Dir: t.TempDir(), Cmd: "x"}
 	}
-	m := newLauncherModel(cfg, nil, newStyles(terminalPalette))
+	m := newLauncherModel(cfg, nil, newStyles(terminalTheme))
 	m.Update(tea.WindowSizeMsg{Width: 60, Height: 8}) // 4 body rows
 	for range 11 {
 		m.Update(key("down"))
@@ -165,7 +165,7 @@ func TestAppStartsRunningView(t *testing.T) {
 	sess := newFakeSession("db", "api")
 	var started [][]string
 	fail := true
-	app := &appModel{cfg: cfg, launcher: newLauncherModel(cfg, nil, newStyles(terminalPalette)), start: func(names []string) (Session, error) {
+	app := &appModel{cfg: cfg, launcher: newLauncherModel(cfg, nil, newStyles(terminalTheme)), start: func(names []string) (Session, error) {
 		started = append(started, names)
 		if fail {
 			return nil, errors.New("cannot start:\n  project web: dir missing")
@@ -184,7 +184,7 @@ func TestAppStartsRunningView(t *testing.T) {
 	if app.running == nil || cmd == nil {
 		t.Fatal("running view not started")
 	}
-	if got := screen(app.running)[0]; !strings.HasPrefix(got, " runr · backend ") {
+	if got := screen(app.running)[0]; !strings.HasPrefix(got, "  runr   backend ") {
 		t.Fatalf("header = %q (size not passed on?)", got)
 	}
 	app.Update(key("q")) // keys now go to the running view

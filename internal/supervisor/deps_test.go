@@ -180,10 +180,10 @@ func TestBlockedWhenDependencyFailsBeforeReady(t *testing.T) {
 	r.waitState(t, "api", Blocked)
 	r.waitState(t, "gateway", Blocked)
 
-	if !containsLine(logLines(s, "api"), "sys:blocked: dependency db is crashed") {
+	if !containsLine(logLines(s, "api"), "fail:blocked: dependency db is crashed") {
 		t.Errorf("api logs = %q", logLines(s, "api"))
 	}
-	if !containsLine(logLines(s, "gateway"), "sys:blocked: dependency api is blocked") {
+	if !containsLine(logLines(s, "gateway"), "fail:blocked: dependency api is blocked") {
 		t.Errorf("gateway logs = %q", logLines(s, "gateway"))
 	}
 }

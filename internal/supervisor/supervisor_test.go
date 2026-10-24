@@ -89,7 +89,7 @@ func newTestSupervisorWithConfig(t *testing.T, cfg *config.Config) (*Supervisor,
 func logLines(s *Supervisor, name string) []string {
 	var out []string
 	for _, l := range s.Logs().Lines(name) {
-		out = append(out, []string{"out", "err", "sys"}[l.Stream]+":"+l.Text)
+		out = append(out, []string{"out", "err", "sys", "fail"}[l.Stream]+":"+l.Text)
 	}
 	return out
 }
@@ -130,7 +130,7 @@ func TestCrash(t *testing.T) {
 	if info.Exit.Code != 3 {
 		t.Errorf("exit = %+v", info.Exit)
 	}
-	if logs := logLines(s, "api"); logs[len(logs)-1] != "sys:crashed (exit code 3)" {
+	if logs := logLines(s, "api"); logs[len(logs)-1] != "fail:crashed (exit code 3)" {
 		t.Errorf("logs = %q", logs)
 	}
 }
@@ -167,7 +167,7 @@ func TestStartErrors(t *testing.T) {
 	if info.Exit.Err == nil {
 		t.Errorf("exit = %+v", info.Exit)
 	}
-	if logs := logLines(s, "nodir"); logs[len(logs)-1] != "sys:failed to start: dir "+missing+" does not exist" {
+	if logs := logLines(s, "nodir"); logs[len(logs)-1] != "fail:failed to start: dir "+missing+" does not exist" {
 		t.Errorf("logs = %q", logs)
 	}
 }
@@ -213,7 +213,7 @@ func TestStopKillsAfterTimeout(t *testing.T) {
 	if info.Exit.Signal != "killed" {
 		t.Errorf("exit = %+v", info.Exit)
 	}
-	if !containsLine(logLines(s, "api"), "sys:still running after 300ms, killing") {
+	if !containsLine(logLines(s, "api"), "fail:still running after 300ms, killing") {
 		t.Errorf("logs = %q", logLines(s, "api"))
 	}
 }
@@ -254,7 +254,7 @@ func TestStopWaitsForLeftovers(t *testing.T) {
 		t.Errorf("stopped after %v, before the %v timeout", elapsed, testTimeout)
 	}
 	logs := logLines(s, "api")
-	if !containsLine(logs, "sys:still running after 300ms, killing") ||
+	if !containsLine(logs, "fail:still running after 300ms, killing") ||
 		containsLine(logs, "sys:stopped processes the command left running") {
 		t.Errorf("logs = %q", logs)
 	}

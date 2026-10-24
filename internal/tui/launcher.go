@@ -79,7 +79,7 @@ func (m *launcherModel) reload() {
 }
 
 func (m *launcherModel) Init() tea.Cmd {
-	return m.git.refresh(m.gitDirs())
+	return tea.Batch(m.git.refresh(m.gitDirs()), tea.RequestBackgroundColor)
 }
 
 func (m *launcherModel) gitDirs() map[string]string {
@@ -105,7 +105,9 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		m.sizeForm()
 	case tea.ColorProfileMsg:
-		m.st.profile = msg.Profile
+		m.st.setProfile(msg.Profile)
+	case tea.BackgroundColorMsg:
+		m.st.setDark(msg.IsDark())
 	case interruptMsg:
 		return m, tea.Quit
 	case branchesMsg:
@@ -630,9 +632,9 @@ func (m *launcherModel) render() string {
 	if n := len(m.selected); n > 0 {
 		right = fmt.Sprintf("%d selected ", n)
 	}
-	left := " " + m.st.bold.Render("runr")
+	left := " " + m.st.badge.Render(" runr ")
 	if m.form != nil {
-		left += " · " + m.form.title
+		left += "  " + m.st.bold.Render(m.form.title)
 	}
 	b.WriteString(left + strings.Repeat(" ", max(m.width-ansi.StringWidth(left)-len(right), 1)) + right)
 	b.WriteString("\n" + m.st.rule.Render(strings.Repeat("─", m.width)) + "\n")
@@ -741,7 +743,7 @@ func (m *launcherModel) help() string {
 		return ansi.Truncate(" "+m.st.warn.Render(m.notice), m.width, "…")
 	}
 	if m.picker != nil {
-		return ansi.Truncate(" "+hintList(m.st, [][2]string{
+		return ansi.Truncate(" "+m.st.hintList([][2]string{
 			{"type", "to filter"}, {"↑↓", "select"}, {"enter", m.picker.action}, {"esc", "cancel"},
 		}), m.width, "…")
 	}
@@ -770,5 +772,5 @@ func (m *launcherModel) help() string {
 	for i, k := range keys {
 		parts[i] = m.st.hint(k[0], k[1])
 	}
-	return fitHints(parts, m.width)
+	return m.st.fitHints(parts, m.width)
 }

@@ -314,7 +314,7 @@ func pullQuestion(msg pullCheckMsg, label string, others []string, yes func() te
 // questionLine renders an open question as the help line. The hints stay
 // visible; the question is cut short when narrow.
 func questionLine(st *styles, q *question, width int) string {
-	hints := "  " + hintList(st, [][2]string{{"enter", q.action}, {"esc", "cancel"}})
+	hints := st.hintGap + st.hintList([][2]string{{"enter", q.action}, {"esc", "cancel"}})
 	w := max(width-ansi.StringWidth(hints)-1, 1)
 	return ansi.Truncate(" "+st.bold.Render(ansi.Truncate(q.prompt, w, "…"))+hints, width, "…")
 }

@@ -36,7 +36,6 @@ const (
 	frameInterval  = time.Second / 30 // minimum time between event batches
 	maxBatch       = 1 << 16          // events per batch, so up to ~2M lines/s
 	drainIdle      = time.Millisecond // a batch ends when no event arrives for this long
-	codeWidth      = 4                // sidebar space reserved for an exit code
 	maxPrefixWidth = 16               // widest label in front of combined log lines
 	minWidth       = 30
 	minHeight      = 5
@@ -157,7 +156,7 @@ func (m *runningModel) showSingle(name string) {
 }
 
 func (m *runningModel) Init() tea.Cmd {
-	return tea.Batch(m.waitEvents(), m.git.refresh(m.gitDirs()))
+	return tea.Batch(m.waitEvents(), m.git.refresh(m.gitDirs()), tea.RequestBackgroundColor)
 }
 
 // gitDirs returns the directories of the projects in the sidebar.
@@ -232,7 +231,9 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 		m.width, m.height = msg.Width, msg.Height
 		m.layout()
 	case tea.ColorProfileMsg:
-		m.st.profile = msg.Profile
+		m.st.setProfile(msg.Profile)
+	case tea.BackgroundColorMsg:
+		m.st.setDark(msg.IsDark())
 	case eventsMsg:
 		m.lastBatch = time.Now()
 		m.handleEvents(msg.events)
@@ -284,10 +285,12 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 
 func (m *runningModel) handleEvents(events []supervisor.Event) {
 	var lines, single []supervisor.LogLine
+	states := false
 	for _, e := range events {
 		switch e := e.(type) {
 		case supervisor.StateEvent:
 			m.entry(e.Info.Name).info = e.Info
+			states = true
 		case supervisor.LineEvent:
 			m.entry(e.Line.Project)
 			lines = append(lines, e.Line) // sanitized when shown
@@ -303,6 +306,9 @@ func (m *runningModel) handleEvents(events []supervisor.Event) {
 	}
 	if len(single) > 0 {
 		m.single.append(single...)
+	}
+	if states {
+		m.layout() // exit codes change the sidebar's width
 	}
 }
 
@@ -347,7 +353,6 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "/":
 		m.editing, m.prevSearch = true, m.search
 		m.input.Reset()
-		m.input.SetWidth(max(m.width-30, 10))
 		m.setSearch(search{})
 		return m.input.Focus()
 	case "n":
@@ -654,7 +659,7 @@ func (m *runningModel) sidebarWidth() int {
 // screen; the git column is narrowed and then dropped before names are
 // truncated.
 func (m *runningModel) sidebarLayout() (width, gitCol int) {
-	names := 5 + m.labelWidth + codeWidth + 1 // " ▸ ● " + label + exit code + " "
+	names := 5 + m.namesWidth() + 1 // " ▌ ● " + label and exit code + " "
 	limit := max(m.width/3, 12)
 	want := 0 // widest git label
 	for _, e := range m.entries {
@@ -666,6 +671,25 @@ func (m *runningModel) sidebarLayout() (width, gitCol int) {
 		return names + gw + 1, gw
 	}
 	return max(min(names, limit), 12), 0
+}
+
+// namesWidth is the width of the widest label with its exit code.
+func (m *runningModel) namesWidth() int {
+	w := m.labelWidth
+	for _, e := range m.entries {
+		if code := exitCode(e.info); code != "" {
+			w = max(w, ansi.StringWidth(e.label)+1+len(code))
+		}
+	}
+	return w
+}
+
+// exitCode returns "exit N" for a crashed project with an exit code.
+func exitCode(info supervisor.ProcessInfo) string {
+	if info.State == supervisor.Crashed && info.Exit.Code > 0 {
+		return "exit " + strconv.Itoa(info.Exit.Code)
+	}
+	return ""
 }
 
 // bodyHeight is the number of rows between the header and the help line.
@@ -710,8 +734,11 @@ func (m *runningModel) formatCombined(line supervisor.LogLine, width int) []stri
 // search matches highlighted, ready to wrap.
 func (m *runningModel) display(line supervisor.LogLine, current uint64) string {
 	text := sanitize(line.Text)
-	if line.Stream == supervisor.System {
+	switch line.Stream {
+	case supervisor.System:
 		text = m.st.system + text
+	case supervisor.SystemError:
+		text = m.st.systemErr + text
 	}
 	if m.search.active() {
 		if ranges := m.search.find(plain(text)); len(ranges) > 0 {
@@ -772,7 +799,7 @@ func (m *runningModel) render() string {
 }
 
 func (m *runningModel) header() string {
-	left := " " + m.st.bold.Render("runr") + " · " + strings.Join(m.titles, " + ")
+	left := " " + m.st.badge.Render(" runr ") + "  " + m.st.bold.Render(strings.Join(m.titles, " + "))
 	name := "combined"
 	if m.single != nil {
 		e := m.entry(m.singleFor)
@@ -785,7 +812,7 @@ func (m *runningModel) header() string {
 	case m.stopping:
 		right = m.st.warn.Render(fmt.Sprintf("stopping… %d left · ctrl+c to force", m.alive()))
 	case v.following():
-		right = name + " · following"
+		right = name + m.st.faint.Render(" · following")
 	default:
 		right = name + " · " + m.st.warn.Render("paused")
 		if n := v.below(); n > 0 {
@@ -793,11 +820,30 @@ func (m *runningModel) header() string {
 		}
 	}
 	right += " "
-	gap := m.width - ansi.StringWidth(left) - ansi.StringWidth(right)
-	if gap < 1 {
-		return ansi.Truncate(left, m.width, "…")
+	states := make([]supervisor.State, len(m.entries))
+	for i, e := range m.entries {
+		states[i] = e.info.State
 	}
-	return left + strings.Repeat(" ", gap) + right
+	// The counts go first when narrow, then the right side.
+	if counts := m.st.stateCounts(states); counts != "" {
+		if line, ok := spread(left, counts+"   "+right, m.width); ok {
+			return line
+		}
+	}
+	if line, ok := spread(left, right, m.width); ok {
+		return line
+	}
+	return ansi.Truncate(left, m.width, "…")
+}
+
+// spread puts left and right at the edges of a line of width cells, if both
+// fit with a gap between them.
+func spread(left, right string, width int) (string, bool) {
+	gap := width - ansi.StringWidth(left) - ansi.StringWidth(right)
+	if gap < 1 {
+		return "", false
+	}
+	return left + strings.Repeat(" ", gap) + right, true
 }
 
 // alive counts the processes that still have to exit.
@@ -820,24 +866,25 @@ func (m *runningModel) sidebarRow(i, width, gitCol int) string {
 		width -= gitCol + 1 // the git column and the margin after it
 	}
 	e := m.entries[i]
+	selected := i == m.selected
 	marker := " "
 	style := e.style
-	if i == m.selected {
-		marker = "▸"
+	if selected {
+		marker = e.style.Render("▌")
 		style = style.Bold(true)
+		if m.st.selBar == "" {
+			style = style.Reverse(true) // no background tint: highlight the name
+		}
 	}
-	code := ""
-	if e.info.State == supervisor.Crashed && e.info.Exit.Code > 0 {
-		code = strconv.Itoa(e.info.Exit.Code)
-	}
-	labelWidth := width - 5 - 1 // " ▸ ● " and the right margin
+	code := exitCode(e.info)
+	labelWidth := width - 5 - 1 // " ▌ ● " and the right margin
 	if code != "" {
 		labelWidth -= len(code) + 1
 	}
 	label := ansi.Truncate(e.label, labelWidth, "…")
 	row := " " + marker + " " + m.st.stateIcon(e.info.State) + " " + style.Render(label)
 	if code != "" {
-		row += " " + m.st.faint.Render(code)
+		row += " " + m.st.err.Render(code)
 	}
 	if gitCol > 0 {
 		row = pad(row, width)
@@ -845,7 +892,11 @@ func (m *runningModel) sidebarRow(i, width, gitCol int) string {
 			row += gitLabel(m.st, g, gitCol)
 		}
 	}
-	return pad(row, full)
+	row = pad(row, full)
+	if selected && m.st.selBar != "" {
+		row = onBackground(row, m.st.selBar)
+	}
+	return row
 }
 
 func (m *runningModel) help() string {
@@ -856,12 +907,13 @@ func (m *runningModel) help() string {
 		return ansi.Truncate(" "+m.st.warn.Render(m.notice), m.width, "…")
 	}
 	if m.picker != nil {
-		return ansi.Truncate(" "+hintList(m.st, [][2]string{
+		return ansi.Truncate(" "+m.st.hintList([][2]string{
 			{"type", "to filter"}, {"↑↓", "select"}, {"enter", m.picker.action}, {"esc", "cancel"},
 		}), m.width, "…")
 	}
 	if m.editing {
-		hints := hintList(m.st, [][2]string{{"enter", "search"}, {"esc", "cancel"}})
+		hints := m.st.hintList([][2]string{{"enter", "search"}, {"esc", "cancel"}})
+		m.input.SetWidth(max(m.width-ansi.StringWidth(hints)-6, 10)) // " /", the cursor and the gap
 		return ansi.Truncate(" "+m.st.bold.Render("/")+m.input.View()+"  "+hints, m.width, "…")
 	}
 	view, stop := "view", "start"
@@ -892,18 +944,7 @@ func (m *runningModel) help() string {
 	for _, k := range keys {
 		parts = append(parts, m.st.hint(k[0], k[1]))
 	}
-	return fitHints(parts, m.width)
-}
-
-// fitHints joins help line parts. When narrow, it drops hints from the end
-// of the middle so the last one (quitting) stays visible.
-func fitHints(parts []string, width int) string {
-	line := " " + strings.Join(parts, "  ")
-	for len(parts) > 2 && ansi.StringWidth(line) > width {
-		parts = append(parts[:len(parts)-2], parts[len(parts)-1])
-		line = " " + strings.Join(parts, "  ")
-	}
-	return ansi.Truncate(line, width, "…")
+	return m.st.fitHints(parts, m.width)
 }
 
 // pad pads s with spaces to width cells.
@@ -912,13 +953,4 @@ func pad(s string, width int) string {
 		return s + strings.Repeat(" ", n)
 	}
 	return s
-}
-
-// hintList renders key hints like "enter start  esc cancel".
-func hintList(st *styles, keys [][2]string) string {
-	parts := make([]string, len(keys))
-	for i, k := range keys {
-		parts[i] = st.hint(k[0], k[1])
-	}
-	return strings.Join(parts, "  ")
 }

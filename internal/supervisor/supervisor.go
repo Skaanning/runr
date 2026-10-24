@@ -346,3 +346,9 @@ func (s *Supervisor) system(m *managed, format string, args ...any) {
 	line := s.logs.Append(m.name, System, fmt.Sprintf(format, args...))
 	s.events.push(LineEvent{Line: line})
 }
+
+// systemError appends a runr-generated line about a failure.
+func (s *Supervisor) systemError(m *managed, format string, args ...any) {
+	line := s.logs.Append(m.name, SystemError, fmt.Sprintf(format, args...))
+	s.events.push(LineEvent{Line: line})
+}

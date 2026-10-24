@@ -34,7 +34,7 @@ func (s *Supervisor) spawn(m *managed) {
 	if err != nil {
 		m.proc = nil
 		m.info.Exit = proc.ExitStatus{Code: -1, Err: err}
-		s.system(m, "failed to start: %v", err)
+		s.systemError(m, "failed to start: %v", err)
 		s.setState(m, Crashed)
 		s.schedule()
 		return
@@ -105,7 +105,7 @@ func (s *Supervisor) stop(m *managed) {
 	m.stopRequested = true
 	s.setState(m, Stopping)
 	if err := m.proc.Terminate(); err != nil {
-		s.system(m, "terminate failed (%v), killing", err)
+		s.systemError(m, "terminate failed (%v), killing", err)
 		_ = m.proc.Kill()
 		return
 	}
@@ -113,7 +113,7 @@ func (s *Supervisor) stop(m *managed) {
 	m.killTimer = time.AfterFunc(s.timeout, func() {
 		s.post(func() {
 			if m.gen == gen && m.info.State == Stopping {
-				s.system(m, "still running after %v, killing", s.timeout)
+				s.systemError(m, "still running after %v, killing", s.timeout)
 				_ = m.proc.Kill()
 			}
 		})
@@ -162,7 +162,7 @@ func (s *Supervisor) exited(m *managed, gen int, status proc.ExitStatus) {
 		s.system(m, "exited (%s)", status)
 		s.setState(m, Exited)
 	default:
-		s.system(m, "crashed (%s)", status)
+		s.systemError(m, "crashed (%s)", status)
 		s.setState(m, Crashed)
 	}
 

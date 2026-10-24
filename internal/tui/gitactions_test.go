@@ -57,7 +57,7 @@ func follow(t *testing.T, m *runningModel, cmd tea.Cmd) {
 
 func TestSwitchBranch(t *testing.T) {
 	m, sess, f := newGitModel(t)
-	if got := helpRow(m); !strings.Contains(got, "b branch") {
+	if got := helpRow(m); !strings.Contains(got, "b  branch") {
 		t.Errorf("help = %q", got)
 	}
 
@@ -77,7 +77,7 @@ func TestSwitchBranch(t *testing.T) {
 			t.Errorf("screen lacks %q:\n%s", want, strings.Join(rows, "\n"))
 		}
 	}
-	if got := helpRow(m); got != " type to filter  ↑↓ select  enter switch  esc cancel" {
+	if got := helpRow(m); got != "  type  to filter  ↑↓  select  enter  switch  esc  cancel" {
 		t.Errorf("picker help = %q", got)
 	}
 
@@ -194,7 +194,7 @@ func TestSwitchBranchGuards(t *testing.T) {
 	if m.notice != "api is not in a git repository" {
 		t.Errorf("no repo: notice %q", m.notice)
 	}
-	if strings.Contains(helpRow(m), "b branch") {
+	if strings.Contains(helpRow(m), "b  branch") {
 		t.Error("b hint shown for a project outside a repository")
 	}
 
@@ -207,7 +207,7 @@ func TestSwitchBranchGuards(t *testing.T) {
 
 func TestPull(t *testing.T) {
 	m, sess, f := newGitModel(t)
-	if got := helpRow(m); !strings.Contains(got, "b branch  p pull") {
+	if got := helpRow(m); !strings.Contains(got, "b  branch  p  pull") {
 		t.Errorf("help = %q", got)
 	}
 
@@ -215,11 +215,11 @@ func TestPull(t *testing.T) {
 	if m.confirm == nil {
 		t.Fatalf("no confirmation; notice %q", m.notice)
 	}
-	if got, want := helpRow(m), " pull origin/main into api (main)? also updates Worker (same repository)  enter pull  esc cancel"; got != want {
+	if got, want := helpRow(m), " pull origin/main into api (main)? also updates Worker (same repository)  enter  pull  esc  cancel"; got != want {
 		t.Errorf("confirmation = %q\nwant           %q", got, want)
 	}
 	m.width = 40
-	if got := helpRow(m); got != " pull origin/ma…  enter pull  esc cancel" {
+	if got := helpRow(m); got != " pull origin/…  enter  pull  esc  cancel" {
 		t.Errorf("narrow confirmation = %q", got)
 	}
 	m.width = 120
@@ -372,7 +372,7 @@ func newGitLauncher(t *testing.T) (*launcherModel, *fakeGit) {
 	t.Helper()
 	cfg := testConfig()
 	cfg.Groups = map[string][]string{"backend": {"db", "api"}}
-	m := newLauncherModel(cfg, nil, newStyles(terminalPalette))
+	m := newLauncherModel(cfg, nil, newStyles(terminalTheme))
 	f := testGit()
 	f.status["/r/app"] = gitinfo.Status{Branch: "main", Commit: "0123456789", Upstream: "origin/main"}
 	f.branches = map[string][]gitinfo.Branch{"/r/app": {
@@ -430,12 +430,12 @@ func TestLauncherSwitchBranch(t *testing.T) {
 	if m.picker != nil || m.notice != "move to a project to switch its branch" {
 		t.Errorf("group: picker %v, notice %q", m.picker != nil, m.notice)
 	}
-	if strings.Contains(launcherHelp(m), "b branch") {
+	if strings.Contains(launcherHelp(m), "b  branch") {
 		t.Error("b hint shown on a group")
 	}
 
 	launcherPress(t, m, "down") // api
-	if got := launcherHelp(m); !strings.Contains(got, "d delete  b branch  p pull  q quit") {
+	if got := launcherHelp(m); !strings.Contains(got, "d  delete  b  branch  p  pull  q  quit") {
 		t.Errorf("help = %q", got)
 	}
 	launcherPress(t, m, "b")
@@ -453,7 +453,7 @@ func TestLauncherSwitchBranch(t *testing.T) {
 			t.Errorf("screen lacks %q:\n%s", want, strings.Join(rows, "\n"))
 		}
 	}
-	if got := launcherHelp(m); got != " type to filter  ↑↓ select  enter switch  esc cancel" {
+	if got := launcherHelp(m); got != "  type  to filter  ↑↓  select  enter  switch  esc  cancel" {
 		t.Errorf("picker help = %q", got)
 	}
 
@@ -535,7 +535,7 @@ func TestLauncherPull(t *testing.T) {
 	if m.ask == nil {
 		t.Fatalf("no question; notice %q", m.notice)
 	}
-	if got, want := launcherHelp(m), " pull origin/main into api (main)? also updates worker (same repository)  enter pull  esc cancel"; got != want {
+	if got, want := launcherHelp(m), " pull origin/main into api (main)? also updates worker (same repository)  enter  pull  esc  cancel"; got != want {
 		t.Errorf("question = %q\nwant       %q", got, want)
 	}
 	f.pullOut = "Updating 0123456..fedcba9\nFast-forward\n"
@@ -615,7 +615,7 @@ func TestLauncherHelpKeepsQuitWhenNarrow(t *testing.T) {
 	m, _ := newGitLauncher(t)
 	launcherPress(t, m, "down")
 	m.width = 60
-	if got := launcherHelp(m); !strings.HasSuffix(got, "q quit") || ansi.StringWidth(got) > 60 {
+	if got := launcherHelp(m); !strings.HasSuffix(got, "q  quit") || ansi.StringWidth(got) > 60 {
 		t.Errorf("help = %q", got)
 	}
 }

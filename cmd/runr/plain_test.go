@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/supervisor"
 )
 
 // syncBuffer is a bytes.Buffer safe for concurrent writes and reads.
@@ -216,6 +217,19 @@ func TestPlainPrinterColors(t *testing.T) {
 		if got := p.labels[name]; got != want {
 			t.Errorf("label %s = %q, want %q", name, got, want)
 		}
+	}
+}
+
+func TestPlainPrinterSystemLines(t *testing.T) {
+	cfg := plainConfig(t, map[string]*config.Project{"db": {Cmd: "x", Color: "cyan"}})
+	var out bytes.Buffer
+	p := newPlainPrinter(&out, cfg, []string{"db"}, true)
+	p.event(supervisor.LineEvent{Line: supervisor.LogLine{Project: "db", Stream: supervisor.System, Text: "ready"}})
+	p.event(supervisor.LineEvent{Line: supervisor.LogLine{Project: "db", Stream: supervisor.SystemError, Text: "crashed (exit code 1)"}})
+	want := "\x1b[36mdb  \x1b[0m » \x1b[2mready\x1b[0m\n" +
+		"\x1b[36mdb  \x1b[0m » \x1b[31mcrashed (exit code 1)\x1b[0m\n"
+	if out.String() != want {
+		t.Errorf("output = %q, want %q", out.String(), want)
 	}
 }
 

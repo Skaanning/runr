@@ -187,7 +187,7 @@ func submit(m *launcherModel, f *editForm) {
 func TestLauncherFormSaves(t *testing.T) {
 	cfg := launcherConfig(t)
 	var saved []*config.Config
-	m := newLauncherModel(cfg, func(c *config.Config) error { saved = append(saved, c); return nil }, newStyles(terminalPalette))
+	m := newLauncherModel(cfg, func(c *config.Config) error { saved = append(saved, c); return nil }, newStyles(terminalTheme))
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
 	shared := cfg // e.g. the app's pointer
 
@@ -210,7 +210,7 @@ func TestLauncherFormCancelAndErrors(t *testing.T) {
 	cfg := launcherConfig(t)
 	saveErr := errors.New("disk full")
 	calls := 0
-	m := newLauncherModel(cfg, func(*config.Config) error { calls++; return saveErr }, newStyles(terminalPalette))
+	m := newLauncherModel(cfg, func(*config.Config) error { calls++; return saveErr }, newStyles(terminalTheme))
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
 
 	submit(m, fakeForm(cfg.Clone(), launcherItem{}, false)) // Cancel chosen
@@ -243,7 +243,7 @@ func TestLauncherKeysOpenForms(t *testing.T) {
 		if m.form == nil || m.form.title != want {
 			t.Fatalf("%s: form = %+v", k, m.form)
 		}
-		if !strings.HasPrefix(launcherScreen(m)[0], " runr · "+want) {
+		if !strings.HasPrefix(launcherScreen(m)[0], "  runr   "+want) {
 			t.Fatalf("%s: header = %q", k, launcherScreen(m)[0])
 		}
 		m.Update(key("esc"))
@@ -267,13 +267,13 @@ func TestLauncherKeysOpenForms(t *testing.T) {
 func TestLauncherDeleteFlow(t *testing.T) {
 	cfg := launcherConfig(t)
 	saves := 0
-	m := newLauncherModel(cfg, func(*config.Config) error { saves++; return nil }, newStyles(terminalPalette))
+	m := newLauncherModel(cfg, func(*config.Config) error { saves++; return nil }, newStyles(terminalTheme))
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
 	m.Update(key("d")) // backend
 	if !strings.Contains(strings.Join(launcherScreen(m), "\n"), `Delete group "backend"? Its projects are kept.`) {
 		t.Fatalf("screen:\n%s", strings.Join(launcherScreen(m), "\n"))
 	}
-	if help := launcherScreen(m)[19]; help != " y delete  n cancel" {
+	if help := launcherScreen(m)[19]; help != "  y  delete  n  cancel" {
 		t.Fatalf("help = %q", help)
 	}
 	m.Update(key("n"))
@@ -354,7 +354,7 @@ func TestGroupFormRename(t *testing.T) {
 
 func TestLauncherRenameKeepsSelection(t *testing.T) {
 	cfg := launcherConfig(t)
-	m := newLauncherModel(cfg, nil, newStyles(terminalPalette))
+	m := newLauncherModel(cfg, nil, newStyles(terminalTheme))
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
 	m.selected["db"] = true
 

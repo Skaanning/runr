@@ -134,8 +134,12 @@ func (p *plainPrinter) event(e supervisor.Event) {
 		return
 	}
 	label := p.labels[le.Line.Project]
-	if le.Line.Stream == supervisor.System {
+	switch le.Line.Stream {
+	case supervisor.System:
 		fmt.Fprintf(p.w, "%s » %s\n", label, p.paint("2", le.Line.Text))
+		return
+	case supervisor.SystemError:
+		fmt.Fprintf(p.w, "%s » %s\n", label, p.paint("31", le.Line.Text))
 		return
 	}
 	text := le.Line.Text

@@ -68,7 +68,7 @@ func (s *Supervisor) schedule() {
 				s.spawn(m)
 				changed = true
 			case depsFailed:
-				s.system(m, "blocked: dependency %s is %s", dep, s.procs[dep].info.State)
+				s.systemError(m, "blocked: dependency %s is %s", dep, s.procs[dep].info.State)
 				s.setState(m, Blocked)
 				changed = true
 			}

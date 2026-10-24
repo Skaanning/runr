@@ -71,7 +71,7 @@ func testConfig() *config.Config {
 func newTestModel(t *testing.T, width, height int) (*runningModel, *fakeSession) {
 	t.Helper()
 	sess := newFakeSession("db", "api", "worker")
-	m := newRunningModel(sess, testConfig(), []string{"backend"}, newStyles(terminalPalette))
+	m := newRunningModel(sess, testConfig(), []string{"backend"}, newStyles(terminalTheme))
 	m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	return m, sess
 }
@@ -126,14 +126,14 @@ func TestRunningLayout(t *testing.T) {
 	}})
 
 	want := []string{
-		" runr · backend                        combined · following",
-		"────────────────┬───────────────────────────────────────────",
-		" ▸ ● db         │ db     starting: db",
-		"   ◐ api        │ api    listening on :8080",
-		"   ✗ Worker 1   │ Worker error: queue not found",
-		"                │",
-		"────────────────┴───────────────────────────────────────────",
-		" ↑↓ select  tab view  r restart  s stop  + start  q quit",
+		"  runr   backend       ● 1  ◐ 1  ✗ 1   combined · following",
+		"───────────────────┬────────────────────────────────────────",
+		" ▌ ● db            │ db     starting: db",
+		"   ◐ api           │ api    listening on :8080",
+		"   ✗ Worker exit 1 │ Worker error: queue not found",
+		"                   │",
+		"───────────────────┴────────────────────────────────────────",
+		"  ↑↓  select  tab  view  r  restart  s  stop  q  quit",
 	}
 	got := screen(m)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -154,7 +154,7 @@ func TestRunningSelectionAndSidebarScroll(t *testing.T) {
 		cfg.Projects[name] = &config.Project{Cmd: "x"}
 		sess.procs = append(sess.procs, supervisor.ProcessInfo{Name: name})
 	}
-	m := newRunningModel(sess, cfg, []string{"all"}, newStyles(terminalPalette))
+	m := newRunningModel(sess, cfg, []string{"all"}, newStyles(terminalTheme))
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 7}) // 3 body rows
 
 	m.Update(key("up")) // stays at the first entry
@@ -164,7 +164,7 @@ func TestRunningSelectionAndSidebarScroll(t *testing.T) {
 	for range 4 {
 		m.Update(key("down"))
 	}
-	if got := screen(m)[2:5]; !strings.HasPrefix(got[0], "   ○ p2") || !strings.HasPrefix(got[2], " ▸ ○ p4") {
+	if got := screen(m)[2:5]; !strings.HasPrefix(got[0], "   ○ p2") || !strings.HasPrefix(got[2], " ▌ ○ p4") {
 		t.Fatalf("sidebar = %q", got)
 	}
 	for range 20 {
@@ -215,10 +215,10 @@ func TestRunningScrollKeys(t *testing.T) {
 
 func TestRunningWrapsLongLinesUnderLabel(t *testing.T) {
 	m, _ := newTestModel(t, 40, 6)
-	// sidebar 40/3 = 13, log column 40-13-2 = 25 cells, label column 7 → 18 cells of text
+	// sidebar 12, log column 40-12-2 = 26 cells, label column 7 → 19 cells of text
 	m.Update(eventsMsg{events: []supervisor.Event{line("api", "abcdefghijklmnopqrstuvwxyz")}})
 	got := screen(m)
-	for i, want := range []string{"│ api    abcdefghijklmnopqr", "│        stuvwxyz"} {
+	for i, want := range []string{"│ api    abcdefghijklmnopqrs", "│        tuvwxyz"} {
 		if !strings.HasSuffix(got[2+i], want) {
 			t.Errorf("row %d = %q, want suffix %q", 2+i, got[2+i], want)
 		}
@@ -356,7 +356,7 @@ func TestRunningSingleView(t *testing.T) {
 	if got := screen(m)[0]; !strings.HasSuffix(got, "db · following") {
 		t.Fatalf("header = %q", got)
 	}
-	if got := screen(m)[len(screen(m))-1]; !strings.Contains(got, "tab all") {
+	if got := screen(m)[len(screen(m))-1]; !strings.Contains(got, "tab  all") {
 		t.Fatalf("help = %q", got)
 	}
 
@@ -416,7 +416,7 @@ func TestRunningStopStartRestart(t *testing.T) {
 	m.Update(key("down"))
 	m.Update(key("s")) // api waiting → stop (cancel)
 	m.Update(key("down"))
-	if !strings.Contains(helpRow(), "s start") {
+	if !strings.Contains(helpRow(), "s  start") {
 		t.Fatalf("help = %q", helpRow())
 	}
 	m.Update(key("s")) // worker crashed → start
@@ -495,7 +495,7 @@ func TestRunningSearch(t *testing.T) {
 	for range 2 {
 		m.Update(tea.KeyPressMsg{Code: tea.KeyBackspace})
 	}
-	if got := helpRow(m); !strings.HasPrefix(got, " /error") || !strings.Contains(got, "enter search") {
+	if got := helpRow(m); !strings.HasPrefix(got, " /error") || !strings.Contains(got, "enter  search") {
 		t.Fatalf("help while editing = %q", got)
 	}
 	if !strings.Contains(m.render(), "line 8 "+m.st.match+"Error\x1b[0m") {
@@ -503,7 +503,7 @@ func TestRunningSearch(t *testing.T) {
 	}
 
 	m.Update(key("enter")) // newest match on screen
-	if !strings.Contains(m.render(), m.st.current+"Error") || !strings.HasPrefix(helpRow(m), " /error 3/3  n/N next/prev  esc clear") {
+	if !strings.Contains(m.render(), m.st.current+"Error") || !strings.HasPrefix(helpRow(m), " /error 3/3  n/N  next/prev  esc  clear") {
 		t.Fatalf("after enter: help = %q", helpRow(m))
 	}
 
@@ -576,7 +576,7 @@ func TestRunningSearchKeepsFaintSystemLines(t *testing.T) {
 	typeText(m, "db")
 	out := m.render()
 	// After the highlighted match the faint styling is restored.
-	if !strings.Contains(out, "\x1b[2mstarting: "+m.st.match+"db\x1b[0m\x1b[2m --port 1") {
+	if !strings.Contains(out, m.st.system+"starting: "+m.st.match+"db\x1b[0m"+m.st.system+" --port 1") {
 		t.Fatalf("render = %q", out)
 	}
 }
@@ -600,7 +600,7 @@ func newPickerModel(t *testing.T) (*runningModel, *fakeSession) {
 		},
 	}
 	sess := newFakeSession("db", "api")
-	m := newRunningModel(sess, cfg, []string{"backend"}, newStyles(terminalPalette))
+	m := newRunningModel(sess, cfg, []string{"backend"}, newStyles(terminalTheme))
 	m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
 	m.Update(eventsMsg{events: []supervisor.Event{state("db", supervisor.Running), state("api", supervisor.Running)}})
 	return m, sess
@@ -620,7 +620,7 @@ func TestPickerItems(t *testing.T) {
 	if got := logRows(m); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("picker:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	if got := helpRow(m); got != " type to filter  ↑↓ select  enter start  esc cancel" {
+	if got := helpRow(m); got != "  type  to filter  ↑↓  select  enter  start  esc  cancel" {
 		t.Fatalf("help = %q", got)
 	}
 
@@ -650,10 +650,10 @@ func TestPickerStartsProject(t *testing.T) {
 		t.Fatal("picker still open")
 	}
 	got := screen(m)
-	if !strings.HasPrefix(got[0], " runr · backend + worker ") {
+	if !strings.HasPrefix(got[0], "  runr   backend + worker ") {
 		t.Fatalf("header = %q", got[0])
 	}
-	if !strings.HasPrefix(got[4], " ▸ ○ Worker") {
+	if !strings.HasPrefix(got[4], " ▌ ○ Worker") {
 		t.Fatalf("sidebar row = %q, want the new project selected", got[4])
 	}
 }
@@ -665,7 +665,7 @@ func TestPickerStartsGroup(t *testing.T) {
 	if got := strings.Join(sess.calls, ","); got != "start jobs" {
 		t.Fatalf("calls = %q", got)
 	}
-	if got := screen(m)[0]; !strings.HasPrefix(got, " runr · backend + jobs ") {
+	if got := screen(m)[0]; !strings.HasPrefix(got, "  runr   backend + jobs ") {
 		t.Fatalf("header = %q", got)
 	}
 	if m.selected != 0 {
@@ -681,7 +681,7 @@ func TestPickerStartsGroup(t *testing.T) {
 		t.Fatalf("item = %q", got)
 	}
 	m.Update(key("enter"))
-	if got := screen(m)[0]; !strings.HasPrefix(got, " runr · backend + jobs ") {
+	if got := screen(m)[0]; !strings.HasPrefix(got, "  runr   backend + jobs ") {
 		t.Fatalf("header = %q", got)
 	}
 }
@@ -697,7 +697,7 @@ func TestPickerMissingDir(t *testing.T) {
 	if got := helpRow(m); !strings.HasPrefix(got, ` cannot start: project "docs": dir: `) {
 		t.Fatalf("help = %q", got)
 	}
-	if !strings.HasPrefix(screen(m)[0], " runr · backend ") {
+	if !strings.HasPrefix(screen(m)[0], "  runr   backend ") {
 		t.Fatalf("header = %q", screen(m)[0])
 	}
 }

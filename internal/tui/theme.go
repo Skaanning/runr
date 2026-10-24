@@ -2,6 +2,7 @@ package tui
 
 import (
 	"image/color"
+	"strings"
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
@@ -37,42 +38,99 @@ type palette struct {
 	fg, bg    color.Color
 	dim       color.Color // secondary text
 	accent    color.Color
-	selection color.Color // background of the selected row
+	selection color.Color // background of the selected row and keycaps
 	rule      color.Color // separator lines
 	ansi      [16]color.Color
 }
 
-// terminalPalette uses the terminal's own 16 colors.
-var terminalPalette = palette{
-	accent: ansi.BasicColor(ansiCyan),
-	ansi: [16]color.Color{
-		ansi.BasicColor(0), ansi.BasicColor(1), ansi.BasicColor(2), ansi.BasicColor(3),
-		ansi.BasicColor(4), ansi.BasicColor(5), ansi.BasicColor(6), ansi.BasicColor(7),
-		ansi.BasicColor(8), ansi.BasicColor(9), ansi.BasicColor(10), ansi.BasicColor(11),
-		ansi.BasicColor(12), ansi.BasicColor(13), ansi.BasicColor(14), ansi.BasicColor(15),
+// theme is a palette for dark and one for light terminal backgrounds.
+type theme struct {
+	dark, light palette
+}
+
+// terminalANSI are the terminal's own 16 colors.
+var terminalANSI = [16]color.Color{
+	ansi.BasicColor(0), ansi.BasicColor(1), ansi.BasicColor(2), ansi.BasicColor(3),
+	ansi.BasicColor(4), ansi.BasicColor(5), ansi.BasicColor(6), ansi.BasicColor(7),
+	ansi.BasicColor(8), ansi.BasicColor(9), ansi.BasicColor(10), ansi.BasicColor(11),
+	ansi.BasicColor(12), ansi.BasicColor(13), ansi.BasicColor(14), ansi.BasicColor(15),
+}
+
+// terminalTheme uses the terminal's own 16 colors. The selection and the
+// rules (the accent mixed 40% into the background) are grays and teals from
+// the 256-color palette.
+var terminalTheme = theme{
+	dark: palette{
+		accent:    ansi.BasicColor(ansiCyan),
+		selection: ansi.IndexedColor(236), // #303030
+		rule:      ansi.IndexedColor(23),  // #005f5f
+		ansi:      terminalANSI,
+	},
+	light: palette{
+		accent:    ansi.BasicColor(ansiCyan),
+		selection: ansi.IndexedColor(254), // #e4e4e4
+		rule:      ansi.IndexedColor(152), // #afd7d7
+		ansi:      terminalANSI,
 	},
 }
 
-// styles are the styles the UI is drawn with, built from a palette. The
-// launcher, the running view, pickers and forms share one *styles.
+// styles are the styles the UI is drawn with, built from a theme for the
+// terminal's color profile and background. The launcher, the running view,
+// pickers and forms share one *styles.
 type styles struct {
-	pal palette
+	theme theme
+	pal   palette // the theme's palette for the background
 	// profile is the terminal's color profile, from tea.ColorProfileMsg
-	// (TrueColor until it arrives), for fallbacks where colors are scarce.
+	// (TrueColor until it arrives). Below 256 colors, tints fall back to
+	// reverse video, bold or faint text.
 	profile colorprofile.Profile
+	dark    bool // the terminal's background, from tea.BackgroundColorMsg (dark until it arrives)
 
 	plain, bold, faint lipgloss.Style
 	ok, warn, err      lipgloss.Style // green, yellow, red
 	rule               lipgloss.Style
+	badge              lipgloss.Style // " runr " in the header
+	keycap             lipgloss.Style // the key of a hint; zero: bold keys
+	keycaps            bool
+	hintGap            string // between hints
+
+	// selBar is the SGR sequence for the selected row's background; empty
+	// when the selected name is shown in reverse video instead.
+	selBar string
 
 	// SGR sequences for log lines, which are styled as raw text.
-	system  string // runr's own lines
-	match   string // search matches
-	current string // the search match jumped to
+	system    string // runr's own lines
+	systemErr string // runr's lines about failures
+	match     string // search matches
+	current   string // the search match jumped to
 }
 
-func newStyles(p palette) *styles {
-	s := &styles{pal: p, profile: colorprofile.TrueColor}
+func newStyles(t theme) *styles {
+	s := &styles{theme: t, profile: colorprofile.TrueColor, dark: true}
+	s.build()
+	return s
+}
+
+// setProfile rebuilds the styles for the terminal's color profile.
+func (s *styles) setProfile(p colorprofile.Profile) {
+	s.profile = p
+	s.build()
+}
+
+// setDark rebuilds the styles for a dark or light terminal background.
+func (s *styles) setDark(dark bool) {
+	s.dark = dark
+	s.build()
+}
+
+func (s *styles) build() {
+	p := s.theme.dark
+	if !s.dark {
+		p = s.theme.light
+	}
+	s.pal = p
+	tints := s.profile >= colorprofile.ANSI256 // background tints and subtle colors read well
+
 	s.plain = lipgloss.NewStyle()
 	s.bold = lipgloss.NewStyle().Bold(true)
 	s.faint = lipgloss.NewStyle().Faint(true)
@@ -83,18 +141,38 @@ func newStyles(p palette) *styles {
 	s.warn = lipgloss.NewStyle().Foreground(p.ansi[ansiYellow])
 	s.err = lipgloss.NewStyle().Foreground(p.ansi[ansiRed])
 	s.rule = lipgloss.NewStyle().Faint(true)
-	if p.rule != nil {
+	if p.rule != nil && tints {
 		s.rule = lipgloss.NewStyle().Foreground(p.rule)
 	}
 
-	if p.dim != nil {
-		s.system = ansi.Style{}.ForegroundColor(p.dim).String()
-	} else {
-		s.system = ansi.Style{}.Faint().String()
+	onAccent := p.bg
+	if onAccent == nil {
+		onAccent = p.ansi[ansiBlack]
 	}
+	s.badge = lipgloss.NewStyle().Bold(true).Background(p.accent).Foreground(onAccent)
+	if s.profile < colorprofile.ANSI {
+		s.badge = lipgloss.NewStyle().Bold(true).Reverse(true)
+	}
+
+	s.keycaps = p.selection != nil && tints
+	s.keycap, s.hintGap, s.selBar = s.bold, "  ", ""
+	if s.keycaps {
+		s.keycap = lipgloss.NewStyle().Bold(true).Background(p.selection)
+		if p.fg != nil {
+			s.keycap = s.keycap.Foreground(p.fg)
+		}
+		s.hintGap = " "
+		s.selBar = ansi.Style{}.BackgroundColor(p.selection).String()
+	}
+
+	if p.dim != nil {
+		s.system = ansi.Style{}.ForegroundColor(p.dim).Italic(true).String()
+	} else {
+		s.system = ansi.Style{}.Faint().Italic(true).String()
+	}
+	s.systemErr = ansi.Style{}.ForegroundColor(p.ansi[ansiRed]).Italic(true).String()
 	s.match = ansi.Style{}.Reverse(true).String()
 	s.current = ansi.Style{}.ForegroundColor(p.ansi[ansiBlack]).BackgroundColor(p.ansi[ansiYellow]).String()
-	return s
 }
 
 // color resolves a valid project color: a named color through the palette,
@@ -106,4 +184,12 @@ func (s *styles) color(c string) color.Color {
 		}
 	}
 	return lipgloss.Color(c)
+}
+
+// onBackground gives styled text the background set by the SGR sequence
+// bg, also after the resets inside it.
+func onBackground(text, bg string) string {
+	text = strings.ReplaceAll(text, "\x1b[m", "\x1b[m"+bg)
+	text = strings.ReplaceAll(text, "\x1b[0m", "\x1b[0m"+bg)
+	return bg + text + "\x1b[m"
 }

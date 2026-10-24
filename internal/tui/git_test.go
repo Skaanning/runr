@@ -108,11 +108,11 @@ func TestRunningSidebarGit(t *testing.T) {
 	m.Update(eventsMsg{events: []supervisor.Event{state("db", supervisor.Running), line("api", "hello")}})
 
 	want := []string{
-		" runr · backend                                            combined · following",
+		"  runr   backend                                ● 1  ◐ 2   combined · following",
 		"──────────────────────────┬─────────────────────────────────────────────────────",
-		" ▸ ● db         main      │ api    hello",
-		"   ○ api        fea… * ↓2 │",
-		"   ○ Worker     fea… * ↓2 │",
+		" ▌ ● db     main          │ api    hello",
+		"   ○ api    feat/lo… * ↓2 │",
+		"   ○ Worker feat/lo… * ↓2 │",
 	}
 	if got := screen(m)[:5]; !slices.Equal(got, want) {
 		t.Fatalf("screen:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -124,9 +124,9 @@ func TestRunningSidebarGitWidths(t *testing.T) {
 		width int
 		row   string // the api row
 	}{
-		{120, "   ○ api        feat/login * ↓2 │"},
-		{75, "   ○ api        fe… * ↓2 │"},
-		{60, "   ○ api        │"}, // no room: the column is dropped, names stay whole
+		{120, "   ○ api    feat/login * ↓2 │"},
+		{75, "   ○ api    feat/l… * ↓2 │"},
+		{60, "   ○ api    │"}, // no room: the column is dropped, names stay whole
 	}
 	for _, tt := range tests {
 		m, _ := newTestModel(t, tt.width, 7)
@@ -148,7 +148,7 @@ func TestRunningWithoutGit(t *testing.T) {
 	if m.git != nil || m.Init() == nil {
 		t.Fatal("the model should work without a git tracker")
 	}
-	if w, col := m.sidebarLayout(); col != 0 || w != 5+6+codeWidth+1 {
+	if w, col := m.sidebarLayout(); col != 0 || w != 5+6+1 {
 		t.Errorf("layout = %d, %d", w, col)
 	}
 }
@@ -168,7 +168,7 @@ func TestGitLabel(t *testing.T) {
 		{projectGit{err: errors.New("dubious ownership")}, 24, "?"},
 	}
 	for _, tt := range tests {
-		got := ansi.Strip(gitLabel(newStyles(terminalPalette), tt.g, tt.width))
+		got := ansi.Strip(gitLabel(newStyles(terminalTheme), tt.g, tt.width))
 		if got != tt.want {
 			t.Errorf("gitLabel(%+v, %d) = %q, want %q", tt.g, tt.width, got, tt.want)
 		}
@@ -268,7 +268,7 @@ func TestRunningStopsGitTicksWhenStopping(t *testing.T) {
 
 func TestLauncherShowsGit(t *testing.T) {
 	cfg := testConfig()
-	m := newLauncherModel(cfg, nil, newStyles(terminalPalette))
+	m := newLauncherModel(cfg, nil, newStyles(terminalTheme))
 	m.git = newGitTracker(testGit())
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 12})
 	loadGit(t, func(msg tea.Msg) { m.Update(msg) }, m.git, m.gitDirs())
