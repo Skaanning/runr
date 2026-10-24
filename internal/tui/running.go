@@ -87,7 +87,8 @@ type runningModel struct {
 	singleFor string   // project shown in single
 	snapSeq   uint64   // newest line in the snapshot single was built from
 	lastBatch time.Time
-	notice    string // result of the last action, shown until the next key
+	notice    string  // result of the last action, shown until the next key
+	toasts    []toast // crashes and blocks, oldest first
 
 	search     search // applies to both views
 	prevSearch search // restored when editing is cancelled
@@ -230,6 +231,7 @@ func (m *runningModel) waitEvents() tea.Cmd {
 
 func (m *runningModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	n := len(m.entries)
+	m.pruneToasts()
 	cmd := m.update(msg)
 	if len(m.entries) > n && m.combined != nil {
 		// Projects were added (e.g. with the picker): show their git state too.
@@ -298,10 +300,12 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 		}
 	case eventsMsg:
 		m.lastBatch = time.Now()
-		m.handleEvents(msg.events)
+		cmd := m.handleEvents(msg.events)
 		if !msg.closed {
-			return m.waitEvents()
+			return tea.Batch(cmd, m.waitEvents())
 		}
+		return cmd
+	case toastMsg: // expired toasts are pruned in Update
 	case gitMsg:
 		cmd := m.git.update(msg, m.gitDirs)
 		m.layout() // the git column may have changed width
@@ -345,15 +349,23 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-func (m *runningModel) handleEvents(events []supervisor.Event) {
+// handleEvents applies a batch of supervisor events. It returns a command
+// to expire the toasts it showed.
+func (m *runningModel) handleEvents(events []supervisor.Event) tea.Cmd {
 	var lines, single []supervisor.LogLine
-	states := false
+	states, toasts := false, false
 	sec := m.now().Unix()
 	for _, e := range events {
 		switch e := e.(type) {
 		case supervisor.StateEvent:
-			m.entry(e.Info.Name).info = e.Info
+			entry := m.entry(e.Info.Name)
+			prev := entry.info.State
+			entry.info = e.Info
 			states = true
+			if t, ok := m.newToast(prev, e.Info); ok {
+				m.addToast(t)
+				toasts = true
+			}
 		case supervisor.LineEvent:
 			if entry := m.entry(e.Line.Project); !e.Line.Stream.Runr() {
 				entry.rate.add(sec, 1)
@@ -375,10 +387,16 @@ func (m *runningModel) handleEvents(events []supervisor.Event) {
 	if states {
 		m.layout() // exit codes change the sidebar's width
 	}
+	if toasts {
+		return tea.Tick(toastFor, func(time.Time) tea.Msg { return toastMsg{} })
+	}
+	return nil
 }
 
 func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	m.notice = ""
+	toasts := m.toasts // any key dismisses them
+	m.toasts = nil
 	switch {
 	case m.confirm != nil:
 		return m.handleConfirmKey(msg)
@@ -393,6 +411,13 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "q":
 		if !m.stopping {
 			return m.interrupt()
+		}
+	case "!": // select the project of the newest toast
+		if len(toasts) > 0 {
+			name := toasts[len(toasts)-1].name
+			if i := slices.IndexFunc(m.entries, func(e *sidebarEntry) bool { return e.info.Name == name }); i >= 0 {
+				m.selectEntry(i)
+			}
 		}
 	case "up":
 		m.selectEntry(m.selected - 1)
@@ -689,7 +714,7 @@ func (m *runningModel) report(err error) {
 
 // interrupt starts a graceful shutdown, or forces it if one is running.
 func (m *runningModel) interrupt() tea.Cmd {
-	m.confirm = nil
+	m.confirm, m.toasts = nil, nil // everything stops now
 	if !m.stopping {
 		m.stopping = true
 		done := m.sess.StopAll()
@@ -913,7 +938,7 @@ func (m *runningModel) render() string {
 	if m.picker != nil {
 		logRows = m.picker.view(m.logWidth(), m.bodyHeight())
 	} else {
-		logRows = m.view().view()
+		logRows = m.drawToasts(m.view().view(), m.logWidth())
 	}
 	if m.panes() {
 		return m.renderPanes(cols, logRows)

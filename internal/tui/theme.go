@@ -40,6 +40,7 @@ type palette struct {
 	accent    color.Color
 	selection color.Color // background of the selected row and keycaps
 	rule      color.Color // separator lines
+	alert     color.Color // background of toasts about failures
 	ansi      [16]color.Color
 }
 
@@ -64,12 +65,14 @@ var terminalTheme = theme{
 		accent:    ansi.BasicColor(ansiCyan),
 		selection: ansi.IndexedColor(236), // #303030
 		rule:      ansi.IndexedColor(23),  // #005f5f
+		alert:     ansi.IndexedColor(52),  // #5f0000
 		ansi:      terminalANSI,
 	},
 	light: palette{
 		accent:    ansi.BasicColor(ansiCyan),
 		selection: ansi.IndexedColor(254), // #e4e4e4
 		rule:      ansi.IndexedColor(152), // #afd7d7
+		alert:     ansi.IndexedColor(224), // #ffd7d7
 		ansi:      terminalANSI,
 	},
 }
@@ -99,6 +102,7 @@ type styles struct {
 	// selBar is the SGR sequence for the selected row's background; empty
 	// when the selected name is shown in reverse video instead.
 	selBar string
+	alert  string // SGR sequence for a failure toast's background, or empty
 
 	// SGR sequences for log lines, which are styled as raw text.
 	system    string // runr's own lines
@@ -162,6 +166,10 @@ func (s *styles) build() {
 		}
 		s.hintGap = " "
 		s.selBar = ansi.Style{}.BackgroundColor(p.selection).String()
+	}
+	s.alert = ""
+	if p.alert != nil && tints {
+		s.alert = ansi.Style{}.BackgroundColor(p.alert).String()
 	}
 
 	s.badge = s.pill(" runr ", p.accent)
