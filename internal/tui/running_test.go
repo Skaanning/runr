@@ -63,7 +63,7 @@ func testConfig() *config.Config {
 func newTestModel(t *testing.T, width, height int) (*runningModel, *fakeSession) {
 	t.Helper()
 	sess := newFakeSession("db", "api", "worker")
-	m := newRunningModel(sess, testConfig(), "backend")
+	m := newRunningModel(sess, testConfig(), []string{"backend"})
 	m.Update(tea.WindowSizeMsg{Width: width, Height: height})
 	return m, sess
 }
@@ -125,7 +125,7 @@ func TestRunningLayout(t *testing.T) {
 		"   ✗ Worker 1   │ Worker error: queue not found",
 		"                │",
 		"────────────────┴───────────────────────────────────────────",
-		" ↑↓ select  tab view  r restart  s stop  / search  q quit",
+		" ↑↓ select  tab view  r restart  s stop  + start  q quit",
 	}
 	got := screen(m)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -146,7 +146,7 @@ func TestRunningSelectionAndSidebarScroll(t *testing.T) {
 		cfg.Projects[name] = &config.Project{Cmd: "x"}
 		sess.procs = append(sess.procs, supervisor.ProcessInfo{Name: name})
 	}
-	m := newRunningModel(sess, cfg, "all")
+	m := newRunningModel(sess, cfg, []string{"all"})
 	m.Update(tea.WindowSizeMsg{Width: 40, Height: 7}) // 3 body rows
 
 	m.Update(key("up")) // stays at the first entry
@@ -570,5 +570,143 @@ func TestRunningSearchKeepsFaintSystemLines(t *testing.T) {
 	// After the highlighted match the faint styling is restored.
 	if !strings.Contains(out, "\x1b[2mstarting: "+matchStyle+"db\x1b[0m\x1b[2m --port 1") {
 		t.Fatalf("render = %q", out)
+	}
+}
+
+func newPickerModel(t *testing.T) (*runningModel, *fakeSession) {
+	t.Helper()
+	dir := t.TempDir()
+	cfg := &config.Config{
+		Projects: map[string]*config.Project{
+			"db":     {Dir: dir, Cmd: "db"},
+			"api":    {Dir: dir, Cmd: "api", DependsOn: []string{"db"}},
+			"worker": {Dir: dir, Cmd: "worker", DependsOn: []string{"db"}, DisplayName: "Worker"},
+			"docs":   {Dir: dir + "/missing", Cmd: "docs"},
+			"cron":   {Dir: dir, Cmd: "cron"},
+		},
+		Groups: map[string][]string{
+			"backend": {"db", "api"},
+			"tools":   {"worker", "docs"},
+			"jobs":    {"worker"},
+			"empty":   {},
+		},
+	}
+	sess := newFakeSession("db", "api")
+	m := newRunningModel(sess, cfg, []string{"backend"})
+	m.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	m.Update(eventsMsg{events: []supervisor.Event{state("db", supervisor.Running), state("api", supervisor.Running)}})
+	return m, sess
+}
+
+func TestPickerItems(t *testing.T) {
+	m, _ := newPickerModel(t)
+	m.Update(key("+"))
+	want := []string{
+		"start",
+		"▸ jobs    group · worker",
+		"tools   group · worker, docs",
+		"cron",
+		"docs",
+		"Worker  needs db",
+	}
+	if got := logRows(m); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("picker:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if got := helpRow(m); got != " type to filter  ↑↓ select  enter start  esc cancel" {
+		t.Fatalf("help = %q", got)
+	}
+
+	typeText(m, "WOR") // matches the display name, ignoring case; q-like keys are text
+	if got := strings.Join(logRows(m)[1:], ","); got != "▸ Worker  needs db" {
+		t.Fatalf("filtered = %q", got)
+	}
+	typeText(m, "x")
+	if got := logRows(m)[1]; got != "no matches" {
+		t.Fatalf("filtered = %q", got)
+	}
+	m.Update(key("esc"))
+	if m.picker != nil || len(logRows(m)) > 0 {
+		t.Fatal("esc did not close the picker")
+	}
+}
+
+func TestPickerStartsProject(t *testing.T) {
+	m, sess := newPickerModel(t)
+	m.Update(key("+"))
+	typeText(m, "wor")
+	m.Update(key("enter"))
+	if got := strings.Join(sess.calls, ","); got != "start worker" {
+		t.Fatalf("calls = %q", got)
+	}
+	if m.picker != nil {
+		t.Fatal("picker still open")
+	}
+	got := screen(m)
+	if !strings.HasPrefix(got[0], " runr · backend + worker ") {
+		t.Fatalf("header = %q", got[0])
+	}
+	if !strings.HasPrefix(got[4], " ▸ ○ Worker") {
+		t.Fatalf("sidebar row = %q, want the new project selected", got[4])
+	}
+}
+
+func TestPickerStartsGroup(t *testing.T) {
+	m, sess := newPickerModel(t)
+	m.Update(key("+"))
+	m.Update(key("enter")) // jobs
+	if got := strings.Join(sess.calls, ","); got != "start jobs" {
+		t.Fatalf("calls = %q", got)
+	}
+	if got := screen(m)[0]; !strings.HasPrefix(got, " runr · backend + jobs ") {
+		t.Fatalf("header = %q", got)
+	}
+	if m.selected != 0 {
+		t.Fatal("starting a group changed the selection")
+	}
+
+	// The project is now in the session; picking it again (e.g. after a crash)
+	// leaves the title alone.
+	m.Update(eventsMsg{events: []supervisor.Event{state("worker", supervisor.Crashed)}})
+	m.Update(key("+"))
+	typeText(m, "worker")
+	if got := logRows(m)[1]; got != "▸ Worker  crashed · needs db" {
+		t.Fatalf("item = %q", got)
+	}
+	m.Update(key("enter"))
+	if got := screen(m)[0]; !strings.HasPrefix(got, " runr · backend + jobs ") {
+		t.Fatalf("header = %q", got)
+	}
+}
+
+func TestPickerMissingDir(t *testing.T) {
+	m, sess := newPickerModel(t)
+	m.Update(key("+"))
+	m.Update(key("down"))
+	m.Update(key("enter")) // tools: docs has no dir
+	if len(sess.calls) != 0 {
+		t.Fatalf("calls = %q", sess.calls)
+	}
+	if got := helpRow(m); !strings.HasPrefix(got, ` cannot start: project "docs": dir: `) {
+		t.Fatalf("help = %q", got)
+	}
+	if !strings.HasPrefix(screen(m)[0], " runr · backend ") {
+		t.Fatalf("header = %q", screen(m)[0])
+	}
+}
+
+func TestPickerCtrlCQuits(t *testing.T) {
+	m, sess := newPickerModel(t)
+	m.Update(key("+"))
+	typeText(m, "q")
+	if sess.stopAll != 0 {
+		t.Fatal("q in the filter quit")
+	}
+	m.Update(key("ctrl+c"))
+	if sess.stopAll != 1 || m.picker != nil {
+		t.Fatalf("stopAll = %d, picker open = %v", sess.stopAll, m.picker != nil)
+	}
+	m.Update(key("+"))
+	if m.picker != nil {
+		t.Fatal("picker opened while stopping")
 	}
 }

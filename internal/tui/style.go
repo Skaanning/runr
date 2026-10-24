@@ -14,6 +14,7 @@ var (
 	yellow = lipgloss.Color("3")
 	red    = lipgloss.Color("1")
 
+	plainStyle = lipgloss.NewStyle()
 	boldStyle  = lipgloss.NewStyle().Bold(true)
 	faintStyle = lipgloss.NewStyle().Faint(true)
 	warnStyle  = lipgloss.NewStyle().Foreground(yellow)

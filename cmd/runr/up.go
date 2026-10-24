@@ -53,7 +53,7 @@ func runTUI(cfg *config.Config, names []string, sigs <-chan os.Signal) error {
 	sup := supervisor.New(cfg, supervisor.Options{})
 	err := sup.Start(names...)
 	if err == nil {
-		err = tui.Run(sup, cfg, strings.Join(names, " + "), sigs)
+		err = tui.Run(sup, cfg, names, sigs)
 	}
 	sup.Close() // kills anything still alive if the TUI failed
 	for range sup.Events() {

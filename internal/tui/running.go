@@ -1,8 +1,11 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,9 +61,9 @@ type sidebarEntry struct {
 // runningModel is the running view: a sidebar of processes next to either
 // their combined log output or the output of the selected process.
 type runningModel struct {
-	sess  Session
-	cfg   *config.Config
-	title string
+	sess   Session
+	cfg    *config.Config
+	titles []string // the groups and projects started, for the header
 
 	entries    []*sidebarEntry
 	byName     map[string]*sidebarEntry
@@ -82,14 +85,16 @@ type runningModel struct {
 	input      textinput.Model
 	matchInfo  string // position of the current match, e.g. "3/17"
 
+	picker *picker // open start-another picker, or nil
+
 	width, height int
 
 	stopping bool
 	forced   bool
 }
 
-func newRunningModel(sess Session, cfg *config.Config, title string) *runningModel {
-	m := &runningModel{sess: sess, cfg: cfg, title: title, byName: map[string]*sidebarEntry{}}
+func newRunningModel(sess Session, cfg *config.Config, names []string) *runningModel {
+	m := &runningModel{sess: sess, cfg: cfg, titles: names, byName: map[string]*sidebarEntry{}}
 	for _, info := range sess.Processes() {
 		m.entry(info.Name).info = info
 	}
@@ -215,11 +220,14 @@ func (m *runningModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case stoppedMsg:
 		return m, tea.Quit
 	default:
-		if m.editing {
-			var cmd tea.Cmd
+		var cmd tea.Cmd
+		switch {
+		case m.picker != nil:
+			m.picker.input, cmd = m.picker.input.Update(msg)
+		case m.editing:
 			m.input, cmd = m.input.Update(msg)
-			return m, cmd
 		}
+		return m, cmd
 	}
 	return m, nil
 }
@@ -250,7 +258,10 @@ func (m *runningModel) handleEvents(events []supervisor.Event) {
 
 func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	m.notice = ""
-	if m.editing {
+	switch {
+	case m.picker != nil:
+		return m.handlePickerKey(msg)
+	case m.editing:
 		return m.handleSearchKey(msg)
 	}
 	switch msg.String() {
@@ -271,6 +282,13 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		} else if e := m.selectedEntry(); e != nil {
 			m.showSingle(e.info.Name)
 		}
+	case "+":
+		if m.stopping {
+			return nil
+		}
+		var cmd tea.Cmd
+		m.picker, cmd = newPicker(m.pickerItems())
+		return cmd
 	case "/":
 		m.editing, m.prevSearch = true, m.search
 		m.input.Reset()
@@ -299,6 +317,101 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.view().scrollBottom()
 	case "f":
 		m.view().toggleFollow()
+	}
+	return nil
+}
+
+// handlePickerKey handles keys while the start-another picker is open.
+func (m *runningModel) handlePickerKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "ctrl+c":
+		m.picker = nil
+		return m.interrupt()
+	case "esc":
+		m.picker = nil
+	case "enter":
+		it, ok := m.picker.selected()
+		if ok {
+			m.picker = nil
+			m.startPicked(it)
+		}
+	default:
+		return m.picker.update(msg)
+	}
+	return nil
+}
+
+// pickerItems lists the groups with something left to start and the
+// projects that are not running or waiting to run.
+func (m *runningModel) pickerItems() []pickerItem {
+	running := func(name string) bool {
+		e := m.byName[name]
+		return e != nil && canStop(e.info.State)
+	}
+	var items []pickerItem
+	for _, g := range slices.Sorted(maps.Keys(m.cfg.Groups)) {
+		resolved, err := m.cfg.Resolve(g)
+		if err != nil || !slices.ContainsFunc(resolved, func(n string) bool { return !running(n) }) {
+			continue
+		}
+		info := "group · " + strings.Join(m.cfg.Groups[g], ", ")
+		items = append(items, pickerItem{name: g, label: g, group: true, info: info})
+	}
+	for _, name := range slices.Sorted(maps.Keys(m.cfg.Projects)) {
+		if running(name) {
+			continue
+		}
+		p := m.cfg.Projects[name]
+		var info []string
+		if e := m.byName[name]; e != nil && e.info.State != supervisor.Pending {
+			info = append(info, e.info.State.String())
+		}
+		if len(p.DependsOn) > 0 {
+			info = append(info, "needs "+strings.Join(p.DependsOn, ", "))
+		}
+		items = append(items, pickerItem{name: name, label: p.Label(name), info: strings.Join(info, " · ")})
+	}
+	return items
+}
+
+// startPicked starts a group or project chosen in the picker, with its
+// dependencies, and adds it to the sidebar and the title.
+func (m *runningModel) startPicked(it pickerItem) {
+	resolved, err := m.cfg.Resolve(it.name)
+	if err == nil {
+		err = m.checkDirs(resolved)
+	}
+	if err == nil {
+		err = m.sess.Start(it.name)
+	}
+	if err != nil {
+		m.report(err)
+		return
+	}
+	known := m.byName[it.name] != nil
+	for _, name := range resolved { // in the supervisor's order: dependencies first
+		m.entry(name)
+	}
+	if !slices.Contains(m.titles, it.name) && (it.group || !known) {
+		m.titles = append(m.titles, it.name)
+	}
+	if !it.group {
+		m.selectEntry(slices.IndexFunc(m.entries, func(e *sidebarEntry) bool { return e.info.Name == it.name }))
+	}
+}
+
+// checkDirs reports projects that would be started but whose working
+// directory is missing, like runr up does before starting anything.
+func (m *runningModel) checkDirs(projects []string) error {
+	warnings, _ := m.cfg.Validate()
+	var missing []string
+	for _, w := range warnings {
+		if w.Field == "dir" && slices.Contains(projects, w.Name) && !canStop(m.entry(w.Name).info.State) {
+			missing = append(missing, w.String())
+		}
+	}
+	if len(missing) > 0 {
+		return errors.New("cannot start: " + strings.Join(missing, "; "))
 	}
 	return nil
 }
@@ -528,7 +641,7 @@ func (m *runningModel) formatSingle(line supervisor.LogLine, width int) []string
 func (m *runningModel) View() tea.View {
 	v := tea.NewView(m.render())
 	v.AltScreen = true
-	v.WindowTitle = "runr · " + m.title
+	v.WindowTitle = "runr · " + strings.Join(m.titles, " + ")
 	return v
 }
 
@@ -540,7 +653,12 @@ func (m *runningModel) render() string {
 		return "terminal too small"
 	}
 	sw := m.sidebarWidth()
-	logRows := m.view().view()
+	var logRows []string
+	if m.picker != nil {
+		logRows = m.picker.view(m.width-sw-2, m.bodyHeight())
+	} else {
+		logRows = m.view().view()
+	}
 
 	var b strings.Builder
 	b.WriteString(m.header())
@@ -562,7 +680,7 @@ func (m *runningModel) render() string {
 }
 
 func (m *runningModel) header() string {
-	left := " " + boldStyle.Render("runr") + " · " + m.title
+	left := " " + boldStyle.Render("runr") + " · " + strings.Join(m.titles, " + ")
 	name := "combined"
 	if m.single != nil {
 		e := m.entry(m.singleFor)
@@ -632,6 +750,11 @@ func (m *runningModel) help() string {
 	if m.notice != "" {
 		return ansi.Truncate(" "+warnStyle.Render(m.notice), m.width, "…")
 	}
+	if m.picker != nil {
+		return ansi.Truncate(" "+hintList([][2]string{
+			{"type", "to filter"}, {"↑↓", "select"}, {"enter", "start"}, {"esc", "cancel"},
+		}), m.width, "…")
+	}
 	if m.editing {
 		hints := boldStyle.Render("enter") + " " + faintStyle.Render("search") + "  " +
 			boldStyle.Render("esc") + " " + faintStyle.Render("cancel")
@@ -646,7 +769,7 @@ func (m *runningModel) help() string {
 	}
 	// Hints are dropped from the end of the middle when narrow.
 	keys := [][2]string{
-		{"↑↓", "select"}, {"tab", view}, {"r", "restart"}, {"s", stop}, {"/", "search"},
+		{"↑↓", "select"}, {"tab", view}, {"r", "restart"}, {"s", stop}, {"+", "start"}, {"/", "search"},
 		{"pgup/pgdn", "scroll"}, {"g/G", "top/bottom"}, {"f", "follow"}, {"q", "quit"},
 	}
 	var parts []string
@@ -677,11 +800,20 @@ func pad(s string, width int) string {
 	return s
 }
 
+// hintList renders key hints like "enter start  esc cancel".
+func hintList(keys [][2]string) string {
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = boldStyle.Render(k[0]) + " " + faintStyle.Render(k[1])
+	}
+	return strings.Join(parts, "  ")
+}
+
 // Run shows the running view until the user quits and every process has
-// stopped. title names what was started, e.g. "backend + web". Signals
-// received on sigs are handled like Ctrl+C.
-func Run(sess Session, cfg *config.Config, title string, sigs <-chan os.Signal) error {
-	p := tea.NewProgram(newRunningModel(sess, cfg, title), tea.WithoutSignalHandler())
+// stopped. names are the groups and projects that were started, shown in
+// the header. Signals received on sigs are handled like Ctrl+C.
+func Run(sess Session, cfg *config.Config, names []string, sigs <-chan os.Signal) error {
+	p := tea.NewProgram(newRunningModel(sess, cfg, names), tea.WithoutSignalHandler())
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
