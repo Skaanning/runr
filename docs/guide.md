@@ -224,6 +224,8 @@ branch. On terminals shorter than 20 rows the `runr` mark makes room for the lis
 | `t` | Pick a color theme; the launcher previews the theme under the cursor, `enter` saves it, `esc` keeps the old one |
 | `q`, `esc` | Quit |
 
+![The new-project form, filled in](images/new-project.png)
+
 In forms: `tab`/`enter` (or `↑↓`) next field, `shift+tab` back, `←→` and `space` pick
 dependencies or group members, `↑↓` on the color cycles through the named colors, `enter` in
 the environment starts a new line. `ctrl+s` saves from any field, `esc` cancels. Errors show

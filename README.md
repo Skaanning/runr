@@ -31,6 +31,11 @@ The launcher, where you pick what to start and manage projects and groups:
 
 ![The launcher](docs/images/launcher.png)
 
+Adding a project: the form checks the directory and env file as you type and previews the
+project's row:
+
+![The new-project form](docs/images/new-project.png)
+
 Switching a project's git branch from the running view:
 
 ![The branch picker](docs/images/branch-picker.png)
