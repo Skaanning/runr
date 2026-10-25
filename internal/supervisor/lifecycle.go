@@ -42,6 +42,9 @@ func (s *Supervisor) spawn(m *managed) {
 
 	m.info.Pid = m.proc.Pid()
 	gen, p := m.gen, m.proc
+	if ps := knownPorts(m); len(ps) > 0 {
+		s.checkPorts(m, gen, p, ps)
+	}
 	s.running.Add(1)
 	go func() {
 		<-p.Done()

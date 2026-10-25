@@ -2,7 +2,8 @@ package supervisor
 
 import "sync"
 
-// Event is sent on Supervisor.Events: either a StateEvent or a LineEvent.
+// Event is sent on Supervisor.Events: a StateEvent, LineEvent or
+// WarningEvent.
 type Event interface {
 	isEvent()
 }
@@ -17,8 +18,16 @@ type LineEvent struct {
 	Line LogLine
 }
 
-func (StateEvent) isEvent() {}
-func (LineEvent) isEvent()  {}
+// WarningEvent reports a problem worth pointing out that doesn't stop the
+// project, e.g. that a port it uses is taken. Its text is also in the log.
+type WarningEvent struct {
+	Project string
+	Text    string
+}
+
+func (StateEvent) isEvent()   {}
+func (LineEvent) isEvent()    {}
+func (WarningEvent) isEvent() {}
 
 // eventQueue decouples producers from the consumer: push never blocks, and a
 // pump goroutine delivers events in order on out.

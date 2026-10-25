@@ -293,7 +293,8 @@ Below the session's processes, under `not running`, the `processes` pane lists t
 registered projects, dimmed; select one and press `s` or `enter` to start it (with its
 dependencies). Turn that list off with
 `show_all = false` in `[settings]`, or toggle it for a session with `a`. When something
-crashes or is blocked, a toast in the corner of the output says so for 5 seconds.
+crashes or is blocked, or a port it needs is taken, a toast in the corner of the output says
+so for 5 seconds.
 
 | Icon | State |
 |---|---|
@@ -314,7 +315,8 @@ crashes or is blocked, a toast in the corner of the output says so for 5 seconds
 | `enter` | Start the selected project if it's one of those not running |
 | `+` | Start a group, or another project when the sidebar doesn't list them all (type to filter, `enter` to start, `esc` to close) |
 | `a` | Show or hide the projects that aren't running |
-| `!` | Select the project of the newest crash toast |
+| `!` | Select the project of the newest toast |
+| `o` | Open the selected process's port (`http://localhost:<port>`) in the browser; asks which one when it listens on several |
 | `b` | Switch the selected project's git repository to another branch (see [Git](#git)) |
 | `p` | Pull the selected project's git repository (`git pull --ff-only`), after confirming |
 | `/` | Search the output; `enter` jumps to the newest match, `esc` cancels |
@@ -407,7 +409,12 @@ is left to you:
 - runr never restarts a process on its own.
 - **Ports** shown in the `processes` pane are the TCP ports the project's processes listen
   on, including ones opened by programs it started (e.g. `npm run dev` → `node`). They are
-  checked every 2 seconds. On macOS this needs `lsof` (installed by default).
+  checked every 2 seconds. On macOS this needs `lsof` (installed by default). Press `o` to
+  open one in the browser.
+- **Port conflicts.** When a project starts, runr checks the ports it is known to use — its
+  `ready_port`, the port of its `ready_url`, and ports it listened on earlier in the
+  session — and if another program already listens there, says so in its log and in a toast
+  (`port 3000 is in use by pid 4123 (python3)`). The project is started anyway.
 
 ## Troubleshooting
 

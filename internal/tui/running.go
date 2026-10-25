@@ -31,6 +31,7 @@ type Session interface {
 	KillAll()
 	Note(name string, lines ...string) error
 	Pids() map[string][]int // process trees of the live processes, by project
+	RememberPorts(ports map[string][]int)
 }
 
 const (
@@ -346,7 +347,19 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 	case portsMsg:
 		cmd := m.ports.update(msg, m.alive() > 0 && !m.stopping)
 		m.layout() // the second lines may have changed width
+		if msg.owner == m.ports && len(msg.ports) > 0 {
+			// So that a later start warns when another process took one.
+			sess, seen := m.sess, msg.ports
+			cmd = tea.Batch(cmd, func() tea.Msg { sess.RememberPorts(seen); return nil })
+		}
 		return cmd
+	case openedMsg:
+		if msg.owner == m {
+			m.notice = "opened " + msg.url
+			if msg.err != nil {
+				m.notice = "can't open " + msg.url + ": " + msg.err.Error()
+			}
+		}
 	case portTickMsg:
 		if !m.stopping {
 			return m.ports.update(msg, true)
@@ -401,6 +414,12 @@ func (m *runningModel) handleEvents(events []supervisor.Event) tea.Cmd {
 			states = true
 			if t, ok := m.newToast(prev, e.Info); ok {
 				m.addToast(t)
+				toasts = true
+			}
+		case supervisor.WarningEvent:
+			m.entry(e.Project)
+			if !m.stopping {
+				m.addToast(toast{name: e.Project, warn: true, what: e.Text, until: m.now().Add(toastFor)})
 				toasts = true
 			}
 		case supervisor.LineEvent:
@@ -511,6 +530,8 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		return m.openBranches()
 	case "p":
 		return m.openPull()
+	case "o":
+		return m.openPorts()
 	case "r":
 		m.restart()
 	case "s":
@@ -1425,6 +1446,9 @@ func (m *runningModel) help() string {
 	}
 	if m.showAll {
 		keys[len(keys)-1][1] = "group" // projects start from the sidebar
+	}
+	if e := m.selectedEntry(); e != nil && m.selectedIdle() == "" && e.info.State.Alive() && len(m.ports.get(e.info.Name)) > 0 {
+		keys = append(keys, [2]string{"o", "open"})
 	}
 	if name := m.selectedName(); name != "" {
 		if _, ok := m.git.get(name); ok {

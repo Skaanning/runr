@@ -203,3 +203,145 @@ func TestRunningRefreshesPortsOnStateChange(t *testing.T) {
 		t.Error("refresh after a log line")
 	}
 }
+
+// fakeBrowser replaces openURL for a test and records the URLs opened.
+func fakeBrowser(t *testing.T, err error) *[]string {
+	t.Helper()
+	var opened []string
+	old := openURL
+	openURL = func(url string) error { opened = append(opened, url); return err }
+	t.Cleanup(func() { openURL = old })
+	return &opened
+}
+
+// pressOpen presses o and handles the resulting messages.
+func pressOpen(t *testing.T, m *runningModel, k string) {
+	t.Helper()
+	_, cmd := m.Update(key(k))
+	if cmd == nil {
+		return
+	}
+	if msg, ok := cmd().(openedMsg); ok {
+		m.Update(msg)
+	}
+}
+
+func TestOpenPort(t *testing.T) {
+	opened := fakeBrowser(t, nil)
+	m, sess := newTestModel(t, 100, 14)
+	m.Update(eventsMsg{events: []supervisor.Event{state("db", supervisor.Running), state("api", supervisor.Running)}})
+	withPorts(t, m, sess, map[string][]int{"db": {1}, "api": {2}},
+		ports.Listener{Pid: 1, Port: 5432}, ports.Listener{Pid: 2, Port: 8080}, ports.Listener{Pid: 2, Port: 9229})
+
+	// One port: opened right away.
+	if got := helpRow(m); !strings.Contains(got, "o  open") {
+		t.Errorf("help = %q", got)
+	}
+	pressOpen(t, m, "o")
+	if !slices.Equal(*opened, []string{"http://localhost:5432"}) || m.notice != "opened http://localhost:5432" {
+		t.Fatalf("opened %q, notice %q", *opened, m.notice)
+	}
+
+	// Several: a picker first.
+	m.Update(key("down"))
+	pressOpen(t, m, "o")
+	if m.picker == nil {
+		t.Fatalf("no picker; notice %q", m.notice)
+	}
+	screenHas(t, screen(m), "─ open · api ─", " 2 ports ", ":8080", ":9229", "http://localhost:9229")
+	m.Update(key("down"))
+	pressOpen(t, m, "enter")
+	if m.picker != nil || !slices.Equal(*opened, []string{"http://localhost:5432", "http://localhost:9229"}) {
+		t.Errorf("picker %v, opened %q", m.picker != nil, *opened)
+	}
+
+	// No ports: a notice.
+	m.Update(key("down"))
+	pressOpen(t, m, "o")
+	if m.notice != "Worker isn't listening on a port" || len(*opened) != 2 {
+		t.Errorf("notice %q, opened %q", m.notice, *opened)
+	}
+	if got := helpRow(m); strings.Contains(got, "o  open") {
+		t.Errorf("help offers open without ports: %q", got)
+	}
+}
+
+func TestOpenPortFails(t *testing.T) {
+	fakeBrowser(t, errors.New(`exec: "xdg-open": executable file not found in $PATH`))
+	m, sess := newTestModel(t, 100, 14)
+	m.Update(eventsMsg{events: []supervisor.Event{state("db", supervisor.Running)}})
+	withPorts(t, m, sess, map[string][]int{"db": {1}}, ports.Listener{Pid: 1, Port: 5432})
+	pressOpen(t, m, "o")
+	if want := `can't open http://localhost:5432: exec: "xdg-open": executable file not found in $PATH`; m.notice != want {
+		t.Errorf("notice = %q", m.notice)
+	}
+	// Ports of a process that ended aren't opened.
+	m.Update(eventsMsg{events: []supervisor.Event{state("db", supervisor.Stopped)}})
+	pressOpen(t, m, "o")
+	if m.notice != "db isn't listening on a port" {
+		t.Errorf("notice = %q", m.notice)
+	}
+}
+
+func TestRunningRemembersPorts(t *testing.T) {
+	m, sess := newTestModel(t, 100, 12) // nothing running: no tick to wait for
+	sess.pids = map[string][]int{"db": {1}}
+	m.ports.busy = false
+	m.ports.lookup = (&fakeLookup{listeners: []ports.Listener{{Pid: 1, Port: 5432}}}).lookup
+	_, cmd := m.Update(m.ports.refresh()())
+	runAll(cmd)
+	if want := map[string][]int{"db": {5432}}; !reflect.DeepEqual(sess.seen, want) {
+		t.Errorf("remembered %v, want %v", sess.seen, want)
+	}
+}
+
+// runAll runs cmd and the commands it batches, discarding their messages.
+func runAll(cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	if batch, ok := cmd().(tea.BatchMsg); ok {
+		for _, c := range batch {
+			runAll(c)
+		}
+	}
+}
+
+func TestWarningToast(t *testing.T) {
+	m, _ := newTestModel(t, 96, 16)
+	m.Update(eventsMsg{events: []supervisor.Event{
+		state("api", supervisor.Running),
+		supervisor.WarningEvent{Project: "api", Text: "port 8080 is in use by pid 1234 (node)"},
+	}})
+	want := []string{
+		"╭──────────────────────────────────────────────╮",
+		"│ ! api port 8080 is in use by pid 1234 (node) │",
+		"│   ! select it                                │",
+		"╰──────────────────────────────────────────────╯",
+	}
+	if got := toastText(m); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("toast:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if !strings.Contains(m.render(), m.st.warn.Render(want[0])) {
+		t.Error("a warning's border should be yellow")
+	}
+	m.Update(key("!"))
+	m.Update(supervisor.WarningEvent{}) // not a message the model handles
+	m.Update(eventsMsg{events: []supervisor.Event{supervisor.WarningEvent{Project: "api", Text: "port 8080 is in use"}}})
+	if got := toastText(m); len(got) != 4 || !strings.Contains(got[2], "tab see its log") {
+		t.Errorf("toast for the selected project:\n%s", strings.Join(got, "\n"))
+	}
+}
+
+func TestWarningToastKeptOnCrash(t *testing.T) {
+	m, _ := newTestModel(t, 96, 16)
+	m.Update(eventsMsg{events: []supervisor.Event{
+		state("api", supervisor.Running),
+		supervisor.WarningEvent{Project: "api", Text: "port 8080 is in use"},
+		crash("api", 1),
+	}})
+	got := strings.Join(toastText(m), "\n")
+	if !strings.Contains(got, "! api port 8080 is in use") || !strings.Contains(got, "✗ api crashed · exit code 1") {
+		t.Errorf("toasts:\n%s", got)
+	}
+}

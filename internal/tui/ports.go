@@ -129,3 +129,53 @@ func portsLabel(ps []int) string {
 	}
 	return label
 }
+
+// openedMsg reports that the browser was asked to open url.
+type openedMsg struct {
+	owner any
+	url   string
+	err   error
+}
+
+// openPorts opens the selected process's port in the browser, after a
+// picker when it listens on several.
+func (m *runningModel) openPorts() tea.Cmd {
+	e := m.selectedEntry()
+	if e == nil || m.selectedIdle() != "" || m.stopping {
+		return nil
+	}
+	var ps []int
+	if e.info.State.Alive() {
+		ps = m.ports.get(e.info.Name)
+	}
+	switch len(ps) {
+	case 0:
+		m.notice = e.label + " isn't listening on a port"
+		return nil
+	case 1:
+		return m.openPort(ps[0])
+	}
+	items := make([]pickerItem, len(ps))
+	for i, p := range ps {
+		items[i] = pickerItem{name: strconv.Itoa(p), label: ":" + strconv.Itoa(p), info: portURL(p)}
+	}
+	var cmd tea.Cmd
+	m.picker, cmd = newPicker(m.st, &picker{
+		title: "open · " + e.label, action: "open", noun: "port", items: items,
+		pick: func(it pickerItem) tea.Cmd {
+			p, _ := strconv.Atoi(it.name)
+			return m.openPort(p)
+		},
+	})
+	return cmd
+}
+
+// openPort opens a port's page in the background.
+func (m *runningModel) openPort(port int) tea.Cmd {
+	url := portURL(port)
+	return func() tea.Msg { return openedMsg{owner: m, url: url, err: openURL(url)} }
+}
+
+func portURL(port int) string {
+	return "http://localhost:" + strconv.Itoa(port)
+}

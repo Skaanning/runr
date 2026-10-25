@@ -60,6 +60,8 @@ type managed struct {
 	probe   *probe         // ready_port or ready_url; nil if not set
 	info    ProcessInfo
 
+	seenPorts map[int]bool // ports it listened on earlier in the session
+
 	proc           *proc.Process
 	gen            int // incremented on every start; stale messages are ignored
 	stopRequested  bool
@@ -180,6 +182,26 @@ func (s *Supervisor) Pids() map[string][]int {
 		}
 	}
 	return out
+}
+
+// RememberPorts records ports the projects were seen listening on (by
+// name), so that later starts warn when another process has taken one.
+func (s *Supervisor) RememberPorts(ports map[string][]int) {
+	_ = s.call(func() error {
+		for name, ps := range ports {
+			m := s.procs[name]
+			if m == nil {
+				continue
+			}
+			if m.seenPorts == nil {
+				m.seenPorts = map[int]bool{}
+			}
+			for _, p := range ps {
+				m.seenPorts[p] = true
+			}
+		}
+		return nil
+	})
 }
 
 // Start starts the given projects and groups, plus all their dependencies.
@@ -385,6 +407,12 @@ func (s *Supervisor) setState(m *managed, state State) {
 func (s *Supervisor) system(m *managed, format string, args ...any) {
 	line := s.logs.Append(m.name, System, fmt.Sprintf(format, args...))
 	s.events.push(LineEvent{Line: line})
+}
+
+// warn appends a runr-generated warning and reports it with a WarningEvent.
+func (s *Supervisor) warn(m *managed, text string) {
+	s.system(m, "%s", text)
+	s.events.push(WarningEvent{Project: m.name, Text: text})
 }
 
 // systemError appends a runr-generated line about a failure.

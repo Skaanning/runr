@@ -22,23 +22,27 @@ const testTimeout = 300 * time.Millisecond
 
 // recorder consumes a supervisor's events and records state history.
 type recorder struct {
-	mu      sync.Mutex
-	history map[string][]State
-	latest  map[string]ProcessInfo
-	closed  chan struct{}
+	mu       sync.Mutex
+	history  map[string][]State
+	latest   map[string]ProcessInfo
+	warnings map[string][]string
+	closed   chan struct{}
 }
 
 func record(s *Supervisor) *recorder {
-	r := &recorder{history: map[string][]State{}, latest: map[string]ProcessInfo{}, closed: make(chan struct{})}
+	r := &recorder{history: map[string][]State{}, latest: map[string]ProcessInfo{}, warnings: map[string][]string{}, closed: make(chan struct{})}
 	go func() {
 		defer close(r.closed)
 		for e := range s.Events() {
-			if se, ok := e.(StateEvent); ok {
-				r.mu.Lock()
-				r.history[se.Info.Name] = append(r.history[se.Info.Name], se.Info.State)
-				r.latest[se.Info.Name] = se.Info
-				r.mu.Unlock()
+			r.mu.Lock()
+			switch e := e.(type) {
+			case StateEvent:
+				r.history[e.Info.Name] = append(r.history[e.Info.Name], e.Info.State)
+				r.latest[e.Info.Name] = e.Info
+			case WarningEvent:
+				r.warnings[e.Project] = append(r.warnings[e.Project], e.Text)
 			}
+			r.mu.Unlock()
 		}
 	}()
 	return r
@@ -48,6 +52,12 @@ func (r *recorder) states(name string) []State {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]State(nil), r.history[name]...)
+}
+
+func (r *recorder) warningsOf(name string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.warnings[name]...)
 }
 
 // waitState waits until the project's latest state is want and returns its info.
