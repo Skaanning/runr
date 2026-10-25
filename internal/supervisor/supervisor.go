@@ -28,6 +28,16 @@ type Options struct {
 	// LogDir, if set, is an existing directory where each project's lines
 	// are appended to <project>.log (see logfile.Writer).
 	LogDir string
+	// Tracker, if set, is told about every process started and ended
+	// (sessions.Recorder), on the loop goroutine.
+	Tracker Tracker
+}
+
+// Tracker records the session's live processes, so that a later runr can
+// find those left running if this one dies (see sessions.Recorder).
+type Tracker interface {
+	Spawned(project string, pid int, command string)
+	Exited(project string)
 }
 
 // Supervisor runs projects from a config, tracks their state and collects
@@ -46,6 +56,7 @@ type Supervisor struct {
 	closed    chan struct{}
 	ctx       context.Context // cancelled by Close; ends readiness probes
 	files     *logfile.Writer // persistent logs (Options.LogDir); nil if off
+	tracker   Tracker         // Options.Tracker; nil if none
 	cancel    context.CancelFunc
 	closeOnce sync.Once
 	events    *eventQueue
@@ -101,6 +112,7 @@ func New(cfg *config.Config, opts Options) *Supervisor {
 		closed:  make(chan struct{}),
 		events:  newEventQueue(),
 		procs:   map[string]*managed{},
+		tracker: opts.Tracker,
 	}
 	if opts.LogDir != "" {
 		s.files = logfile.NewWriter(opts.LogDir, s.logFileFailed)

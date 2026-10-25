@@ -57,21 +57,31 @@ func (a *appModel) View() tea.View {
 
 // RunLauncher shows the launcher, and the running view once the user starts
 // something, until the user quits. Changes made in the launcher's forms are
-// written with save. git reads the projects' git state; nil hides it.
+// written with save. git reads the projects' git state; nil hides it. If
+// left is set, the launcher first asks whether to kill those processes.
 // Signals received on sigs are handled like Ctrl+C.
-func RunLauncher(cfg *config.Config, start StartFunc, save SaveFunc, git GitReader, sigs <-chan os.Signal) error {
+func RunLauncher(cfg *config.Config, start StartFunc, save SaveFunc, git GitReader, left *Leftovers, sigs <-chan os.Signal) error {
 	launcher := newLauncherModel(cfg, save, settingsStyles(cfg.Settings))
 	launcher.git = newGitTracker(git)
+	if left != nil {
+		launcher.askLeftovers(left)
+	}
 	return run(&appModel{cfg: cfg, start: start, launcher: launcher}, sigs)
 }
 
 // Run shows the running view until the user quits and every process has
-// stopped. names are the groups and projects that were started, shown in
-// the header. git reads the projects' git state; nil hides it. Signals
-// received on sigs are handled like Ctrl+C.
-func Run(sess Session, cfg *config.Config, names []string, git GitReader, sigs <-chan os.Signal) error {
+// stopped. names are the groups and projects of the session, shown in the
+// header. git reads the projects' git state; nil hides it. Signals received
+// on sigs are handled like Ctrl+C.
+//
+// If left is set, sess has not been started yet: the view first asks
+// whether to kill those processes, and then starts names.
+func Run(sess Session, cfg *config.Config, names []string, git GitReader, left *Leftovers, sigs <-chan os.Signal) error {
 	m := newRunningModel(sess, cfg, names, settingsStyles(cfg.Settings))
 	m.git = newGitTracker(git)
+	if left != nil {
+		m.askLeftovers(left)
+	}
 	return run(m, sigs)
 }
 

@@ -60,6 +60,8 @@ type question struct {
 	prompt string
 	action string // what enter does, e.g. "pull"
 	yes    func() tea.Cmd
+	no     func() tea.Cmd // what esc does, if more than closing the question
+	cancel string         // the hint for esc; "cancel" if empty
 }
 
 // target returns the repository of a project (shown as label) for a git
@@ -353,7 +355,11 @@ func pullQuestion(msg pullCheckMsg, label string, others []string, yes func() te
 // questionLine renders an open question as the help line. The hints stay
 // visible; the question is cut short when narrow.
 func questionLine(st *styles, q *question, width int) string {
-	hints := st.hintGap + st.hintList([][2]string{{"enter", q.action}, {"esc", "cancel"}})
+	cancel := q.cancel
+	if cancel == "" {
+		cancel = "cancel"
+	}
+	hints := st.hintGap + st.hintList([][2]string{{"enter", q.action}, {"esc", cancel}})
 	w := max(width-ansi.StringWidth(hints)-1, 1)
 	return ansi.Truncate(" "+st.bold.Render(ansi.Truncate(q.prompt, w, "…"))+hints, width, "…")
 }
@@ -363,6 +369,9 @@ func questionLine(st *styles, q *question, width int) string {
 func (q *question) answer(key string) (done bool, cmd tea.Cmd) {
 	switch key {
 	case "esc", "n", "q":
+		if q.no != nil {
+			return true, q.no()
+		}
 		return true, nil
 	case "enter", "y":
 		return true, q.yes()

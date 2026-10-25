@@ -13,6 +13,7 @@ import (
 
 	"github.com/Skaanning/runr/internal/config"
 	"github.com/Skaanning/runr/internal/gitinfo"
+	"github.com/Skaanning/runr/internal/sessions"
 	"github.com/Skaanning/runr/internal/supervisor"
 	"github.com/Skaanning/runr/internal/tui"
 )
@@ -40,6 +41,13 @@ func newUpCmd() *cobra.Command {
 				return err
 			}
 			opts := supervisor.Options{LogDir: dir}
+			// Processes left over by a runr that was killed are offered to
+			// be stopped first; this session's are recorded for the same
+			// purpose.
+			sessDir := sessionsDir()
+			orphans := findLeftovers(sessDir)
+			rec := track(sessDir, &opts)
+			defer rec.Close() // runs after everything has stopped
 
 			sigs := make(chan os.Signal, 2)
 			signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -47,9 +55,12 @@ func newUpCmd() *cobra.Command {
 			// The TUI needs a terminal for both keys and drawing; otherwise
 			// (e.g. piped to a file) behave like --plain.
 			if plain || !isTerminal(cmd.InOrStdin()) || !isTerminal(cmd.OutOrStdout()) {
+				if len(orphans) > 0 {
+					fmt.Fprintf(cmd.ErrOrStderr(), "runr: %s; left running (runr cleanup stops them)\n", sessions.Summary(orphans))
+				}
 				return runPlain(cmd.OutOrStdout(), s.cfg, opts, args, projects, sigs, colorsFor(cmd.OutOrStdout()))
 			}
-			return runTUI(cmd.ErrOrStderr(), s.cfg, opts, args, sigs)
+			return runTUI(cmd.ErrOrStderr(), s.cfg, opts, args, leftoversFor(orphans, s.cfg.Settings.ShutdownTimeout()), sigs)
 		},
 	}
 	cmd.Flags().StringVar(&logDirFlag, "log-dir", "", "append each project's output to <dir>/<project>.log (overrides settings.log_dir)")
@@ -63,11 +74,17 @@ func newUpCmd() *cobra.Command {
 // runTUI starts the projects and shows the running view until the user
 // quits. Projects that ended crashed or blocked are listed on stderr
 // afterwards, since the TUI's screen is gone by then.
-func runTUI(stderr io.Writer, cfg *config.Config, opts supervisor.Options, names []string, sigs <-chan os.Signal) error {
+//
+// With left set, the projects start once the question about those
+// leftover processes is answered.
+func runTUI(stderr io.Writer, cfg *config.Config, opts supervisor.Options, names []string, left *tui.Leftovers, sigs <-chan os.Signal) error {
 	sup := supervisor.New(cfg, opts)
-	err := sup.Start(names...)
+	var err error
+	if left == nil {
+		err = sup.Start(names...)
+	}
 	if err == nil {
-		err = tui.Run(sup, cfg, names, gitReader(), sigs)
+		err = tui.Run(sup, cfg, names, gitReader(), left, sigs)
 	}
 	finish(stderr, sup)
 	return err

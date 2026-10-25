@@ -522,3 +522,58 @@ func countLines(lines []string, line string) int {
 	}
 	return n
 }
+
+// fakeTracker records Tracker calls.
+type fakeTracker struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (f *fakeTracker) Spawned(project string, pid int, command string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "spawned "+project+" "+command+" "+strconv.FormatBool(pid > 0))
+}
+
+func (f *fakeTracker) Exited(project string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "exited "+project)
+}
+
+func (f *fakeTracker) get() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.calls)
+}
+
+func TestTracker(t *testing.T) {
+	cfg := config.New()
+	cfg.Settings.ShutdownTimeoutValue.Duration = testTimeout
+	cfg.Projects["api"] = &config.Project{Dir: t.TempDir(), Cmd: "sleep 30"}
+	cfg.Projects["bad"] = &config.Project{Dir: "/nonexistent/dir", Cmd: "true"}
+	tr := &fakeTracker{}
+	s := New(cfg, Options{BaseEnv: []string{"PATH=" + os.Getenv("PATH")}, Tracker: tr})
+	r := record(s)
+	t.Cleanup(s.Close)
+	if err := s.Start("api", "bad"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "api", Running)
+	r.waitState(t, "bad", Crashed) // never started: not tracked
+	if err := s.Restart("api"); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); len(tr.get()) < 3 && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
+	r.waitState(t, "api", Running)
+	if err := s.Stop("api"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "api", Stopped)
+	want := []string{"spawned api sleep 30 true", "exited api", "spawned api sleep 30 true", "exited api"}
+	if got := tr.get(); !slices.Equal(got, want) {
+		t.Errorf("calls = %q, want %q", got, want)
+	}
+}

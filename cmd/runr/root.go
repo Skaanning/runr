@@ -54,6 +54,7 @@ func newRootCmd() *cobra.Command {
 		newLsCmd(),
 		newGroupCmd(),
 		newThemeCmd(),
+		newCleanupCmd(),
 	)
 	return root
 }
@@ -76,6 +77,13 @@ func runLauncher(cmd *cobra.Command) error {
 	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer signal.Stop(sigs)
 
+	// Processes left over by a runr that was killed are offered to be
+	// stopped first; this session's are recorded for the same purpose.
+	sessDir := sessionsDir()
+	left := leftoversFor(findLeftovers(sessDir), s.cfg.Settings.ShutdownTimeout())
+	var opts supervisor.Options
+	rec := track(sessDir, &opts)
+
 	var sup *supervisor.Supervisor
 	start := func(names []string) (tui.Session, error) {
 		if _, err := prepareUp(s.cfg, names, io.Discard); err != nil {
@@ -85,7 +93,8 @@ func runLauncher(cmd *cobra.Command) error {
 		if err != nil {
 			return nil, err
 		}
-		sup = supervisor.New(s.cfg, supervisor.Options{LogDir: dir})
+		opts.LogDir = dir
+		sup = supervisor.New(s.cfg, opts)
 		if err := sup.Start(names...); err != nil {
 			sup.Close()
 			sup = nil
@@ -99,9 +108,10 @@ func runLauncher(cmd *cobra.Command) error {
 		_, err := (&store{path: s.path, cfg: c}).save()
 		return err
 	}
-	err = tui.RunLauncher(s.cfg, start, save, gitReader(), sigs)
+	err = tui.RunLauncher(s.cfg, start, save, gitReader(), left, sigs)
 	if sup != nil {
 		finish(cmd.ErrOrStderr(), sup)
 	}
+	rec.Close() // everything has stopped
 	return err
 }

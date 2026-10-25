@@ -46,6 +46,7 @@ type launcherModel struct {
 	git       *gitTracker // nil: git is not installed
 	gitStale  bool        // the config or a repository changed; refresh the git state
 	gitAction string      // git action running in the background, e.g. "git switch"
+	cleaning  bool        // leftover processes are being stopped
 
 	width, height int
 	now           func() time.Time // for the clock
@@ -137,6 +138,11 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pulled(msg)
 		}
 		return m, nil
+	case leftoversMsg:
+		if msg.owner == m {
+			m.notice, m.cleaning = msg.report, false
+		}
+		return m, nil
 	}
 	switch {
 	case m.form != nil:
@@ -184,6 +190,10 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if m.gitAction != "" {
 				m.notice = m.gitAction + " is still running"
+				return m, nil
+			}
+			if m.cleaning {
+				m.notice = "the leftover processes are still being stopped"
 				return m, nil
 			}
 			names := m.selection()

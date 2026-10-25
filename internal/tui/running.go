@@ -354,6 +354,14 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 			cmd = tea.Batch(cmd, func() tea.Msg { sess.RememberPorts(seen); return nil })
 		}
 		return cmd
+	case leftoversMsg:
+		if msg.owner == m {
+			m.notice = msg.report
+			// The session starts once the leftovers are dealt with.
+			if err := m.sess.Start(m.titles...); err != nil {
+				m.notice = "can't start: " + oneLine(err.Error())
+			}
+		}
 	case savedLogMsg:
 		if msg.owner == m {
 			m.notice = savedNotice(msg)

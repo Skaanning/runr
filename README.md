@@ -92,6 +92,7 @@ complete config file.
 | `runr group delete <group>` | Delete a group (its projects are kept) |
 | `runr group ls` | List groups |
 | `runr theme [name]` | List the color themes (the current one marked with `*`), or set one |
+| `runr cleanup [--yes]` | Stop processes left running by a runr that was killed (Linux, macOS); asks first unless `--yes` |
 | `runr completion <shell>` | Shell completion script (bash, zsh, fish, powershell), completes project and group names |
 
 Flags for `add` and `edit`:
@@ -432,6 +433,16 @@ is left to you:
   the background, runr stops that too (on Unix it gets SIGTERM and `shutdown_timeout`
   first). Programs that fully detach themselves (daemons) are not affected.
 - runr never restarts a process on its own.
+- **If runr itself is killed** (`kill -9`, a crash, a closed terminal that doesn't send
+  SIGHUP), the programs it started keep running on Linux and macOS. runr keeps a small file
+  per session listing them (in `~/.local/state/runr/sessions`, or `$XDG_STATE_HOME`; on
+  macOS `~/Library/Caches/runr/sessions`), so the next `runr` or `runr up` asks first:
+  `Kill 2 processes left over from a previous runr session? api (pid 4123), db (pid 4120)`.
+  `enter`/`y` stops them like a normal shutdown, `esc`/`n` leaves them running and doesn't
+  ask again. `runr up` starts your projects only after you've answered; with plain output it
+  just prints a warning. `runr cleanup` does the same from the command line. Process start
+  times are checked, so a process that merely got the same pid is never touched. On
+  Windows, programs end with runr anyway.
 - **Ports** shown in the `processes` pane are the TCP ports the project's processes listen
   on, including ones opened by programs it started (e.g. `npm run dev` → `node`). They are
   checked every 2 seconds. On macOS this needs `lsof` (installed by default). Press `o` to

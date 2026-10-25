@@ -41,6 +41,9 @@ func (s *Supervisor) spawn(m *managed) {
 	}
 
 	m.info.Pid = m.proc.Pid()
+	if s.tracker != nil {
+		s.tracker.Spawned(m.name, m.info.Pid, m.project.Cmd)
+	}
 	gen, p := m.gen, m.proc
 	if ps := knownPorts(m); len(ps) > 0 {
 		s.checkPorts(m, gen, p, ps)
@@ -152,6 +155,9 @@ func (s *Supervisor) kill(m *managed) {
 func (s *Supervisor) exited(m *managed, gen int, status proc.ExitStatus) {
 	if gen != m.gen {
 		return
+	}
+	if s.tracker != nil {
+		s.tracker.Exited(m.name)
 	}
 	if m.killTimer != nil {
 		m.killTimer.Stop()
