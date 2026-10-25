@@ -1,0 +1,3 @@
+# Two processes, as foreman runs them.
+web: echo web up
+worker: echo worker up

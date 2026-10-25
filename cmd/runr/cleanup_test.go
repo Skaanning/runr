@@ -22,6 +22,9 @@ import (
 const recordEnv = "RUNR_TEST_RECORD"
 
 func TestMain(m *testing.M) {
+	if os.Getenv(fakeDockerEnv) != "" {
+		fakeDocker()
+	}
 	if dir := os.Getenv(recordEnv); dir != "" {
 		rec, err := sessions.Open(dir)
 		if err != nil {

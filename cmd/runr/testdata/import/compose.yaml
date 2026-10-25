@@ -1,0 +1,17 @@
+name: shop
+services:
+  db:
+    image: postgres:17
+    ports:
+      - "127.0.0.1:47811:5432"
+  api:
+    build: ./api
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - target: 80
+        published: 47812
+  web:
+    build: ./web
+    depends_on: [api]

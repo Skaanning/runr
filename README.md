@@ -75,6 +75,31 @@ runr                   # or pick from a list in the launcher
 Press `q` to stop everything. See [examples/config.toml](examples/config.toml) for a
 complete config file.
 
+### Importing a Procfile or compose file
+
+If a repository already has a `Procfile` or a `compose.yaml`, register all of it at once:
+
+```bash
+cd ~/code/shop && runr import     # finds Procfile, compose.yaml, compose.yml,
+                                  # docker-compose.yaml or docker-compose.yml
+runr up shop                      # the group named after the compose name or the directory
+```
+
+- **Procfile**: one project per `name: command` line, run in the file's directory. A `.env`
+  next to it becomes the projects' `env_file`, as foreman and overmind would load it.
+- **Compose**: one project per service, run as
+  `docker compose [-f <file>] up --no-deps --no-log-prefix <service>`. `--no-deps` leaves
+  starting the dependencies to runr, from `depends_on` (conditions are ignored); a service
+  with a published TCP port gets that host port as `ready_port`. Images, builds,
+  environment and profiles stay in the compose file.
+- `runr import <file>` imports a file of any name (`--format procfile|compose` if the name
+  doesn't tell), `runr import <dir>` searches that directory.
+- `--group <name>` names the group, `--no-group` skips it; `--prefix <p>` puts `<p>` in front
+  of every project name. If a name is already taken, nothing is imported and the clashes
+  are listed. `--dry-run` prints the TOML that would be added.
+- It's a one-time copy: change the projects with `runr edit` afterwards, and re-import (e.g.
+  after `runr rm`) if the file changes a lot.
+
 ## Commands
 
 | Command | Description |
@@ -86,6 +111,7 @@ complete config file.
 | `runr rm <name> [--force]` | Remove a project (and from its groups); refuses if others depend on it unless `--force` |
 | `runr rename <name> <new-name>` | Rename a project or group; groups and `depends_on` are updated |
 | `runr ls` | List projects and groups, with warnings such as missing directories |
+| `runr import [file\|dir] [flags]` | Register projects from a Procfile or Docker Compose file (see [Importing](#importing-a-procfile-or-compose-file)) |
 | `runr group create <group> <project...>` | Create a group |
 | `runr group add <group> <project...>` | Add projects to a group |
 | `runr group rm <group> <project...>` | Remove projects from a group |
