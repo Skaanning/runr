@@ -1,17 +1,25 @@
 package tui
 
 import (
+	"cmp"
+	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
 	"slices"
 	"strings"
+	"time"
 
-	"charm.land/huh/v2"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/proc"
+	"github.com/Skaanning/runr/internal/supervisor"
 )
 
 // SaveFunc validates and writes a changed config.
@@ -19,17 +27,48 @@ type SaveFunc func(*config.Config) error
 
 // editForm is an open project or group form.
 type editForm struct {
-	title    string       // shown in the header, e.g. "new project"
+	title    string       // the pane's title, e.g. "new project"
 	original launcherItem // the item being edited; empty name for a new one
-	form     *huh.Form
+	form     *form
 	// result returns the changed config and the item to put the cursor on.
 	result func() (cfg *config.Config, focus launcherItem, err error)
-	// rebuild recreates the form with the same values, after a failed save.
-	rebuild func() *huh.Form
-	save    *bool // the final Save/Cancel choice
+	// start, if set, returns the form's first background work; handle, if
+	// set, handles the messages of that work and is called after every
+	// update, returning what to do next.
+	start  func() tea.Cmd
+	handle func(tea.Msg) tea.Cmd
+	// context, if set, returns the styled right side of the status bar.
+	context func() string
+	state   any // the form's own state, e.g. a *projectForm
 }
 
-func (f *editForm) confirmed() bool { return *f.save }
+func (f *editForm) init() tea.Cmd {
+	cmd := f.form.init()
+	if f.start != nil {
+		cmd = tea.Batch(cmd, f.start())
+	}
+	return cmd
+}
+
+func (f *editForm) update(msg tea.Msg) tea.Cmd {
+	cmd := f.form.update(msg)
+	if f.handle != nil {
+		cmd = tea.Batch(cmd, f.handle(msg))
+	}
+	return cmd
+}
+
+// statusInfo returns the status bar's count of errors, with the first one:
+// "✗ 1 error · ready log: invalid regex …".
+func (f *editForm) statusInfo(st *styles) string {
+	errs := f.form.errors()
+	if len(errs) == 0 {
+		return ""
+	}
+	first := errs[0]
+	return st.err.Bold(true).Render("✗ "+count(len(errs), "error")) +
+		st.err.Render(" · "+strings.ToLower(first.title)+": "+first.err.Error())
+}
 
 // projectValues holds the project form's fields.
 type projectValues struct {
@@ -43,14 +82,13 @@ type projectValues struct {
 	envFile  string
 	color    string
 	label    string // display name
-	save     bool
 }
 
 func newProjectValues(cfg *config.Config, name string) *projectValues {
 	p := cfg.Projects[name]
 	if p == nil {
 		dir, _ := os.Getwd()
-		return &projectValues{dir: config.DisplayPath(dir), save: true}
+		return &projectValues{dir: config.DisplayPath(dir)}
 	}
 	var env []string
 	for _, k := range slices.Sorted(maps.Keys(p.Env)) {
@@ -59,7 +97,7 @@ func newProjectValues(cfg *config.Config, name string) *projectValues {
 	return &projectValues{
 		original: name, name: name, cmd: p.Cmd, dir: p.Dir, deps: slices.Clone(p.DependsOn),
 		readyLog: p.ReadyLog, env: strings.Join(env, "\n"), envFile: p.EnvFile,
-		color: p.Color, label: p.DisplayName, save: true,
+		color: p.Color, label: p.DisplayName,
 	}
 }
 
@@ -160,7 +198,8 @@ func issueFor(c *config.Config, kind, name, field string) error {
 	for _, is := range verr.Issues {
 		cycle := field == "depends_on" && is.Field == field && strings.HasPrefix(is.Message, "dependency cycle")
 		if is.Kind == kind && (is.Name == name && is.Field == field || cycle) {
-			return errors.New(is.Message)
+			// Go's regexp errors repeat that they're about a regexp.
+			return errors.New(strings.Replace(is.Message, "error parsing regexp: ", "", 1))
 		}
 	}
 	return nil
@@ -186,65 +225,339 @@ func parseEnv(s string) (map[string]string, error) {
 	return env, nil
 }
 
-func newProjectForm(cfg *config.Config, name string) *editForm {
-	v := newProjectValues(cfg, name)
-	title := "new project"
-	if v.original != "" {
-		title = "edit project " + v.original
+// dirCheckDelay is how long the directory must stay unchanged while typing
+// before it's checked.
+const dirCheckDelay = 250 * time.Millisecond
+
+// dirCheck is what the project form found about a directory and env file.
+type dirCheck struct {
+	err    error       // the directory can't be used: missing, or not a directory
+	notDir bool        // it's a file
+	git    *projectGit // nil: not in a repository, or git is not installed
+	env    bool        // an env file was checked
+	vars   int         // variables in the env file
+	envErr error       // reading the env file failed
+}
+
+type (
+	dirCheckMsg struct { // the directory stayed unchanged for dirCheckDelay
+		owner *projectForm
+		gen   int
 	}
-	build := func() *huh.Form {
-		check := func(field string) func(string) error {
-			return func(string) error { return v.check(cfg, field) }
+	dirCheckedMsg struct { // a check finished
+		owner *projectForm
+		gen   int
+		check dirCheck
+	}
+)
+
+// projectForm is the state of an open project form beyond its fields: the
+// directory check and the preview.
+type projectForm struct {
+	st      *styles
+	cfg     *config.Config
+	v       *projectValues
+	git     GitReader // nil: git is not installed
+	label   *formField
+	wanted  string    // directory and env file of the latest check asked for
+	gen     int       // generation of that check; older results are dropped
+	checked *dirCheck // the latest result, or nil before the first one
+}
+
+// checkKey identifies what the directory check depends on.
+func (pf *projectForm) checkKey() string {
+	return strings.TrimSpace(pf.v.dir) + "\x00" + strings.TrimSpace(pf.v.envFile)
+}
+
+// startCheck checks the directory now.
+func (pf *projectForm) startCheck() tea.Cmd {
+	pf.wanted = pf.checkKey()
+	pf.gen++
+	return pf.runCheck(pf.gen)
+}
+
+func (pf *projectForm) runCheck(gen int) tea.Cmd {
+	git, name, dir, envFile := pf.git, pf.v.projectName(), pf.v.dir, pf.v.envFile
+	return func() tea.Msg {
+		return dirCheckedMsg{owner: pf, gen: gen, check: checkDir(git, name, dir, envFile)}
+	}
+}
+
+// handle runs the directory check once the directory or env file stopped
+// changing, and keeps the display name's placeholder on the name.
+func (pf *projectForm) handle(msg tea.Msg) tea.Cmd {
+	pf.label.input.Placeholder = cmp.Or(pf.v.projectName(), "the name")
+	switch msg := msg.(type) {
+	case dirCheckMsg:
+		if msg.owner == pf && msg.gen == pf.gen {
+			return pf.runCheck(msg.gen)
 		}
-		fields := []huh.Field{
-			huh.NewInput().Title("Name").Value(&v.name).Validate(check("")),
+		return nil
+	case dirCheckedMsg:
+		if msg.owner == pf && msg.gen == pf.gen {
+			pf.checked = &msg.check
 		}
-		if v.original != "" {
-			fields[0].(*huh.Input).Description("renaming also updates groups and depends_on")
+		return nil
+	}
+	if key := pf.checkKey(); key != pf.wanted {
+		pf.wanted = key
+		pf.gen++
+		gen := pf.gen
+		return tea.Tick(dirCheckDelay, func(time.Time) tea.Msg { return dirCheckMsg{owner: pf, gen: gen} })
+	}
+	return nil
+}
+
+// checkDir checks that a project directory exists, reads its git state and
+// counts the variables in its env file. name is the project's, for git.
+func checkDir(git GitReader, name, dir, envFile string) dirCheck {
+	var c dirCheck
+	dir, err := config.NormalizeDir(strings.TrimSpace(dir))
+	if err == nil {
+		dir, err = config.ExpandHome(dir)
+	}
+	if err != nil {
+		c.err = err
+		return c
+	}
+	fi, err := os.Stat(dir)
+	switch {
+	case err != nil:
+		c.err = err
+		return c
+	case !fi.IsDir():
+		c.notDir = true
+		return c
+	}
+	if git != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		repos := git.FindAll(ctx, map[string]string{name: dir})
+		if err := repos.Errors[name]; err != nil {
+			c.git = &projectGit{err: err}
+		} else if root, ok := repos.Of[name]; ok {
+			status, err := git.Status(ctx, repos.ByRoot[root])
+			c.git = &projectGit{root: root, status: status, err: err}
 		}
-		fields = append(fields,
-			huh.NewInput().Title("Command").Description("run with the system shell in the directory").
-				Value(&v.cmd).Validate(check("cmd")),
-			huh.NewInput().Title("Directory").Value(&v.dir).Validate(check("dir")),
-		)
-		var others []huh.Option[string]
-		for _, p := range slices.Sorted(maps.Keys(cfg.Projects)) {
-			if p != v.original {
-				others = append(others, huh.NewOption(p, p).Selected(slices.Contains(v.deps, p)))
+	}
+	if envFile = strings.TrimSpace(envFile); envFile != "" {
+		c.env = true
+		p := config.Project{Dir: dir, EnvFile: envFile}
+		path, err := p.ResolvedEnvFile()
+		if err == nil {
+			var vars map[string]string
+			vars, err = proc.LoadEnvFile(path)
+			c.vars = len(vars)
+		}
+		c.envErr = err
+	}
+	return c
+}
+
+// dirInfo is the line under the directory: "✓ exists · git: main ↑1".
+func (pf *projectForm) dirInfo() string {
+	st, c := pf.st, pf.checked
+	switch {
+	case c == nil || strings.TrimSpace(pf.v.dir) == "":
+		return ""
+	case c.notDir:
+		return st.warn.Render("not a directory (only a warning)")
+	case errors.Is(c.err, fs.ErrNotExist):
+		return st.warn.Render("does not exist yet (only a warning)")
+	case c.err != nil:
+		return st.warn.Render(c.err.Error())
+	}
+	info := st.ok.Render("✓") + " " + st.faint.Render("exists")
+	if c.git != nil {
+		info += st.faint.Render(" · git: ") + gitLabel(st, *c.git, maxGitWidth)
+	}
+	return info
+}
+
+// envFileInfo is the line under the env file: "✓ found · 4 variables".
+func (pf *projectForm) envFileInfo() string {
+	st, c := pf.st, pf.checked
+	switch {
+	case c == nil || !c.env || strings.TrimSpace(pf.v.envFile) == "":
+		return ""
+	case errors.Is(c.envErr, fs.ErrNotExist):
+		return st.warn.Render("does not exist (starting the project fails)")
+	case c.envErr != nil:
+		return st.warn.Render(c.envErr.Error())
+	}
+	return st.ok.Render("✓") + " " + st.faint.Render("found · "+count(c.vars, "variable"))
+}
+
+// colorName returns the color the project gets: the one typed if it's
+// valid, else its default color.
+func (pf *projectForm) colorName() string {
+	if c := strings.TrimSpace(pf.v.color); config.ValidColor(c) {
+		return c
+	}
+	c := pf.cfg.Clone()
+	if c.Projects == nil {
+		c.Projects = map[string]*config.Project{}
+	}
+	if pf.v.original != "" {
+		delete(c.Projects, pf.v.original)
+	}
+	name := cmp.Or(pf.v.projectName(), pf.v.original, "\x00")
+	c.Projects[name] = &config.Project{}
+	return c.ColorOf(name)
+}
+
+// swatch shows the project's color before the color field's value.
+func (pf *projectForm) swatch() string {
+	return lipgloss.NewStyle().Foreground(pf.st.color(pf.colorName())).Render("██") + " "
+}
+
+// cycleColor moves through the named colors with ↑↓, starting from the
+// automatic color ("").
+func (pf *projectForm) cycleColor(fd *formField) func(string) bool {
+	colors := append([]string{""}, config.ColorNames...)
+	return func(key string) bool {
+		d := 1
+		switch key {
+		case "up":
+			d = -1
+		case "down":
+		default:
+			return false
+		}
+		i := slices.Index(colors, strings.TrimSpace(pf.v.color))
+		if i < 0 { // a number or hex code: start over from the ends
+			i = 0
+			if d < 0 {
+				i = len(colors)
 			}
 		}
-		if len(others) > 0 {
-			fields = append(fields, huh.NewMultiSelect[string]().Title("Depends on").
-				Description("started first; this project waits until they are ready").
-				Options(others...).Value(&v.deps).Filterable(false).Height(len(others)+2). // + title, description
-				Validate(func([]string) error { return v.check(cfg, "depends_on") }))
-		}
-		fields = append(fields,
-			huh.NewInput().Title("Ready log").
-				Description("regex; ready once an output line matches (empty: ready when started)").
-				Value(&v.readyLog).Validate(check("ready_log")),
-			huh.NewText().Title("Environment").Description("KEY=VALUE, one per line").Lines(3).
-				Value(&v.env).Validate(check("env")),
-			huh.NewInput().Title("Env file").Description("relative to the directory").
-				Value(&v.envFile).Validate(check("env_file")),
-			huh.NewInput().Title("Color").Description("e.g. cyan, bright-red, 208 or #ff8800; empty: automatic").
-				Value(&v.color).Validate(check("color")),
-			huh.NewInput().Title("Display name").Description("shown in the running view; empty: the name").
-				Value(&v.label),
-			huh.NewConfirm().Title("Save project?").Affirmative("Save").Negative("Cancel").Value(&v.save),
-		)
-		return newForm(fields...)
+		fd.setValue(colors[(i+d+len(colors))%len(colors)])
+		return true
 	}
+}
+
+// envRows shows the environment while its field isn't focused, the keys
+// highlighted.
+func (pf *projectForm) envRows(width int) []string {
+	st := pf.st
+	lines := strings.Split(pf.v.env, "\n")
+	rows := make([]string, envLines)
+	for i := range rows {
+		rows[i] = st.faint.Render("│")
+		if i >= len(lines) {
+			continue
+		}
+		line := lines[i]
+		if i == envLines-1 && len(lines) > envLines {
+			rows[i] += " " + st.faint.Render(fmt.Sprintf("… %d more", len(lines)-i))
+			continue
+		}
+		if key, value, ok := strings.Cut(line, "="); ok && !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			line = st.warn.Render(key) + "=" + value
+		}
+		rows[i] += " " + ansi.Truncate(line, width-2, "…")
+	}
+	return rows
+}
+
+// preview shows the project's row as the running view's sidebar will:
+// state, display name in its color and the directory's git label.
+func (pf *projectForm) preview(width int) []string {
+	st := pf.st
+	inner := max(min(width-2, 40)-4, 4)
+	color := lipgloss.NewStyle().Foreground(st.color(pf.colorName()))
+	label := cmp.Or(strings.TrimSpace(pf.v.label), pf.v.projectName())
+	name := color.Bold(true).Render(label)
+	if label == "" {
+		name = st.faint.Render("name")
+	}
+	row := color.Render("▌") + st.stateIcon(supervisor.Starting, "◐") + " " + name
+	if c := pf.checked; c != nil && c.git != nil && strings.TrimSpace(pf.v.dir) != "" {
+		row = pad(row, max(ansi.StringWidth(row)+2, 16)) + gitLabel(st, *c.git, maxGitWidth)
+	}
+	row = pad(ansi.Truncate(row, inner, "…"), inner)
+	if st.selBar != "" {
+		row = onBackground(row, st.selBar)
+	}
+	return []string{
+		"  " + st.faint.Render("╭"+strings.Repeat("─", inner+2)+"╮"),
+		"  " + st.faint.Render("│") + " " + row + " " + st.faint.Render("│"),
+		"  " + st.faint.Render("╰"+strings.Repeat("─", inner+2)+"╯"),
+	}
+}
+
+// newProjectForm opens a form for an existing project, or a new one if name
+// is "". git checks the directory as it's typed; nil if git isn't installed.
+func newProjectForm(st *styles, cfg *config.Config, name string, git GitReader) *editForm {
+	v := newProjectValues(cfg, name)
+	pf := &projectForm{st: st, cfg: cfg, v: v, git: git}
+	check := func(field string) func() error {
+		return func() error { return v.check(cfg, field) }
+	}
+
+	nameField := newInputField("", "Name", &v.name)
+	nameField.check = check("")
+	title := "new project"
+	if v.original != "" {
+		title = "edit " + v.original
+		nameField.desc = "renaming also updates groups and depends_on"
+	}
+	cmdField := newInputField("cmd", "Command", &v.cmd)
+	cmdField.desc = "run with the system shell in the directory"
+	cmdField.check = check("cmd")
+	dirField := newInputField("dir", "Directory", &v.dir)
+	dirField.check, dirField.info = check("dir"), pf.dirInfo
+	basics := &formSection{title: "Basics", fields: []*formField{nameField, cmdField, dirField}}
+
+	startup := &formSection{title: "Startup"}
+	var others []formOption
+	for _, p := range slices.Sorted(maps.Keys(cfg.Projects)) {
+		if p != v.original {
+			others = append(others, formOption{value: p, color: cfg.ColorOf(p)})
+		}
+	}
+	if len(others) > 0 {
+		deps := newChoiceField("depends_on", "Depends on", others, &v.deps)
+		deps.desc = "started first; waits until they are ready"
+		deps.check = check("depends_on")
+		startup.fields = append(startup.fields, deps)
+	}
+	readyLog := newInputField("ready_log", "Ready log", &v.readyLog)
+	readyLog.input.Placeholder = "regex; empty: ready once started"
+	readyLog.check = check("ready_log")
+	startup.fields = append(startup.fields, readyLog)
+
+	env := newTextField("env", "Variables", &v.env)
+	env.desc = "KEY=VALUE, one per line"
+	env.check, env.display = check("env"), pf.envRows
+	envFile := newInputField("env_file", "Env file", &v.envFile)
+	envFile.input.Placeholder = "relative to the directory"
+	envFile.check, envFile.info = check("env_file"), pf.envFileInfo
+	environment := &formSection{title: "Environment", right: true, fields: []*formField{env, envFile}}
+
+	color := newInputField("color", "Color", &v.color)
+	color.input.Placeholder = "auto"
+	color.check, color.adorn, color.note, color.width = check("color"), pf.swatch, "↑↓ cycle", 16
+	color.keys, color.hint = pf.cycleColor(color), [2]string{"↑↓", "color"}
+	pf.label = newInputField("display_name", "Display name", &v.label)
+	look := &formSection{title: "Look", right: true, fields: []*formField{color, pf.label}}
+	preview := &formSection{title: "Preview", right: true, view: pf.preview}
+
+	pf.handle(nil) // placeholders
 	return &editForm{
 		title:    title,
 		original: launcherItem{name: v.original},
-		form:     build(),
+		form:     newForm(st, basics, startup, environment, look, preview),
 		result: func() (*config.Config, launcherItem, error) {
 			c, err := v.candidate(cfg)
 			return c, launcherItem{name: v.projectName()}, err
 		},
-		rebuild: build,
-		save:    &v.save,
+		start:  pf.startCheck,
+		handle: pf.handle,
+		state:  pf,
+		context: func() string {
+			return st.faint.Render(config.DisplayPath(strings.TrimSpace(v.dir)))
+		},
 	}
 }
 
@@ -253,7 +566,6 @@ type groupValues struct {
 	original string // name of the group being edited; "" for a new one
 	name     string
 	members  []string
-	save     bool
 }
 
 func (v *groupValues) groupName() string {
@@ -305,47 +617,34 @@ func (v *groupValues) checkName(cfg *config.Config) error {
 
 // newGroupForm opens a form for an existing group, or for a new one with
 // the given members preselected.
-func newGroupForm(cfg *config.Config, name string, preselect []string) *editForm {
-	v := &groupValues{original: name, name: name, members: slices.Clone(preselect), save: true}
+func newGroupForm(st *styles, cfg *config.Config, name string, preselect []string) *editForm {
+	v := &groupValues{original: name, name: name, members: slices.Clone(preselect)}
 	title := "new group"
 	if name != "" {
 		v.members = slices.Clone(cfg.Groups[name])
-		title = "edit group " + name
+		title = "edit " + name
 	}
-	build := func() *huh.Form {
-		fields := []huh.Field{
-			huh.NewInput().Title("Name").Value(&v.name).Validate(func(string) error { return v.checkName(cfg) }),
-		}
-		var options []huh.Option[string]
-		for _, p := range slices.Sorted(maps.Keys(cfg.Projects)) {
-			options = append(options, huh.NewOption(p, p).Selected(slices.Contains(v.members, p)))
-		}
-		fields = append(fields,
-			huh.NewMultiSelect[string]().Title("Projects").
-				Description("dependencies are started too, even if not listed").
-				Options(options...).Value(&v.members).Filterable(false).Height(len(options)+2),
-			huh.NewConfirm().Title("Save group?").Affirmative("Save").Negative("Cancel").Value(&v.save),
-		)
-		return newForm(fields...)
+	nameField := newInputField("", "Name", &v.name)
+	nameField.check = func() error { return v.checkName(cfg) }
+	var options []formOption
+	for _, p := range slices.Sorted(maps.Keys(cfg.Projects)) {
+		options = append(options, formOption{value: p, color: cfg.ColorOf(p)})
 	}
+	members := newChoiceField("", "Projects", options, &v.members)
+	members.desc = "dependencies are started too, even if not listed"
 	return &editForm{
 		title:    title,
 		original: launcherItem{name: name, group: true},
-		form:     build(),
+		form: newForm(st,
+			&formSection{title: "Group", fields: []*formField{nameField}},
+			&formSection{title: "Members", fields: []*formField{members}},
+		),
 		result: func() (*config.Config, launcherItem, error) {
 			c, err := v.candidate(cfg)
 			return c, launcherItem{name: v.groupName(), group: true}, err
 		},
-		rebuild: build,
-		save:    &v.save,
+		context: func() string { return st.faint.Render(count(len(v.members), "project")) },
 	}
-}
-
-func newForm(fields ...huh.Field) *huh.Form {
-	// Errors are shown in the launcher's help line: huh would put them below
-	// the form, which is cut off when the form fills the screen. The theme
-	// is set when the launcher opens the form (fields keep the first one).
-	return huh.NewForm(huh.NewGroup(fields...)).WithShowHelp(false).WithShowErrors(false)
 }
 
 // confirmation is an open delete confirmation.
@@ -375,44 +674,4 @@ func newDeleteConfirmation(cfg *config.Config, it launcherItem) *confirmation {
 		lines = append(lines, fmt.Sprintf("Required by %s; it is removed from their depends_on.", strings.Join(dependents, ", ")))
 	}
 	return &confirmation{lines: lines, result: func() *config.Config { return c }}
-}
-
-// formTheme returns the forms' theme, built from the palette: the focused
-// field's title, border and cursor in the accent, descriptions dim, errors
-// red. It follows the styles when they are rebuilt.
-func (s *styles) formTheme() huh.Theme {
-	return huh.ThemeFunc(func(bool) *huh.Styles {
-		t := huh.ThemeBase(s.dark)
-		f := &t.Focused
-		f.Base = f.Base.BorderForeground(s.pal.accent)
-		f.Card = f.Base
-		f.Title = s.accent.Bold(true)
-		f.NoteTitle = f.Title
-		f.Directory = s.accent
-		f.Description = s.faint
-		f.ErrorIndicator = f.ErrorIndicator.Foreground(s.pal.ansi[ansiRed])
-		f.ErrorMessage = f.ErrorMessage.Foreground(s.pal.ansi[ansiRed])
-		for _, st := range []*lipgloss.Style{&f.SelectSelector, &f.MultiSelectSelector, &f.NextIndicator, &f.PrevIndicator, &f.SelectedPrefix} {
-			*st = st.Foreground(s.pal.accent)
-		}
-		f.UnselectedPrefix = f.UnselectedPrefix.Inherit(s.faint)
-		f.TextInput.Cursor = s.accent
-		f.TextInput.Prompt = s.accent
-		f.TextInput.Placeholder = s.faint
-		if s.keycaps { // background tints read well
-			f.FocusedButton = f.FocusedButton.Foreground(s.onAccent).Background(s.pal.accent).Bold(true)
-			f.BlurredButton = f.BlurredButton.Background(s.pal.selection).Foreground(s.pal.fg)
-		}
-		f.Next = f.FocusedButton
-
-		t.Blurred = t.Focused
-		b := &t.Blurred
-		b.Base = b.Base.BorderStyle(lipgloss.HiddenBorder())
-		b.Card = b.Base
-		b.Title = s.bold
-		b.NextIndicator, b.PrevIndicator = lipgloss.NewStyle(), lipgloss.NewStyle()
-		b.MultiSelectSelector = lipgloss.NewStyle().SetString("  ")
-		t.Group.Title, t.Group.Description = f.Title, f.Description
-		return t
-	})
 }

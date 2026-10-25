@@ -45,15 +45,15 @@ func TestLauncherWordmark(t *testing.T) {
 		t.Fatalf("top:\n%s\nwant:\n%s", got, strings.Join(want, "\n"))
 	}
 
-	// Shorter terminals and forms get the header instead.
+	// Shorter terminals get the header instead; forms have their pane's title.
 	m.Update(tea.WindowSizeMsg{Width: 96, Height: 19})
 	if got := launcherScreen(m)[0]; got != "  runr" {
 		t.Fatalf("header at 19 rows = %q", got)
 	}
 	m.Update(tea.WindowSizeMsg{Width: 96, Height: 30})
 	m.Update(key("n"))
-	if got := launcherScreen(m)[0]; !strings.HasPrefix(got, "  runr   new project") {
-		t.Fatalf("header with a form = %q", got)
+	if got := launcherScreen(m)[0]; !strings.HasPrefix(got, "╭─ new project ─") {
+		t.Fatalf("top row with a form = %q", got)
 	}
 }
 

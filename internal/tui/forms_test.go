@@ -3,12 +3,13 @@ package tui
 import (
 	"errors"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/huh/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Skaanning/runr/internal/config"
 )
@@ -166,22 +167,24 @@ func TestDeleteConfirmation(t *testing.T) {
 	}
 }
 
-// fakeForm returns a form whose result is c, already completed.
-func fakeForm(c *config.Config, focus launcherItem, save bool) *editForm {
-	f := &editForm{
+// fakeForm returns a form without fields whose result is c.
+func fakeForm(c *config.Config, focus launcherItem) *editForm {
+	return &editForm{
 		title:   "test",
+		form:    newForm(newStyles(terminalTheme)),
 		result:  func() (*config.Config, launcherItem, error) { return c, focus, nil },
-		rebuild: func() *huh.Form { return newForm(huh.NewInput()) },
-		save:    &save,
+		context: func() string { return "" },
 	}
-	f.form = f.rebuild()
-	return f
 }
 
-func submit(m *launcherModel, f *editForm) {
+// submit opens f, then saves it with ctrl+s, or cancels it with esc.
+func submit(m *launcherModel, f *editForm, save bool) {
 	m.openForm(f)
-	f.form.State = huh.StateCompleted
-	m.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	if save {
+		m.Update(key("ctrl+s"))
+	} else {
+		m.Update(key("esc"))
+	}
 }
 
 func TestLauncherFormSaves(t *testing.T) {
@@ -193,7 +196,7 @@ func TestLauncherFormSaves(t *testing.T) {
 
 	c := cfg.Clone()
 	c.Projects["cron"] = &config.Project{Dir: cfg.Projects["db"].Dir, Cmd: "cron"}
-	submit(m, fakeForm(c, launcherItem{name: "cron"}, true))
+	submit(m, fakeForm(c, launcherItem{name: "cron"}), true)
 
 	if len(saved) != 1 || m.form != nil {
 		t.Fatalf("saved = %d, form open = %v", len(saved), m.form != nil)
@@ -213,20 +216,20 @@ func TestLauncherFormCancelAndErrors(t *testing.T) {
 	m := newLauncherModel(cfg, func(*config.Config) error { calls++; return saveErr }, newStyles(terminalTheme))
 	m.Update(tea.WindowSizeMsg{Width: 100, Height: 20})
 
-	submit(m, fakeForm(cfg.Clone(), launcherItem{}, false)) // Cancel chosen
+	submit(m, fakeForm(cfg.Clone(), launcherItem{}), false)
 	if m.form != nil || calls != 0 {
 		t.Fatalf("cancel: form open = %v, calls = %d", m.form != nil, calls)
 	}
 
 	invalid := cfg.Clone()
 	invalid.Projects["bad"] = &config.Project{Dir: "/x"} // no cmd
-	submit(m, fakeForm(invalid, launcherItem{name: "bad"}, true))
+	submit(m, fakeForm(invalid, launcherItem{name: "bad"}), true)
 	if m.form == nil || calls != 0 || !strings.Contains(m.notice, "cmd: is required") {
 		t.Fatalf("invalid: form open = %v, calls = %d, notice = %q", m.form != nil, calls, m.notice)
 	}
 
 	m.form = nil
-	submit(m, fakeForm(cfg.Clone(), launcherItem{name: "db"}, true))
+	submit(m, fakeForm(cfg.Clone(), launcherItem{name: "db"}), true)
 	if m.form == nil || m.notice != "disk full" {
 		t.Fatalf("save error: form open = %v, notice = %q", m.form != nil, m.notice)
 	}
@@ -238,13 +241,13 @@ func TestLauncherFormCancelAndErrors(t *testing.T) {
 
 func TestLauncherKeysOpenForms(t *testing.T) {
 	m := newTestLauncher(t, launcherConfig(t))
-	for k, want := range map[string]string{"n": "new project", "g": "edit group backend", "e": "edit group backend"} {
+	for k, want := range map[string]string{"n": "new project", "g": "edit backend", "e": "edit backend"} {
 		m.Update(key(k))
 		if m.form == nil || m.form.title != want {
 			t.Fatalf("%s: form = %+v", k, m.form)
 		}
-		if !strings.HasPrefix(launcherScreen(m)[0], "  runr   "+want) {
-			t.Fatalf("%s: header = %q", k, launcherScreen(m)[0])
+		if !strings.HasPrefix(launcherScreen(m)[0], "╭─ "+want+" ─") {
+			t.Fatalf("%s: pane top = %q", k, launcherScreen(m)[0])
 		}
 		m.Update(key("esc"))
 	}
@@ -253,7 +256,7 @@ func TestLauncherKeysOpenForms(t *testing.T) {
 	}
 	m.Update(key("space"))
 	m.Update(key("e"))
-	if m.form.title != "edit project db" {
+	if m.form.title != "edit db" {
 		t.Fatalf("title = %q", m.form.title)
 	}
 	m.Update(key("esc"))
@@ -362,9 +365,9 @@ func TestLauncherRenameKeepsSelection(t *testing.T) {
 	if _, _, err := c.Rename("db", "postgres"); err != nil {
 		t.Fatal(err)
 	}
-	f := fakeForm(c, launcherItem{name: "postgres"}, true)
+	f := fakeForm(c, launcherItem{name: "postgres"})
 	f.original = launcherItem{name: "db"}
-	submit(m, f)
+	submit(m, f, true)
 
 	if !m.selected["postgres"] || m.selected["db"] {
 		t.Fatalf("selected = %v", m.selected)
@@ -374,5 +377,352 @@ func TestLauncherRenameKeepsSelection(t *testing.T) {
 	}
 	if it, _ := m.current(); it.name != "postgres" {
 		t.Fatalf("cursor on %q", it.name)
+	}
+}
+
+// openProjectForm opens the form for a project ("" for a new one) in a
+// launcher of width×height, with git state from g (nil: no git).
+func openProjectForm(t *testing.T, cfg *config.Config, name string, g GitReader, width, height int) *launcherModel {
+	t.Helper()
+	m := newLauncherModel(cfg, nil, newStyles(terminalTheme))
+	if g != nil {
+		m.git = newGitTracker(g)
+	}
+	m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+	f := newProjectForm(m.st, cfg, name, m.gitReader())
+	if cmd := m.openForm(f); cmd != nil {
+		runCmds(m, cmd)
+	}
+	return m
+}
+
+// runCmds runs cmd and feeds its messages back into m, skipping ticks.
+func runCmds(m tea.Model, cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	switch msg := cmd().(type) {
+	case tea.BatchMsg:
+		for _, c := range msg {
+			runCmds(m, c)
+		}
+	case dirCheckMsg, nil:
+	default:
+		_, next := m.Update(msg)
+		runCmds(m, next)
+	}
+}
+
+func typeInto(m tea.Model, s string) {
+	for _, r := range s {
+		m.Update(key(string(r)))
+	}
+}
+
+func screenText(m *launcherModel) string {
+	return strings.Join(launcherScreen(m), "\n")
+}
+
+func TestProjectFormLayout(t *testing.T) {
+	cfg := launcherConfig(t)
+	m := openProjectForm(t, cfg, "api", nil, 96, 30)
+	rows := launcherScreen(m)
+	for i, want := range map[int]string{
+		0:  "╭─ edit api ─",
+		2:  "│ Basics                                         Environment",
+		4:  "│ ┃ Name                                           Variables",
+		5:  "│ ┃ renaming also updates groups and depends_on    KEY=VALUE, one per line",
+		6:  "│ ┃ › api                                          │",
+		29: "  tab  next  shift+tab  back  ctrl+s  save  esc  cancel",
+	} {
+		if !strings.HasPrefix(rows[i], want) {
+			t.Errorf("row %d = %q, want prefix %q", i, rows[i], want)
+		}
+	}
+	if !strings.HasSuffix(rows[0], " ctrl+s save ─╮") || !strings.HasPrefix(rows[28], "  EDIT API ") {
+		t.Errorf("pane top %q, status bar %q", rows[0], rows[28])
+	}
+	if !strings.Contains(screenText(m), "│   [x] ● db  [ ] ● web") {
+		t.Errorf("depends on:\n%s", screenText(m))
+	}
+
+	// Narrow: one column, Environment after Startup.
+	m.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
+	text := screenText(m)
+	if strings.Contains(launcherScreen(m)[2], "Environment") ||
+		strings.Index(text, "Startup") > strings.Index(text, "Environment") {
+		t.Errorf("not one column:\n%s", text)
+	}
+}
+
+func TestProjectFormKeys(t *testing.T) {
+	cfg := launcherConfig(t)
+	m := openProjectForm(t, cfg, "", nil, 96, 30)
+	f := m.form.form
+	typeInto(m, "jobs")
+	for range 3 {
+		m.Update(key("tab")) // command, directory, depends on
+	}
+	if fd := f.focused(); fd.key != "depends_on" {
+		t.Fatalf("focused %q", fd.key)
+	}
+	m.Update(key("right"))
+	m.Update(key("space")) // db
+	m.Update(key("space"))
+	m.Update(key("space"))
+	m.Update(key("shift+tab")) // directory
+	m.Update(key("up"))        // command
+	if fd := f.focused(); fd.key != "cmd" {
+		t.Fatalf("focused %q after shift+tab, up", fd.key)
+	}
+	v := m.form.form.fields[0].str
+	if *v != "jobs" {
+		t.Fatalf("name = %q", *v)
+	}
+
+	// The color field cycles with ↑↓ and shows a swatch.
+	for f.focused().key != "color" {
+		m.Update(key("tab"))
+	}
+	m.Update(key("down"))
+	m.Update(key("down"))
+	if got := *f.focused().str; got != "red" {
+		t.Fatalf("color after ↓↓ = %q", got)
+	}
+	m.Update(key("up"))
+	m.Update(key("up"))
+	m.Update(key("up"))
+	if got := *f.focused().str; got != "bright-white" {
+		t.Fatalf("color after ↑↑↑ = %q, want wrapping around", got)
+	}
+	if !strings.Contains(screenText(m), "┃ › ██ bright-white       ↑↓ cycle") {
+		t.Errorf("color row:\n%s", screenText(m))
+	}
+	if help := launcherScreen(m)[29]; !strings.Contains(help, "↑↓  color") {
+		t.Errorf("help = %q", help)
+	}
+
+	// enter in the environment is a new line; elsewhere it moves on.
+	for f.focused().key != "env" {
+		m.Update(key("shift+tab"))
+	}
+	typeInto(m, "A=1")
+	m.Update(key("enter"))
+	typeInto(m, "B=2")
+	m.Update(key("enter"))
+	m.Update(key("tab"))
+	if fd := f.focused(); fd.key != "env_file" || *f.fields[5].str != "A=1\nB=2\n" {
+		t.Fatalf("focused %q, env %q", fd.key, *f.fields[5].str)
+	}
+}
+
+func TestProjectFormSaveKey(t *testing.T) {
+	cfg := launcherConfig(t)
+	var saved []*config.Config
+	m := openProjectForm(t, cfg, "", nil, 96, 30)
+	m.save = func(c *config.Config) error { saved = append(saved, c); return nil }
+	f := m.form.form
+
+	// Invalid: nothing saved, every error shown, the first one focused.
+	typeInto(m, "jobs")
+	m.Update(key("tab"))
+	m.Update(key("tab"))
+	m.Update(key("ctrl+s"))
+	if m.form == nil || len(saved) != 0 {
+		t.Fatalf("saved an invalid project: form open = %v", m.form != nil)
+	}
+	if fd := f.focused(); fd.key != "cmd" {
+		t.Fatalf("focused %q, want the command", fd.key)
+	}
+	text := screenText(m)
+	if !strings.Contains(text, "│ ┃ ✗ is required") || !strings.Contains(text, "NEW PROJECT  ✗ 1 error · command: is required") {
+		t.Fatalf("errors not shown:\n%s", text)
+	}
+
+	// A bad regex shows under its field and in the status bar.
+	for f.focused().key != "ready_log" {
+		m.Update(key("tab"))
+	}
+	typeInto(m, "(")
+	text = screenText(m)
+	if !strings.Contains(text, "✗ invalid regex: missing closing ): `(`") || !strings.Contains(text, "✗ 2 errors · command: is required") {
+		t.Fatalf("regex error:\n%s", text)
+	}
+	m.Update(key("backspace"))
+
+	// Valid: saved from any field.
+	for f.focused().key != "cmd" {
+		m.Update(key("shift+tab"))
+	}
+	typeInto(m, "run")
+	m.Update(key("tab"))
+	m.Update(key("ctrl+s"))
+	if m.form != nil || len(saved) != 1 || saved[0].Projects["jobs"].Cmd != "run" {
+		t.Fatalf("not saved: form open = %v, saved %d", m.form != nil, len(saved))
+	}
+	if m.notice != `saved project "jobs"` {
+		t.Fatalf("notice = %q", m.notice)
+	}
+}
+
+func TestProjectFormErrorsAfterLeaving(t *testing.T) {
+	m := openProjectForm(t, launcherConfig(t), "", nil, 96, 30)
+	if strings.Contains(screenText(m), "✗") {
+		t.Fatalf("errors before anything was typed:\n%s", screenText(m))
+	}
+	m.Update(key("tab")) // leaves the empty name
+	if !strings.Contains(screenText(m), "✗ 1 error · name: is required") {
+		t.Fatalf("no error after leaving the name:\n%s", screenText(m))
+	}
+}
+
+func TestProjectFormButtons(t *testing.T) {
+	cfg := launcherConfig(t)
+	saves := 0
+	m := openProjectForm(t, cfg, "db", nil, 96, 30)
+	m.save = func(*config.Config) error { saves++; return nil }
+	m.Update(key("shift+tab")) // wraps to Cancel
+	if m.form.form.focus != m.form.form.cancelButton() {
+		t.Fatalf("focus = %d", m.form.form.focus)
+	}
+	if !strings.Contains(screenText(m), "Save    Cancel") {
+		t.Fatalf("buttons not in view:\n%s", screenText(m))
+	}
+	m.Update(key("left")) // Save
+	m.Update(key("enter"))
+	if m.form != nil || saves != 1 {
+		t.Fatalf("enter on Save: form open = %v, saves = %d", m.form != nil, saves)
+	}
+	m.Update(key("e"))
+	m.Update(key("shift+tab"))
+	m.Update(key("enter")) // Cancel
+	if m.form != nil || saves != 1 {
+		t.Fatalf("enter on Cancel: form open = %v, saves = %d", m.form != nil, saves)
+	}
+}
+
+func TestProjectFormDirCheck(t *testing.T) {
+	dir := t.TempDir()
+	file := dir + "/file"
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dir+"/.env", []byte("A=1\nB=2\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	g := testGit()
+	g.of["db"] = "/r/infra"
+	st := newStyles(terminalTheme)
+	info := func(dir, envFile string, git GitReader) (string, string) {
+		pf := &projectForm{st: st, v: &projectValues{name: "db", dir: dir, envFile: envFile}}
+		c := checkDir(git, "db", dir, envFile)
+		pf.checked = &c
+		return ansi.Strip(pf.dirInfo()), ansi.Strip(pf.envFileInfo())
+	}
+	for _, tt := range []struct {
+		dir, envFile string
+		git          GitReader
+		dirInfo      string
+		envInfo      string
+	}{
+		{dir, "", nil, "✓ exists", ""},
+		{dir, ".env", g, "✓ exists · git: main", "✓ found · 2 variables"},
+		{dir, "nope.env", nil, "✓ exists", "does not exist (starting the project fails)"},
+		{dir + "/gone", ".env", nil, "does not exist yet (only a warning)", ""},
+		{file, "", nil, "not a directory (only a warning)", ""},
+	} {
+		d, e := info(tt.dir, tt.envFile, tt.git)
+		if d != tt.dirInfo || e != tt.envInfo {
+			t.Errorf("check(%q, %q) = %q, %q; want %q, %q", tt.dir, tt.envFile, d, e, tt.dirInfo, tt.envInfo)
+		}
+	}
+}
+
+func TestProjectFormDirCheckDebounced(t *testing.T) {
+	cfg := launcherConfig(t)
+	m := openProjectForm(t, cfg, "db", nil, 96, 30)
+	if !strings.Contains(screenText(m), "│   ✓ exists") {
+		t.Fatalf("no check when opened:\n%s", screenText(m))
+	}
+	m.Update(key("tab"))
+	m.Update(key("tab")) // directory
+	_, cmd := m.Update(key("x"))
+	if cmd == nil {
+		t.Fatal("no check scheduled after typing in the directory")
+	}
+	// The tick of an older generation is ignored; the current one checks.
+	form := projectFormOf(t, m)
+	m.Update(dirCheckMsg{owner: form, gen: form.gen - 1})
+	_, cmd = m.Update(dirCheckMsg{owner: form, gen: form.gen})
+	runCmds(m, cmd)
+	if !strings.Contains(screenText(m), "does not exist yet (only a warning)") {
+		t.Fatalf("directory not checked again:\n%s", screenText(m))
+	}
+	// A late result of an older check doesn't replace it.
+	m.Update(dirCheckedMsg{owner: form, gen: form.gen - 1})
+	if !strings.Contains(screenText(m), "does not exist yet") {
+		t.Fatal("older result replaced the newer one")
+	}
+}
+
+// projectFormOf returns the state of the launcher's open project form.
+func projectFormOf(t *testing.T, m *launcherModel) *projectForm {
+	t.Helper()
+	pf, ok := m.form.state.(*projectForm)
+	if !ok {
+		t.Fatal("no project form open")
+	}
+	return pf
+}
+
+func TestProjectFormPreview(t *testing.T) {
+	cfg := launcherConfig(t)
+	g := testGit()
+	m := openProjectForm(t, cfg, "api", g, 96, 30)
+	preview := func() string {
+		for _, r := range launcherScreen(m) {
+			if strings.Contains(r, "▌◐") {
+				return strings.TrimSpace(strings.Trim(strings.TrimSpace(r)[strings.Index(strings.TrimSpace(r), "▌"):], "│ "))
+			}
+		}
+		return ""
+	}
+	if got := preview(); got != "▌◐ api          feat/login * ↓2" {
+		t.Fatalf("preview = %q", got)
+	}
+	f := m.form.form
+	for f.focused().key != "display_name" {
+		m.Update(key("tab"))
+	}
+	typeInto(m, "API")
+	if got := preview(); !strings.HasPrefix(got, "▌◐ API ") {
+		t.Fatalf("preview after typing a display name = %q", got)
+	}
+	m.Update(key("shift+tab"))
+	typeInto(m, "magenta")
+	if raw := m.render(); !strings.Contains(raw, "\x1b[1;35mAPI") {
+		t.Errorf("preview not in the chosen color")
+	}
+}
+
+func TestGroupForm(t *testing.T) {
+	cfg := launcherConfig(t)
+	var saved *config.Config
+	m := newLauncherModel(cfg, func(c *config.Config) error { saved = c; return nil }, newStyles(terminalTheme))
+	m.Update(tea.WindowSizeMsg{Width: 96, Height: 24})
+	m.Update(key("g")) // on backend
+	text := screenText(m)
+	for _, want := range []string{"╭─ edit backend ─", "│ ┃ › backend", "│   [x] ● api  [x] ● db  [ ] ● web", "EDIT BACKEND", "2 projects"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q:\n%s", want, text)
+		}
+	}
+	m.Update(key("tab"))
+	m.Update(key("right"))
+	m.Update(key("right"))
+	m.Update(key("space")) // web
+	m.Update(key("ctrl+s"))
+	if saved == nil || !slices.Equal(saved.Groups["backend"], []string{"db", "api", "web"}) {
+		t.Fatalf("saved %v", saved)
 	}
 }

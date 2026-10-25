@@ -149,18 +149,9 @@ func TestProjectColorsFollowBackground(t *testing.T) {
 
 func TestFormTheme(t *testing.T) {
 	st := newStyles(tokyoNight)
-	styles := st.formTheme().Theme(true)
-	if got := styles.Focused.Title.GetForeground(); got != tokyoNight.dark.accent {
-		t.Errorf("focused title color = %v, want the accent", got)
-	}
-	if got := styles.Focused.ErrorMessage.GetForeground(); got != tokyoNight.dark.ansi[ansiRed] {
-		t.Errorf("error color = %v, want red", got)
-	}
-	st.setDark(false) // the theme follows the styles
-	if got := st.formTheme().Theme(true).Focused.Title.GetForeground(); got != tokyoNight.light.accent {
-		t.Errorf("focused title color = %v after a light background", got)
-	}
+	st.setDark(false)
 
+	// The launcher's forms follow the styles.
 	// The launcher's forms use it.
 	l := newLauncherModel(launcherConfig(t), nil, st)
 	l.Update(tea.WindowSizeMsg{Width: 96, Height: 30})

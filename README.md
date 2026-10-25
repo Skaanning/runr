@@ -222,9 +222,12 @@ are listed below them with their color, directory, branch, command and dependenc
 | `t` | Pick a color theme; the launcher previews the theme under the cursor, `enter` saves it, `esc` keeps the old one |
 | `q`, `esc` | Quit |
 
-In forms: `tab`/`enter` next field, `shift+tab` back, `space` toggles a checkbox,
-`esc` cancels. Errors show at the bottom as you go; the form can't be saved until they are
-fixed.
+In forms: `tab`/`enter` (or `↑↓`) next field, `shift+tab` back, `←→` and `space` pick
+dependencies or group members, `↑↓` on the color cycles through the named colors, `enter` in
+the environment starts a new line. `ctrl+s` saves from any field, `esc` cancels. Errors show
+under their field once you've edited or left it, and are counted in the status bar; the form
+can't be saved until they are fixed. The directory and env file are checked as you type
+(`✓ exists · git: main`), and a preview shows the project's row as the running view will.
 
 ## The running view
 

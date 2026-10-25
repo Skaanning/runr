@@ -8,7 +8,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/huh/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -107,7 +106,6 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
-		m.sizeForm()
 	case tea.ColorProfileMsg:
 		m.st.setProfile(msg.Profile)
 	case tea.BackgroundColorMsg:
@@ -196,18 +194,18 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, func() tea.Msg { return startMsg{names} }
 			}
 		case "n":
-			return m, m.openForm(newProjectForm(m.cfg, ""))
+			return m, m.openForm(newProjectForm(m.st, m.cfg, "", m.gitReader()))
 		case "e":
 			if it, ok := m.current(); ok && it.group {
-				return m, m.openForm(newGroupForm(m.cfg, it.name, nil))
+				return m, m.openForm(newGroupForm(m.st, m.cfg, it.name, nil))
 			} else if ok {
-				return m, m.openForm(newProjectForm(m.cfg, it.name))
+				return m, m.openForm(newProjectForm(m.st, m.cfg, it.name, m.gitReader()))
 			}
 		case "g":
 			if it, ok := m.current(); ok && it.group {
-				return m, m.openForm(newGroupForm(m.cfg, it.name, nil))
+				return m, m.openForm(newGroupForm(m.st, m.cfg, it.name, nil))
 			}
-			return m, m.openForm(newGroupForm(m.cfg, "", slices.Sorted(maps.Keys(m.selected))))
+			return m, m.openForm(newGroupForm(m.st, m.cfg, "", slices.Sorted(maps.Keys(m.selected))))
 		case "d":
 			if it, ok := m.current(); ok {
 				m.confirm = newDeleteConfirmation(m.cfg, it)
@@ -470,15 +468,15 @@ func (m *launcherModel) current() (launcherItem, bool) {
 
 func (m *launcherModel) openForm(f *editForm) tea.Cmd {
 	m.form = f
-	f.form.WithTheme(m.st.formTheme())
-	m.sizeForm()
-	return f.form.Init()
+	return f.init()
 }
 
-func (m *launcherModel) sizeForm() {
-	if m.form != nil && m.width > 0 {
-		m.form.form.WithWidth(max(m.width-2, 10)).WithHeight(max(m.height-4, 3))
+// gitReader returns what reads git state, or nil if git isn't installed.
+func (m *launcherModel) gitReader() GitReader {
+	if m.git == nil {
+		return nil
 	}
+	return m.git.reader
 }
 
 func (m *launcherModel) updateForm(msg tea.Msg) tea.Cmd {
@@ -492,24 +490,21 @@ func (m *launcherModel) updateForm(msg tea.Msg) tea.Cmd {
 			return nil
 		}
 	}
-	f, cmd := m.form.form.Update(msg)
-	m.form.form = f.(*huh.Form)
-	switch m.form.form.State {
-	case huh.StateCompleted:
-		return m.submitForm()
-	case huh.StateAborted:
-		m.form = nil
+	cmd := m.form.update(msg)
+	if f := m.form.form; f.done {
+		if !f.saved {
+			m.form = nil
+			return cmd
+		}
+		m.submitForm()
 	}
 	return cmd
 }
 
-// submitForm saves a completed form, or reopens it with the error shown.
-func (m *launcherModel) submitForm() tea.Cmd {
+// submitForm saves a form closed with Save, or keeps it open with the error
+// shown.
+func (m *launcherModel) submitForm() {
 	f := m.form
-	if !f.confirmed() {
-		m.form = nil
-		return nil
-	}
 	c, focus, err := f.result()
 	if err == nil {
 		_, err = c.Validate()
@@ -519,9 +514,8 @@ func (m *launcherModel) submitForm() tea.Cmd {
 	}
 	if err != nil {
 		m.notice = oneLine(err.Error())
-		f.form = f.rebuild().WithTheme(m.st.formTheme())
-		m.sizeForm()
-		return f.form.Init()
+		f.form.done = false
+		return
 	}
 	m.form = nil
 	renamed := f.original.name != "" && f.original.name != focus.name
@@ -541,7 +535,6 @@ func (m *launcherModel) submitForm() tea.Cmd {
 	if renamed {
 		m.notice += fmt.Sprintf(" (renamed from %q)", f.original.name)
 	}
-	return nil
 }
 
 func (m *launcherModel) updateConfirm(msg tea.Msg) tea.Cmd {
@@ -652,14 +645,12 @@ func (m *launcherModel) render() string {
 		return "terminal too small"
 	}
 	var header []string
-	if m.showWordmark() {
+	switch {
+	case m.form != nil: // the form's pane has the title
+	case m.showWordmark():
 		header = m.wordmarkRows()
-	} else {
-		left := " " + m.st.badge
-		if m.form != nil {
-			left += "  " + m.st.bold.Render(m.form.title)
-		}
-		header = []string{left, m.st.rule.Render(strings.Repeat("─", m.width))}
+	default:
+		header = []string{" " + m.st.badge, m.st.rule.Render(strings.Repeat("─", m.width))}
 	}
 	body := m.height - len(header) - 2
 	rows, first, last := m.rows()
@@ -672,10 +663,11 @@ func (m *launcherModel) render() string {
 	m.top = max(min(m.top, len(rows)-body), 0)
 
 	if m.form != nil {
-		rows = strings.Split(m.form.form.View(), "\n")
-		for i, r := range rows {
-			rows[i] = " " + r
+		fr := m.form.form.view(m.width-4, max(body-2, 1))
+		for len(fr) < body-2 {
+			fr = append(fr, "")
 		}
+		rows = framed(m.st, m.st.heading.Render(m.form.title), m.st.faint.Render("ctrl+s save"), fr, m.width)
 		m.top = 0
 	}
 	if m.confirm != nil {
@@ -686,7 +678,7 @@ func (m *launcherModel) render() string {
 		m.top = 0
 	}
 	if m.picker != nil {
-		rows = framed(m.st, m.picker.titleText(), m.picker.view(m.width-4, max(body-2, 0)), m.width)
+		rows = framed(m.st, m.picker.titleText(), "", m.picker.view(m.width-4, max(body-2, 0)), m.width)
 		m.top = 0
 	}
 	if m.output != nil {
@@ -721,6 +713,8 @@ func (m *launcherModel) statusBar() string {
 	switch {
 	case m.form != nil:
 		b.mode = strings.ToUpper(m.form.title)
+		b.info, b.project = m.form.statusInfo(m.st), m.form.context()
+		return m.st.statusBar(b, m.width)
 	case m.confirm != nil:
 		b.mode, b.color = "DELETE", m.st.pal.ansi[ansiRed]
 	case m.output != nil:
@@ -856,11 +850,6 @@ func (m *launcherModel) help() string {
 			{"type", "to filter"}, {"↑↓", "select"}, {"enter", m.picker.action}, {"esc", "cancel"},
 		}), m.width, "…")
 	}
-	if m.form != nil {
-		if errs := m.form.form.Errors(); len(errs) > 0 {
-			return ansi.Truncate(" "+m.st.err.Render("✗ "+oneLine(errs[0].Error())), m.width, "…")
-		}
-	}
 	move := "↑↓"
 	if m.groupCount() > 1 {
 		move = "↑↓←→"
@@ -877,7 +866,7 @@ func (m *launcherModel) help() string {
 	keys = append(keys, [2]string{"t", "theme"}, [2]string{"q", "quit"})
 	switch {
 	case m.form != nil:
-		keys = [][2]string{{"tab/enter", "next"}, {"shift+tab", "back"}, {"space", "toggle"}, {"esc", "cancel"}}
+		return m.formHints()
 	case m.confirm != nil:
 		keys = [][2]string{{"y", "delete"}, {"n", "cancel"}}
 	}
@@ -886,4 +875,21 @@ func (m *launcherModel) help() string {
 		parts[i] = m.st.hint(k[0], k[1])
 	}
 	return m.st.fitHints(parts, m.width)
+}
+
+// formHints renders the form's key hints. When narrow, shift+tab goes
+// first, then tab, then hints from the middle.
+func (m *launcherModel) formHints() string {
+	keys := m.form.form.keyHints()
+	for _, drop := range []string{"", "shift+tab", "tab"} {
+		keys = slices.DeleteFunc(keys, func(k [2]string) bool { return k[0] == drop })
+		if line := " " + m.st.hintList(keys); ansi.StringWidth(line) <= m.width || drop == "tab" {
+			parts := make([]string, len(keys))
+			for i, k := range keys {
+				parts[i] = m.st.hint(k[0], k[1])
+			}
+			return m.st.fitHints(parts, m.width)
+		}
+	}
+	return ""
 }
