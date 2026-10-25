@@ -14,7 +14,7 @@ import (
 const (
 	// formColumnsMinWidth is the narrowest form, inside its pane, that shows
 	// its sections in two columns.
-	formColumnsMinWidth = 76
+	formColumnsMinWidth = 88
 	formColumnGap       = 2
 	envLines            = 3 // rows of a text field
 )

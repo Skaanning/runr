@@ -9,14 +9,20 @@ waits until they are ready, interleaves everyone's output, and shuts everything 
 reverse order when you quit.
 
 ```
- runr · backend + web                                          combined · following
- ──────────────┬────────────────────────────────────────────────────────────────────
- ▸ ● db        │ db     database system is ready to accept connections
-   ● api       │ api    listening on :8080
-   ✗ worker  1 │ worker panic: missing QUEUE_URL
-   ◐ web       │ web    waiting for api
- ──────────────┴────────────────────────────────────────────────────────────────────
- ↑↓ select  tab view  r restart  s stop  + start  / search  f follow  q quit
+╭─ processes ──────────────────────╮╭─ logs · combined ──────────────────────── following ─╮
+│  ● db        10s ▁▁▁▁▁▄▁▁        ││ api    2026/10/25 11:20:17 GET /users 23µs           │
+│ ▌● api        9s ▁▁▁▁▁▄▃▃ master ││ web    11:20:17 AM fetched 2 users from api          │
+│  ✗ worker exit 1 ▁▁▁▁▁▂▂▁        ││ worker panic: missing QUEUE_URL                      │
+│  ● web       10s ▁▁▁▁▁▄▃▃        ││ worker crashed (exit code 1)                         │
+│                                  ││ api    2026/10/25 11:20:19 GET /users 24µs           │
+│                                  ││ web    11:20:19 AM fetched 2 users from api          │
+│                                  ││ api    2026/10/25 11:20:21 GET /users 30µs           │
+│                                  ││ web    11:20:21 AM fetched 2 users from api          │
+│                                  ││ api    2026/10/25 11:20:23 GET /users 5µs            │
+│                                  ││ web    11:20:23 AM fetched 2 users from api          │
+╰──────────────────────────────────╯╰──────────────────────────────────────────────────────╯
+  FOLLOW  backend + web  ● 3 ✗ 1                                       api · master  11:20
+  ↑↓  select  tab  view  r  restart  s  stop  +  group  b  branch  p  pull  q  quit
 ```
 
 Works on Linux, macOS and Windows.
@@ -207,6 +213,30 @@ start them in the running view, or manage the registry with in-TUI forms. Groups
 cards with a colored dot per member, side by side as far as the terminal is wide; projects
 are listed below them with their color, directory, branch, command and dependencies.
 
+```
+   ┏━┓╻ ╻┏┓╻┏━┓
+   ┣┳┛┃ ┃┃┗┫┣┳┛   4 projects · 2 groups
+   ╹┗╸┗━┛╹ ╹╹┗╸
+
+   Groups
+   ╭─ all ──────────────────────────── 3 ─╮  ╭─ backend ──────────────────────── 3 ─╮
+   │ [-] ● db  ● api  ● web               │  │ [-] ● db  ● api  ● worker            │
+   ╰──────────────────────────────────────╯  ╰──────────────────────────────────────╯
+
+   Projects
+   [ ] ● api     ~/code/api    master  go run . · needs db
+ ▸ [x] ● db      ~/code/infra          go run .
+   [ ] ● web     ~/code/web            npm run dev
+   [ ] ● worker  ~/code/infra          echo connecting to queue; sleep 3; echo "panic: miss…
+
+  SELECT  4 projects · 2 groups · 1 selected                                     db  11:20
+  ↑↓←→  move  space  select  enter  start  n  new  e  edit  g  group  d  delete  q  quit
+```
+
+The bottom line is the status bar: what the launcher is doing (`SELECT`, `NEW PROJECT`,
+`SWITCH`, …), how much is registered and selected, and the project under the cursor with its
+branch. On terminals shorter than 20 rows the `runr` mark makes room for the list.
+
 | Key | Action |
 |---|---|
 | `↑` `↓`, `home` `end` | Move: through the group cards row by row, then down the project list |
@@ -231,20 +261,29 @@ can't be saved until they are fixed. The directory and env file are checked as y
 
 ## The running view
 
-The sidebar lists the processes with their state; the main area shows their output —
-either all of them interleaved (the combined view) or just the selected one. Below them,
-under `not running`, the sidebar lists the other registered projects, dimmed; select one and
-press `s` or `enter` to start it (with its dependencies). Turn that list off with
+The `processes` pane lists the processes with their state, how long they've been running
+(or `exit 1` in red once they crashed), a sparkline of their output over the last 32 seconds
+and their git branch; on narrow terminals the sparkline goes first, then the uptime, then
+the branch. The `logs` pane shows their output — either all of them interleaved (the
+combined view) or just the selected one — with `following`, or `paused · 12 more below` once
+you scroll up, in its border. The status bar below shows the mode (`FOLLOW`, `PAUSED`,
+`SEARCH`, `STOPPING`, …), the session, how many processes are running, starting and failed,
+the selected project's branch and the time. Terminals smaller than 50×10 get a compact
+layout without the pane borders.
+
+Below the session's processes, under `not running`, the `processes` pane lists the other
+registered projects, dimmed; select one and press `s` or `enter` to start it (with its
+dependencies). Turn that list off with
 `show_all = false` in `[settings]`, or toggle it for a session with `a`. When something
 crashes or is blocked, a toast in the corner of the output says so for 5 seconds.
 
 | Icon | State |
 |---|---|
 | `○` | pending |
-| `◐` | waiting for dependencies, or started but its `ready_log` hasn't matched yet |
+| `⠋` (spinning) | waiting for dependencies, or started but its `ready_log` hasn't matched yet; faint while stopping |
 | `●` | running (ready) |
 | `✓` | exited with code 0 |
-| `✗` | crashed — non-zero exit code shown next to it |
+| `✗` | crashed — the exit code is shown next to it |
 | `■` | stopped by you |
 | `⊘` | blocked: a dependency ended before it became ready |
 
@@ -280,9 +319,9 @@ When `git` is installed, the sidebar and the launcher show the branch of the rep
 each project's `dir` is in, with markers:
 
 ```
- ▸ ● api     feat/login * ↓2
-   ● web     main ↑1
-   ✗ worker  (a1b2c3d) !
+│ ▌● api     4m02s ▁▂▃▅▃▂▁▂ feat/login * ↓2 │
+│  ● web     3m58s ▁▁▂▁▁▂▁▁ main ↑1         │
+│  ✗ worker exit 1 ▁▁▁▁▁▃▇▁ (a1b2c3d) !     │
 ```
 
 | Marker | Meaning |
@@ -360,5 +399,5 @@ is left to you:
 - **The terminal kept runr's background after runr was killed:** runr restores the colors when
   it exits, but not when it's killed with `SIGKILL`. Run `reset`, or
   `printf '\e]110\a\e]111\a'`.
-- **A project is stuck at `◐`:** it is waiting for a dependency, or its `ready_log` hasn't
+- **A project's spinner keeps spinning:** it is waiting for a dependency, or its `ready_log` hasn't
   matched. Select it and press `tab` to see its log; runr's lines say what it's waiting for.
