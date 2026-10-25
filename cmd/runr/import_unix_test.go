@@ -34,7 +34,7 @@ func fakeDocker() {
 
 // TestImportedGroupStarts imports the fixtures and runs their groups: the
 // compose services start in dependency order, each once the one before it
-// listens on its port.
+// listens on its port or, for the one-shot migrate, has exited.
 func TestImportedGroupStarts(t *testing.T) {
 	testEnv(t)
 	for _, port := range []string{"47811", "47812"} {
@@ -60,21 +60,23 @@ func TestImportedGroupStarts(t *testing.T) {
 	out := mustRun(t, "up", "--plain", "shop")
 	var order []string
 	for _, line := range strings.Split(out, "\n") {
-		for _, event := range []string{"starting: docker compose up", "ready"} {
-			if strings.Contains(line, event) {
+		for _, event := range []string{"starting: docker compose up", "ready", "exited"} {
+			// The others exit on their own a moment later, in any order.
+			if strings.Contains(line, event) && (event != "exited" || strings.HasPrefix(line, "migrate")) {
 				order = append(order, strings.Fields(line)[0]+" "+event)
 			}
 		}
 	}
 	want := []string{
 		"db starting: docker compose up", "db ready",
+		"migrate starting: docker compose up", "migrate exited", // one-shot
 		"api starting: docker compose up", "api ready",
 		"web starting: docker compose up",
 	}
 	if strings.Join(order, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("order:\n%s\nwant:\n%s\noutput:\n%s", strings.Join(order, "\n"), strings.Join(want, "\n"), out)
 	}
-	for _, svc := range []string{"db", "api", "web"} {
+	for _, svc := range []string{"db", "migrate", "api", "web"} {
 		if !strings.Contains(out, "fake compose up --no-deps --no-log-prefix "+svc) {
 			t.Errorf("%s didn't run:\n%s", svc, out)
 		}

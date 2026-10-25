@@ -130,7 +130,13 @@ services:
   worker:
     build: ./api
     profiles: [jobs]
-    depends_on: { db: { condition: service_started } }
+    depends_on:
+      db: { condition: service_started }
+      migrate: { condition: service_completed_successfully }
+  migrate:
+    build: ./api
+    command: ./migrate
+    ports: ["9999:9999"]
 `
 
 func TestCompose(t *testing.T) {
@@ -147,7 +153,8 @@ func TestCompose(t *testing.T) {
 		{Name: "cache", Args: up("cache"), Port: 16379},
 		{Name: "api", Args: up("api"), DependsOn: []string{"db", "cache"}, Port: 8080},
 		{Name: "web", Args: up("web"), DependsOn: []string{"api"}, Port: 3000},
-		{Name: "worker", Args: up("worker"), DependsOn: []string{"db"}},
+		{Name: "worker", Args: up("worker"), DependsOn: []string{"db", "migrate"}},
+		{Name: "migrate", Args: up("migrate"), OneShot: true}, // its port is dropped
 	}
 	if !reflect.DeepEqual(f.Services, want) {
 		t.Fatalf("services =\n%+v\nwant\n%+v", f.Services, want)

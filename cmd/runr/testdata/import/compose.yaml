@@ -4,11 +4,17 @@ services:
     image: postgres:17
     ports:
       - "127.0.0.1:47811:5432"
+  migrate:
+    build: ./api
+    command: ./migrate
+    depends_on: [db]
   api:
     build: ./api
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     ports:
       - target: 80
         published: 47812

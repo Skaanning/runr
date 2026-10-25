@@ -27,10 +27,11 @@ func TestImportCompose(t *testing.T) {
 	path := fixture(t, "compose.yaml")
 	out := mustRun(t, "import", path)
 	for _, want := range []string{
-		"Imported 3 projects from ",
-		"db       docker compose up --no-deps --no-log-prefix db               port 47811",
-		"api      docker compose up --no-deps --no-log-prefix api  db          port 47812",
-		"web      docker compose up --no-deps --no-log-prefix web  api",
+		"Imported 4 projects from ",
+		"db       docker compose up --no-deps --no-log-prefix db                    port 47811",
+		"migrate  docker compose up --no-deps --no-log-prefix migrate  db           on exit (one-shot)",
+		"api      docker compose up --no-deps --no-log-prefix api      db, migrate  port 47812",
+		"web      docker compose up --no-deps --no-log-prefix web      api",
 		`Created group "shop"; start it with: runr up shop`,
 	} {
 		if !strings.Contains(out, want) {
@@ -41,14 +42,15 @@ func TestImportCompose(t *testing.T) {
 	c := loadConfig(t)
 	dir := filepath.Dir(path)
 	want := map[string]*config.Project{
-		"db":  {Dir: dir, Cmd: "docker compose up --no-deps --no-log-prefix db", ReadyPort: 47811},
-		"api": {Dir: dir, Cmd: "docker compose up --no-deps --no-log-prefix api", DependsOn: []string{"db"}, ReadyPort: 47812},
-		"web": {Dir: dir, Cmd: "docker compose up --no-deps --no-log-prefix web", DependsOn: []string{"api"}},
+		"db":      {Dir: dir, Cmd: "docker compose up --no-deps --no-log-prefix db", ReadyPort: 47811},
+		"migrate": {Dir: dir, Cmd: "docker compose up --no-deps --no-log-prefix migrate", DependsOn: []string{"db"}, Ready: config.ReadyExit},
+		"api":     {Dir: dir, Cmd: "docker compose up --no-deps --no-log-prefix api", DependsOn: []string{"db", "migrate"}, ReadyPort: 47812},
+		"web":     {Dir: dir, Cmd: "docker compose up --no-deps --no-log-prefix web", DependsOn: []string{"api"}},
 	}
 	if !reflect.DeepEqual(c.Projects, want) {
 		t.Fatalf("projects = %+v", c.Projects)
 	}
-	if got := c.Groups["shop"]; !reflect.DeepEqual(got, []string{"db", "api", "web"}) {
+	if got := c.Groups["shop"]; !reflect.DeepEqual(got, []string{"db", "migrate", "api", "web"}) {
 		t.Fatalf("group shop = %v", got)
 	}
 }
@@ -91,7 +93,7 @@ func TestImportClashes(t *testing.T) {
 
 	mustRun(t, "import", path, "--prefix", "shop-", "--no-group")
 	c := loadConfig(t)
-	if got := c.Projects["shop-api"]; got == nil || !reflect.DeepEqual(got.DependsOn, []string{"shop-db"}) {
+	if got := c.Projects["shop-api"]; got == nil || !reflect.DeepEqual(got.DependsOn, []string{"shop-db", "shop-migrate"}) {
 		t.Fatalf("shop-api = %+v", got)
 	}
 	if len(c.Groups) != 2 {
@@ -112,8 +114,9 @@ func TestImportDryRun(t *testing.T) {
 	for _, want := range []string{
 		"# runr import --dry-run: would add to ",
 		"[projects.api]\n",
-		"cmd = 'docker compose up --no-deps --no-log-prefix api'\ndepends_on = ['db']\nready_port = 47812\n",
-		"[groups]\nshop = ['db', 'api', 'web']\n",
+		"cmd = 'docker compose up --no-deps --no-log-prefix api'\ndepends_on = ['db', 'migrate']\nready_port = 47812\n",
+		"cmd = 'docker compose up --no-deps --no-log-prefix migrate'\ndepends_on = ['db']\nready = 'exit'\n",
+		"[groups]\nshop = ['db', 'migrate', 'api', 'web']\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
@@ -122,7 +125,7 @@ func TestImportDryRun(t *testing.T) {
 	// The printed TOML is a valid config.
 	file := filepath.Join(t.TempDir(), "c.toml")
 	os.WriteFile(file, []byte(out), 0o600)
-	if c, err := config.Load(file); err != nil || len(c.Projects) != 3 {
+	if c, err := config.Load(file); err != nil || len(c.Projects) != 4 {
 		t.Fatalf("Load(dry-run output) = %v, %v", c, err)
 	}
 }

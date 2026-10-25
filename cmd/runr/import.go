@@ -215,6 +215,9 @@ func importedProjects(file *importer.File, prefix string) (projects map[string]*
 		if svc.Args != nil {
 			p.Cmd = joinCommand(svc.Args)
 		}
+		if svc.OneShot {
+			p.Ready = config.ReadyExit
+		}
 		for _, dep := range svc.DependsOn {
 			p.DependsOn = append(p.DependsOn, names[dep])
 		}

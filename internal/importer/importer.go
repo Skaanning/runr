@@ -34,8 +34,12 @@ type Service struct {
 	Args []string
 	// DependsOn names other services of the same file.
 	DependsOn []string
-	// Port is the first TCP port published on the host, 0 if none.
+	// Port is the first TCP port published on the host, 0 if none or if
+	// the service is a one-shot task.
 	Port int
+	// OneShot is set for a compose service that another one waits for with
+	// condition: service_completed_successfully.
+	OneShot bool
 }
 
 // File is the result of reading a file.

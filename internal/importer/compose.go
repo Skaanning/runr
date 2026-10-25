@@ -36,6 +36,7 @@ func parseCompose(data []byte, fileArg string) (name string, services []Service,
 	}
 
 	known := map[string]bool{}
+	oneShot := map[string]bool{} // waited for with service_completed_successfully
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		key := root.Content[i]
 		if known[key.Value] {
@@ -49,7 +50,7 @@ func parseCompose(data []byte, fileArg string) (name string, services []Service,
 		if err := value.Decode(&svc); err != nil {
 			return "", nil, fmt.Errorf("service %s: %w", key.Value, err)
 		}
-		deps, err := dependsOn(&svc.DependsOn)
+		deps, completed, err := dependsOn(&svc.DependsOn)
 		if err != nil {
 			return "", nil, fmt.Errorf("service %s: %w", key.Value, err)
 		}
@@ -57,6 +58,9 @@ func parseCompose(data []byte, fileArg string) (name string, services []Service,
 			if !known[dep] {
 				return "", nil, fmt.Errorf("service %s depends on %s, which isn't in the file", key.Value, dep)
 			}
+		}
+		for _, dep := range completed {
+			oneShot[dep] = true
 		}
 
 		args := []string{"docker", "compose"}
@@ -71,6 +75,11 @@ func parseCompose(data []byte, fileArg string) (name string, services []Service,
 			Port:      firstHostPort(svc.Ports),
 		})
 	}
+	for i := range services {
+		if oneShot[services[i].Name] {
+			services[i].OneShot, services[i].Port = true, 0
+		}
+	}
 	return f.Name, services, nil
 }
 
@@ -83,10 +92,10 @@ func resolve(n *yaml.Node) *yaml.Node {
 }
 
 // dependsOn reads depends_on in either form: a list of service names, or a
-// map from service name to options (whose conditions are ignored).
-func dependsOn(n *yaml.Node) ([]string, error) {
+// map from service name to options. completed lists the dependencies with
+// condition service_completed_successfully; other conditions are ignored.
+func dependsOn(n *yaml.Node) (deps, completed []string, err error) {
 	n = resolve(n)
-	var deps []string
 	switch n.Kind {
 	case 0:
 	case yaml.SequenceNode:
@@ -94,13 +103,20 @@ func dependsOn(n *yaml.Node) ([]string, error) {
 			deps = append(deps, resolve(item).Value)
 		}
 	case yaml.MappingNode:
-		for i := 0; i < len(n.Content); i += 2 {
-			deps = append(deps, n.Content[i].Value)
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			dep := n.Content[i].Value
+			deps = append(deps, dep)
+			var opts struct {
+				Condition string `yaml:"condition"`
+			}
+			if resolve(n.Content[i+1]).Decode(&opts) == nil && opts.Condition == "service_completed_successfully" {
+				completed = append(completed, dep)
+			}
 		}
 	default:
-		return nil, fmt.Errorf("line %d: depends_on: expected a list or a mapping", n.Line)
+		return nil, nil, fmt.Errorf("line %d: depends_on: expected a list or a mapping", n.Line)
 	}
-	return deps, nil
+	return deps, completed, nil
 }
 
 // firstHostPort is the first TCP port that ports publishes on the host, in

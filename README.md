@@ -89,9 +89,11 @@ runr up shop                      # the group named after the compose name or th
   next to it becomes the projects' `env_file`, as foreman and overmind would load it.
 - **Compose**: one project per service, run as
   `docker compose [-f <file>] up --no-deps --no-log-prefix <service>`. `--no-deps` leaves
-  starting the dependencies to runr, from `depends_on` (conditions are ignored); a service
-  with a published TCP port gets that host port as `ready_port`. Images, builds,
-  environment and profiles stay in the compose file.
+  starting the dependencies to runr, from `depends_on`. A service with a published TCP port
+  gets that host port as `ready_port`. A service that another one waits for with
+  `condition: service_completed_successfully` (a migration, say) becomes a one-shot task
+  (`ready = "exit"`) instead; other conditions are ignored. Images, builds, environment and
+  profiles stay in the compose file.
 - `runr import <file>` imports a file of any name (`--format procfile|compose` if the name
   doesn't tell), `runr import <dir>` searches that directory.
 - `--group <name>` names the group, `--no-group` skips it; `--prefix <p>` puts `<p>` in front
