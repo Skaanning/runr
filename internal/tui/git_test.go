@@ -6,6 +6,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -32,7 +33,14 @@ type fakeGit struct {
 	pulls    []string                  // root of each Pull call
 	pullOut  string                    // output of Pull
 	pullErr  error                     // returned by Pull
+	pullErrs map[string]error          // by root: returned by Pull instead of pullErr
 	pulledTo map[string]gitinfo.Status // by root: status after a successful Pull
+
+	fetchMu   sync.Mutex                // Fetch runs concurrently
+	fetches   []string                  // root of each Fetch call
+	fetchOut  string                    // output of Fetch
+	fetchErrs map[string]error          // by root: returned by Fetch
+	fetchedTo map[string]gitinfo.Status // by root: status after a successful Fetch
 }
 
 func (f *fakeGit) FindAll(_ context.Context, dirs map[string]string) gitinfo.Repos {
@@ -75,10 +83,25 @@ func (f *fakeGit) Switch(_ context.Context, repo gitinfo.Repo, b gitinfo.Branch)
 
 func (f *fakeGit) Pull(_ context.Context, repo gitinfo.Repo) (string, error) {
 	f.pulls = append(f.pulls, repo.Root)
-	if s, ok := f.pulledTo[repo.Root]; ok && f.pullErr == nil {
+	err := f.pullErr
+	if e, ok := f.pullErrs[repo.Root]; ok {
+		err = e
+	}
+	if s, ok := f.pulledTo[repo.Root]; ok && err == nil {
 		f.status[repo.Root] = s
 	}
-	return f.pullOut, f.pullErr
+	return f.pullOut, err
+}
+
+func (f *fakeGit) Fetch(_ context.Context, repo gitinfo.Repo) (string, error) {
+	f.fetchMu.Lock()
+	defer f.fetchMu.Unlock()
+	f.fetches = append(f.fetches, repo.Root)
+	err := f.fetchErrs[repo.Root]
+	if s, ok := f.fetchedTo[repo.Root]; ok && err == nil {
+		f.status[repo.Root] = s
+	}
+	return f.fetchOut, err
 }
 
 func testGit() *fakeGit {

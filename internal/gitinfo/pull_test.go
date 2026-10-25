@@ -155,3 +155,56 @@ func TestErrorLine(t *testing.T) {
 		t.Errorf("no error line: got %q", got)
 	}
 }
+
+func TestFetch(t *testing.T) {
+	g := newGit(t)
+	upstream, clone := newClone(t)
+	repo, err := g.Find(context.Background(), clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := status(t, g, clone).Commit
+
+	writeFile(t, filepath.Join(upstream, "f"), "two\n")
+	git(t, upstream, "commit", "-q", "-am", "two")
+	if out, err := g.Fetch(context.Background(), repo); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	// The remote-tracking branch moved; the working tree didn't.
+	if s := status(t, g, clone); s.Commit != before || s.Behind != 1 {
+		t.Errorf("after fetch: %+v", s)
+	}
+
+	t.Setenv("LC_ALL", "C")
+	git(t, clone, "remote", "set-url", "origin", filepath.Join(t.TempDir(), "gone"))
+	if _, err := g.Fetch(context.Background(), repo); err == nil || !strings.HasPrefix(err.Error(), "git fetch: ") {
+		t.Errorf("missing remote: err = %v", err)
+	}
+}
+
+func TestFetchSSHCommand(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses shell scripts")
+	}
+	g := newGit(t)
+	_, clone := newClone(t)
+	git(t, clone, "remote", "set-url", "origin", "ssh://git.example.invalid/repo.git")
+	repo, err := g.Find(context.Background(), clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsetenv(t, "GIT_SSH_COMMAND")
+	unsetenv(t, "GIT_SSH")
+	prog := filepath.Join(realDir(t), "ssh")
+	writeFile(t, prog, "#!/bin/sh\necho \"$@\" >> '"+prog+".log'\nexit 1\n")
+	if err := os.Chmod(prog, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(t, clone, "config", "core.sshCommand", prog+" -i key")
+	if _, err := g.Fetch(context.Background(), repo); err == nil {
+		t.Fatal("fetch succeeded")
+	}
+	if args, _ := os.ReadFile(prog + ".log"); !strings.HasPrefix(string(args), "-i key -o BatchMode=yes ") {
+		t.Errorf("ssh ran with %q", args)
+	}
+}

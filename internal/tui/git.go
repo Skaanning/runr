@@ -22,6 +22,7 @@ type GitReader interface {
 	Branches(ctx context.Context, repo gitinfo.Repo) ([]gitinfo.Branch, error)
 	Switch(ctx context.Context, repo gitinfo.Repo, b gitinfo.Branch) (string, error)
 	Pull(ctx context.Context, repo gitinfo.Repo) (string, error)
+	Fetch(ctx context.Context, repo gitinfo.Repo) (string, error)
 }
 
 const (

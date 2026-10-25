@@ -44,7 +44,7 @@ func follow(t *testing.T, m *runningModel, cmd tea.Cmd) {
 		return
 	}
 	switch msg := cmd().(type) {
-	case branchesMsg, switchedMsg, pullCheckMsg, pulledMsg:
+	case branchesMsg, switchedMsg, pullCheckMsg, pulledMsg, fetchedAllMsg, pulledAllMsg:
 		_, next := m.Update(msg)
 		follow(t, m, next)
 	case tea.BatchMsg:
@@ -398,7 +398,7 @@ func launcherFollow(t *testing.T, m *launcherModel, cmd tea.Cmd) tea.Cmd {
 		return nil
 	}
 	switch msg := cmd().(type) {
-	case branchesMsg, switchedMsg, pullCheckMsg, pulledMsg:
+	case branchesMsg, switchedMsg, pullCheckMsg, pulledMsg, fetchedAllMsg, pulledAllMsg:
 		_, next := m.Update(msg)
 		return launcherFollow(t, m, next)
 	case tea.BatchMsg:
@@ -431,7 +431,7 @@ func TestLauncherSwitchBranch(t *testing.T) {
 	}
 
 	launcherPress(t, m, "down") // api
-	if got := launcherHelp(m); !strings.Contains(got, "d  delete  b  branch  p  pull  t  theme  q  quit") {
+	if got := launcherHelp(m); !strings.Contains(got, "d  delete  b  branch  p  pull  F  fetch all") || !strings.HasSuffix(got, "q  quit") {
 		t.Errorf("help = %q", got)
 	}
 	launcherPress(t, m, "b")

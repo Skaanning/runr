@@ -268,6 +268,8 @@ branch. On terminals shorter than 20 rows the `runr` mark makes room for the lis
 | `d` | Delete, after confirmation that lists the affected groups and dependents |
 | `b` | Switch the git branch of the project under the cursor (see [Git](#git)) |
 | `p` | Pull the git repository of the project under the cursor (`git pull --ff-only`), after confirming |
+| `F` | Fetch the git repositories of all registered projects |
+| `P` | Pull the git repositories of the selection, or of the group or project under the cursor, after confirming |
 | `t` | Pick a color theme; the launcher previews the theme under the cursor, `enter` saves it, `esc` keeps the old one |
 | `q`, `esc` | Quit |
 
@@ -321,6 +323,8 @@ so for 5 seconds.
 | `o` | Open the selected process's port (`http://localhost:<port>`) in the browser; asks which one when it listens on several |
 | `b` | Switch the selected project's git repository to another branch (see [Git](#git)) |
 | `p` | Pull the selected project's git repository (`git pull --ff-only`), after confirming |
+| `F` | Fetch the git repositories of every project in the session |
+| `P` | Pull the git repositories of every project in the session, after confirming |
 | `/` | Search the output; `enter` jumps to the newest match, `esc` cancels |
 | `n` / `N` | Next newer / older match |
 | `esc` | Clear the search |
@@ -382,7 +386,7 @@ the branch of the repository each project's `dir` is in, with markers:
 | `?` (faint) | the state can't be read, e.g. git refuses the directory ("dubious ownership") |
 
 Projects outside a repository show nothing. The state is read every 5 seconds and after
-each action; runr never fetches on its own.
+each action; runr never fetches on its own — press `F` to update `↑n` / `↓n`.
 
 `b` (switch branch) and `p` (pull) work in the launcher and the running view. They act on the
 selected project's repository, and only in the simple cases — anything that needs a decision
@@ -405,6 +409,20 @@ is left to you:
 - In the running view, git's output goes to the selected project's log, and a short summary
   or error to the bottom line. In the launcher, git's output is shown when it fails. Running processes are not restarted; press `r` if your dev server doesn't
   reload by itself.
+
+`F` and `P` do the same for every repository at once — in the running view those of the
+session's projects; in the launcher `F` covers all registered projects and `P` the selection
+(or the group or project under the cursor):
+
+- `F` runs `git fetch` in each repository, four at a time, then reads the state again, so
+  the `↑n` / `↓n` markers are current. The bottom line sums it up (`fetched 3 repos ·
+  1 failed`); failures go to the projects' logs (in the launcher: shown in place of the
+  list).
+- `P` asks first, listing the repositories (`Pull 2 repos? infra (db) · app (api, worker)`),
+  then pulls them one at a time like `p`. Repositories that `p` would refuse (uncommitted
+  changes, no upstream, …) are skipped, not fatal. The bottom line sums it up (`pulled 2 ·
+  up to date 1 · skipped 1`), with the details in each project's log (in the launcher: the
+  skipped and failed ones in place of the list).
 - git never prompts: it gets no input, credential prompts are off and `ssh` runs in
   batch mode, so a pull that needs a password or passphrase fails instead of hanging — use
   an SSH agent or a credential helper. A `GIT_SSH_COMMAND` of your own is used as is; a

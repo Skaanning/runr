@@ -42,6 +42,7 @@ type launcherModel struct {
 	picker   *picker         // open branch or theme picker, or nil
 	ask      *question       // open question in the help line (pull?), or nil
 	output   []string        // output of a failed git action, shown until the next key
+	skipped  bool            // output is about skipped repositories only (P), not failures
 
 	git       *gitTracker // nil: git is not installed
 	gitStale  bool        // the config or a repository changed; refresh the git state
@@ -138,6 +139,16 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pulled(msg)
 		}
 		return m, nil
+	case fetchedAllMsg:
+		if msg.owner == m {
+			m.fetchedAll(msg)
+		}
+		return m, nil
+	case pulledAllMsg:
+		if msg.owner == m {
+			m.pulledAll(msg)
+		}
+		return m, nil
 	case leftoversMsg:
 		if msg.owner == m {
 			m.notice, m.cleaning = msg.report, false
@@ -222,6 +233,10 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "b":
 			return m, m.openBranches()
+		case "F":
+			return m, m.fetchAllRepos()
+		case "P":
+			m.confirmPullAll()
 		case "p":
 			return m, m.openPull()
 		case "t":
@@ -403,7 +418,7 @@ func (m *launcherModel) switched(msg switchedMsg) {
 	}
 	m.gitStale = true
 	if msg.err != nil {
-		m.output = switchLines(msg)
+		m.output, m.skipped = switchLines(msg), false
 		m.notice = msg.err.Error()
 		return
 	}
@@ -451,7 +466,7 @@ func (m *launcherModel) pulled(msg pulledMsg) {
 	}
 	m.gitStale = true
 	if msg.err != nil {
-		m.output = pullLines(msg)
+		m.output, m.skipped = pullLines(msg), false
 		m.notice = msg.err.Error()
 		return
 	}
@@ -727,6 +742,8 @@ func (m *launcherModel) statusBar() string {
 		return m.st.statusBar(b, m.width)
 	case m.confirm != nil:
 		b.mode, b.color = "DELETE", m.st.pal.ansi[ansiRed]
+	case m.output != nil && m.skipped:
+		b.mode, b.color = "SKIPPED", m.st.pal.ansi[ansiYellow]
 	case m.output != nil:
 		b.mode, b.color = "FAILED", m.st.pal.ansi[ansiRed]
 	case m.picker != nil:
@@ -872,6 +889,9 @@ func (m *launcherModel) help() string {
 		if _, ok := m.git.get(it.name); ok {
 			keys = append(keys, [2]string{"b", "branch"}, [2]string{"p", "pull"})
 		}
+	}
+	if m.git != nil && len(m.git.repos.ByRoot) > 0 {
+		keys = append(keys, [2]string{"F", "fetch all"}, [2]string{"P", "pull all"})
 	}
 	keys = append(keys, [2]string{"t", "theme"}, [2]string{"q", "quit"})
 	switch {

@@ -354,6 +354,14 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 			cmd = tea.Batch(cmd, func() tea.Msg { sess.RememberPorts(seen); return nil })
 		}
 		return cmd
+	case fetchedAllMsg:
+		if msg.owner == m {
+			return m.fetchedAll(msg)
+		}
+	case pulledAllMsg:
+		if msg.owner == m {
+			return m.pulledAll(msg)
+		}
 	case leftoversMsg:
 		if msg.owner == m {
 			m.notice = msg.report
@@ -545,6 +553,10 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		return m.openPull()
 	case "o":
 		return m.openPorts()
+	case "F":
+		return m.fetchAllRepos()
+	case "P":
+		m.confirmPullAll()
 	case "w":
 		return m.saveLog()
 	case "r":
@@ -1469,6 +1481,9 @@ func (m *runningModel) help() string {
 		if _, ok := m.git.get(name); ok {
 			keys = append(keys, [2]string{"b", "branch"}, [2]string{"p", "pull"})
 		}
+	}
+	if m.git != nil && len(m.git.repos.ByRoot) > 0 {
+		keys = append(keys, [2]string{"F", "fetch all"}, [2]string{"P", "pull all"})
 	}
 	keys = append(keys, [][2]string{
 		{"/", "search"}, {"pgup/pgdn", "scroll"}, {"g/G", "top/bottom"}, {"f", "follow"}, {"w", "save"},
