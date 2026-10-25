@@ -237,6 +237,22 @@ func TestPlainPrinterSystemLines(t *testing.T) {
 	}
 }
 
+func TestPlainPrinterProgramColors(t *testing.T) {
+	cfg := plainConfig(t, map[string]*config.Project{"db": {Cmd: "x", Color: "cyan"}})
+	line := supervisor.LineEvent{Line: supervisor.LogLine{Project: "db", Stream: supervisor.Stdout, Text: "\x1b[32mok\x1b[0m \x1b]8;;http://x\x07link\x1b]8;;\x07"}}
+
+	var out bytes.Buffer
+	newPlainPrinter(&out, cfg, []string{"db"}, truecolor).event(line)
+	if want := "\x1b[36mdb  \x1b[0m │ \x1b[32mok\x1b[0m \x1b]8;;http://x\x07link\x1b]8;;\x07\x1b[0m\n"; out.String() != want {
+		t.Errorf("with color: %q, want %q", out.String(), want)
+	}
+	out.Reset()
+	newPlainPrinter(&out, cfg, []string{"db"}, plainColors{}).event(line)
+	if want := "db   │ ok link\n"; out.String() != want {
+		t.Errorf("without color: %q, want %q", out.String(), want)
+	}
+}
+
 func TestPlainPrinterThemeColors(t *testing.T) {
 	cfg := plainConfig(t, map[string]*config.Project{
 		"api": {Cmd: "x", Color: "red"},

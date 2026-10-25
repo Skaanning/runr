@@ -141,7 +141,9 @@ With `edit`, a flag given an empty value (e.g. `--color=`) clears that field.
 
 If `runr up` isn't connected to a terminal (piped, or run from a script), it prints the
 interleaved output with a name prefix instead of opening the UI, and exits once all
-processes have finished — with exit code 1 if any crashed. Ctrl+C stops everything.
+processes have finished — with exit code 1 if any crashed. Ctrl+C stops everything. Unless
+that output is a terminal (and `NO_COLOR` isn't set), it has no colors: the programs'
+colors and other escape codes are removed too.
 
 ## Configuration
 

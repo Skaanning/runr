@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/x/term"
 
 	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/plaintext"
 	"github.com/Skaanning/runr/internal/supervisor"
 	"github.com/Skaanning/runr/internal/tui"
 )
@@ -149,6 +150,10 @@ func (p *plainPrinter) event(e supervisor.Event) {
 	text := le.Line.Text
 	if p.color {
 		text += "\x1b[0m" // keep the program's colors from bleeding into the next line
+	} else {
+		// Programs keep their colors (runr sets FORCE_COLOR), so remove them
+		// when the output is a file or NO_COLOR is set.
+		text = plaintext.StripANSI(text)
 	}
 	fmt.Fprintf(p.w, "%s │ %s\n", label, text)
 }
