@@ -50,7 +50,9 @@ func (s *Supervisor) spawn(m *managed) {
 	}()
 
 	s.unblockDependents(m)
-	if m.readyRe != nil {
+	// With a ready_log, the run becomes ready on a matching line; a one-shot
+	// task becomes ready by exiting with code 0 (Exited).
+	if m.readyRe != nil || m.project.OneShot() {
 		s.setState(m, Starting)
 		return
 	}

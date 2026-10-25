@@ -22,7 +22,8 @@ func (s *Supervisor) depsOf(m *managed) (depStatus, string) {
 		switch dm.info.State {
 		case Running, Exited:
 			// Ready. Exited (code 0) counts so one-shot jobs such as
-			// migrations work as dependencies.
+			// migrations work as dependencies; with ready = "exit" they
+			// stay Starting until then, so dependents wait for them.
 		case Crashed, Stopped, Blocked:
 			if !dm.restartPending {
 				return depsFailed, dep

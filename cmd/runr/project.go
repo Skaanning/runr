@@ -21,6 +21,7 @@ type projectFlags struct {
 	dependsOn   []string
 	color       string
 	displayName string
+	ready       string
 	readyLog    string
 }
 
@@ -32,9 +33,13 @@ func (f *projectFlags) register(cmd *cobra.Command) {
 	fs.StringSliceVar(&f.dependsOn, "depends-on", nil, "project that must be ready first (repeatable or comma-separated)")
 	fs.StringVar(&f.color, "color", "", "color used for the project in the TUI")
 	fs.StringVar(&f.displayName, "display-name", "", "label shown in the TUI")
+	fs.StringVar(&f.ready, "ready", "", `"exit": a one-shot task, ready once it exits with code 0`)
 	fs.StringVar(&f.readyLog, "ready-log", "", "regex; project is ready once an output line matches")
 
 	_ = cmd.RegisterFlagCompletionFunc("depends-on", completeProjects)
+	_ = cmd.RegisterFlagCompletionFunc("ready", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
+		return []string{config.ReadyExit}, cobra.ShellCompDirectiveNoFileComp
+	})
 	_ = cmd.RegisterFlagCompletionFunc("color", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
 		return config.ColorNames, cobra.ShellCompDirectiveNoFileComp
 	})
@@ -79,6 +84,9 @@ func (f *projectFlags) apply(cmd *cobra.Command, p *config.Project) error {
 	}
 	if changed("display-name") {
 		p.DisplayName = f.displayName
+	}
+	if changed("ready") {
+		p.Ready = f.ready
 	}
 	if changed("ready-log") {
 		p.ReadyLog = f.readyLog
@@ -281,10 +289,10 @@ func newLsCmd() *cobra.Command {
 			}
 
 			tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "PROJECT\tDIR\tCMD\tDEPENDS ON")
+			fmt.Fprintln(tw, "PROJECT\tDIR\tCMD\tDEPENDS ON\tREADY")
 			for _, name := range sortedNames(s.cfg.Projects) {
 				p := s.cfg.Projects[name]
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", name, config.DisplayPath(p.Dir), p.Cmd, strings.Join(p.DependsOn, ", "))
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", name, config.DisplayPath(p.Dir), p.Cmd, strings.Join(p.DependsOn, ", "), readyText(p))
 			}
 			tw.Flush()
 
@@ -299,6 +307,18 @@ func newLsCmd() *cobra.Command {
 			return err
 		},
 	}
+}
+
+// readyText describes when a project counts as ready, for runr ls; "" when
+// it is ready as soon as it is started.
+func readyText(p *config.Project) string {
+	switch {
+	case p.OneShot():
+		return "on exit (one-shot)"
+	case p.ReadyLog != "":
+		return "log: " + p.ReadyLog
+	}
+	return ""
 }
 
 func without(list []string, item string) []string {

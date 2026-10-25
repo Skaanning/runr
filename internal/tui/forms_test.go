@@ -293,6 +293,45 @@ func TestLauncherDeleteFlow(t *testing.T) {
 	}
 }
 
+func TestProjectFormOneShot(t *testing.T) {
+	cfg := launcherConfig(t)
+	cfg.Projects["db"].Ready = config.ReadyExit
+	v := newProjectValues(cfg, "db")
+	if !slices.Equal(v.oneShot, []string{oneShotOption}) {
+		t.Fatalf("oneShot = %v", v.oneShot)
+	}
+	c, err := v.candidate(cfg)
+	if err != nil || !c.Projects["db"].OneShot() {
+		t.Fatalf("candidate: %+v, %v", c.Projects["db"], err)
+	}
+
+	v.readyLog = "listening"
+	if err := v.check(cfg, "ready"); err == nil || !strings.Contains(err.Error(), "can't also have a ready_log") {
+		t.Errorf("one-shot with a ready log: %v", err)
+	}
+	v.oneShot = nil
+	if err := v.check(cfg, "ready"); err != nil {
+		t.Errorf("ready log only: %v", err)
+	}
+	if c, _ := v.candidate(cfg); c.Projects["db"].Ready != "" {
+		t.Errorf("Ready = %q after unticking", c.Projects["db"].Ready)
+	}
+
+	// The field is in the Startup section and toggles with space.
+	m := openProjectForm(t, launcherConfig(t), "api", nil, 96, 30)
+	f := m.form.form
+	for f.focused().key != "ready" {
+		m.Update(key("tab"))
+	}
+	if !strings.Contains(screenText(m), "One-shot task") {
+		t.Fatalf("no one-shot field:\n%s", screenText(m))
+	}
+	m.Update(key("space"))
+	if !strings.Contains(screenText(m), "[x] yes") {
+		t.Errorf("not ticked:\n%s", screenText(m))
+	}
+}
+
 func TestProjectFormRename(t *testing.T) {
 	cfg := launcherConfig(t) // api depends on db; backend = db, api
 	v := newProjectValues(cfg, "db")
@@ -511,8 +550,8 @@ func TestProjectFormKeys(t *testing.T) {
 	typeInto(m, "B=2")
 	m.Update(key("enter"))
 	m.Update(key("tab"))
-	if fd := f.focused(); fd.key != "env_file" || *f.fields[5].str != "A=1\nB=2\n" {
-		t.Fatalf("focused %q, env %q", fd.key, *f.fields[5].str)
+	if fd := f.focused(); fd.key != "env_file" || *f.fields[6].str != "A=1\nB=2\n" {
+		t.Fatalf("focused %q, env %q", fd.key, *f.fields[6].str)
 	}
 }
 

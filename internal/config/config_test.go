@@ -29,6 +29,11 @@ depends_on = ["db"]
 color = "cyan"
 display_name = "API"
 
+[projects.migrate]
+dir = "~/code/api"
+cmd = "go run ./cmd/migrate"
+ready = "exit"
+
 [groups]
 backend = ["db", "api", "auth", "worker"]
 `
@@ -69,6 +74,9 @@ func TestLoadSpecExample(t *testing.T) {
 	}
 	if got := c.Projects["db"].ReadyLog; got != "ready to accept connections" {
 		t.Errorf("db.ReadyLog = %q", got)
+	}
+	if !c.Projects["migrate"].OneShot() {
+		t.Errorf("migrate.Ready = %q, want one-shot", c.Projects["migrate"].Ready)
 	}
 	if got := c.Groups["backend"]; !reflect.DeepEqual(got, []string{"db", "api", "auth", "worker"}) {
 		t.Errorf("backend = %v", got)

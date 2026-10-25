@@ -26,6 +26,21 @@ func TestUptime(t *testing.T) {
 	}
 }
 
+func TestStatusTextOneShot(t *testing.T) {
+	now := time.Now()
+	exited := supervisor.ProcessInfo{State: supervisor.Exited, StartedAt: now.Add(-time.Minute)}
+	if got, failed := statusText(exited, true, now); got != "done" || failed {
+		t.Errorf("finished one-shot: %q, failed %v", got, failed)
+	}
+	if got, _ := statusText(exited, false, now); got != "" {
+		t.Errorf("exited process that isn't a one-shot: %q", got)
+	}
+	starting := supervisor.ProcessInfo{State: supervisor.Starting, StartedAt: now.Add(-3 * time.Second)}
+	if got, _ := statusText(starting, true, now); got != "3s" {
+		t.Errorf("running one-shot: %q, want its uptime", got)
+	}
+}
+
 // aliveEvents puts the test model's processes and two more in various states.
 func aliveEvents(m *runningModel) {
 	now := m.now()

@@ -103,6 +103,7 @@ Flags for `add` and `edit`:
 | `--unset-env KEY` | `edit` only: remove a variable, repeatable |
 | `--env-file <path>` | `env_file` |
 | `--depends-on <name>` | `depends_on`, repeatable or comma-separated; `edit` replaces the list, `--depends-on=` clears it |
+| `--ready exit` | `ready` (`--ready=` clears it) |
 | `--ready-log <regex>` | `ready_log` |
 | `--color <color>` | `color` |
 | `--display-name <label>` | `display_name` |
@@ -142,10 +143,15 @@ dir = "~/code/api"
 cmd = "go run ./cmd/server"
 env = { PORT = "8080" }
 env_file = ".env"
-depends_on = ["db"]
+depends_on = ["db", "migrate"]
 ready_log = 'listening on :\d+'
 color = "cyan"
 display_name = "API"
+
+[projects.migrate]
+dir = "~/code/api"
+cmd = "go run ./cmd/migrate"
+ready = "exit"   # a one-shot task: api waits until it has finished
 
 [groups]
 backend = ["db", "api"]
@@ -189,6 +195,7 @@ saves the one you pick. `runr theme` lists them and `runr theme <name>` sets one
 | `env` | no | Environment variables, e.g. `{ PORT = "8080" }` |
 | `env_file` | no | A `.env` file, relative to `dir` (absolute and `~` paths work too) |
 | `depends_on` | no | Projects that must be ready before this one starts |
+| `ready` | no | `"exit"` makes the project a one-shot task (a migration, a build step, `npm install`): it is ready once it exits with code 0, so its dependents wait until it has finished, and a non-zero exit blocks them. Can't be combined with `ready_log`. |
 | `ready_log` | no | Regular expression ([Go syntax](https://pkg.go.dev/regexp/syntax)); the project is ready once an output line matches. Colors are stripped before matching. Without it, a project is ready as soon as it has started. |
 | `color` | no | Color of the name in the TUI: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, their `bright-` variants (`bright-red`, …), an ANSI number `0`–`255`, or a hex code `#f80` / `#ff8800`. Projects without one get a color from a fixed palette, in name order, so a project has the same color in the launcher and every session. |
 | `display_name` | no | Label shown in the TUI instead of the project name |
@@ -202,7 +209,8 @@ runr checks the config when it loads it and before every save:
 
 - group members and `depends_on` entries must exist, and dependencies can't form a cycle
   (reported as e.g. `api → auth → api`)
-- `ready_log` must be a valid regex, `color` a known color
+- `ready` must be `"exit"` (or absent) and can't be combined with `ready_log`; `ready_log`
+  must be a valid regex, `color` a known color
 - `dir` and `env_file` should exist — only a warning in `runr ls` and the forms, but
   `runr up` refuses to start a project whose directory is missing
 
@@ -280,9 +288,9 @@ crashes or is blocked, a toast in the corner of the output says so for 5 seconds
 | Icon | State |
 |---|---|
 | `○` | pending |
-| `⠋` (spinning) | waiting for dependencies, or started but its `ready_log` hasn't matched yet; faint while stopping |
+| `⠋` (spinning) | waiting for dependencies, or started but not ready yet (its `ready_log` hasn't matched, or a one-shot task is still running); faint while stopping |
 | `●` | running (ready) |
-| `✓` | exited with code 0 |
+| `✓` | exited with code 0 (`done` for a one-shot task) |
 | `✗` | crashed — the exit code is shown next to it |
 | `■` | stopped by you |
 | `⊘` | blocked: a dependency ended before it became ready |
@@ -366,10 +374,12 @@ is left to you:
 
 - **Dependencies.** Starting a project starts everything in its `depends_on`, transitively.
   Independent projects start in parallel; a project starts once all its dependencies are
-  ready. A dependency that exits with code 0 (a migration, a build step) counts as ready. If
-  a dependency exits or crashes *before* it was ready, its dependents are blocked (`⊘`);
-  restarting the dependency unblocks them. A crash *after* it was ready leaves dependents
-  running.
+  ready. Without `ready_log` or `ready`, a project is ready as soon as it has started — so
+  give a migration or build step `ready = "exit"`: its dependents then wait until it exits
+  with code 0. If a dependency exits or crashes *before* it was ready, its dependents are
+  blocked (`⊘`); restarting the dependency unblocks them. A crash *after* it was ready leaves
+  dependents running. Restarting a finished one-shot task runs it again without restarting
+  the projects that depend on it.
 - **Environment**, later entries win: runr's own environment → `FORCE_COLOR=1`,
   `CLICOLOR_FORCE=1`, `PYTHONUNBUFFERED=1` → `env_file` → `env`.
 - **Output** is read from pipes, not a terminal. The variables above get most tools to keep

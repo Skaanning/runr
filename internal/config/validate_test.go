@@ -35,6 +35,18 @@ func TestValidateOK(t *testing.T) {
 	}
 }
 
+func TestValidateOneShot(t *testing.T) {
+	c := validConfig(t)
+	c.Projects["migrate"] = &Project{Dir: c.Projects["db"].Dir, Cmd: "run-migrations", Ready: ReadyExit, DependsOn: []string{"db"}}
+	c.Projects["api"].DependsOn = append(c.Projects["api"].DependsOn, "migrate")
+	if _, err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !c.Projects["migrate"].OneShot() || c.Projects["api"].OneShot() {
+		t.Error("OneShot: want true for migrate only")
+	}
+}
+
 func TestValidateErrors(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -85,6 +97,16 @@ func TestValidateErrors(t *testing.T) {
 			"bad regex",
 			func(c *Config) { c.Projects["db"].ReadyLog = "ready (" },
 			[]string{"project \"db\": ready_log: invalid regex: error parsing regexp: missing closing ): `ready (`"},
+		},
+		{
+			"unknown ready",
+			func(c *Config) { c.Projects["api"].Ready = "port" },
+			[]string{`project "api": ready: unknown value "port" (the only value is "exit")`},
+		},
+		{
+			"one-shot with ready_log",
+			func(c *Config) { c.Projects["db"].Ready = ReadyExit },
+			[]string{`project "db": ready: a one-shot task (ready = "exit") can't also have a ready_log`},
 		},
 		{
 			"bad color",

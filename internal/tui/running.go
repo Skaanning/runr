@@ -61,11 +61,12 @@ const (
 
 // sidebarEntry is a project shown in the sidebar.
 type sidebarEntry struct {
-	info  supervisor.ProcessInfo
-	label string
-	color string         // the project's color, configured or a default
-	style lipgloss.Style // label color, from color
-	rate  outputRate     // the project's output lines per second
+	info    supervisor.ProcessInfo
+	label   string
+	color   string         // the project's color, configured or a default
+	style   lipgloss.Style // label color, from color
+	rate    outputRate     // the project's output lines per second
+	oneShot bool           // ready = "exit": shows "done" once it exited
 }
 
 // runningModel is the running view: a sidebar of processes next to either
@@ -144,6 +145,7 @@ func (m *runningModel) entry(name string) *sidebarEntry {
 		e.label = p.Label(name)
 		e.color = m.cfg.ColorOf(name)
 		e.style = lipgloss.NewStyle().Foreground(m.st.color(e.color))
+		e.oneShot = p.OneShot()
 	}
 	m.entries = append(m.entries, e)
 	m.byName[name] = e
@@ -834,7 +836,7 @@ func (m *runningModel) sidebarLayout() sidebarCols {
 	}
 	status := 0 // widest status
 	for _, e := range m.entries {
-		if text, _ := statusText(e.info, m.now()); text != "" {
+		if text, _ := statusText(e.info, e.oneShot, m.now()); text != "" {
 			status = max(status, len(text), statusWidth)
 		}
 	}
@@ -876,9 +878,14 @@ type sidebarCols struct {
 }
 
 // statusText returns what the status column shows for a process: its
-// uptime while it runs, why it failed (failed is set), or nothing.
-func statusText(info supervisor.ProcessInfo, now time.Time) (text string, failed bool) {
+// uptime while it runs, why it failed (failed is set), "done" for a one-shot
+// task that finished, or nothing.
+func statusText(info supervisor.ProcessInfo, oneShot bool, now time.Time) (text string, failed bool) {
 	switch info.State {
+	case supervisor.Exited:
+		if oneShot {
+			return "done", false
+		}
 	case supervisor.Crashed:
 		if info.Exit.Code > 0 {
 			return "exit " + strconv.Itoa(info.Exit.Code), true
@@ -1230,7 +1237,7 @@ func (m *runningModel) sidebarRow(i int, cols sidebarCols) string {
 	}
 	row = pad(row, m.sidebarPrefix()+labelWidth)
 	if cols.status > 0 {
-		text, failed := statusText(e.info, m.now())
+		text, failed := statusText(e.info, e.oneShot, m.now())
 		row += " " + strings.Repeat(" ", cols.status-len(text))
 		if failed {
 			row += m.st.err.Render(text)

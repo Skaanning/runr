@@ -125,6 +125,12 @@ func (c *Config) Validate() (warnings []Issue, err error) {
 			seen[dep] = true
 		}
 
+		switch {
+		case p.Ready != "" && p.Ready != ReadyExit:
+			addErr("project", name, "ready", "unknown value %q (the only value is %q)", p.Ready, ReadyExit)
+		case p.OneShot() && p.ReadyLog != "":
+			addErr("project", name, "ready", "a one-shot task (ready = %q) can't also have a ready_log", ReadyExit)
+		}
 		if p.ReadyLog != "" {
 			if _, err := regexp.Compile(p.ReadyLog); err != nil {
 				addErr("project", name, "ready_log", "invalid regex: %v", err)

@@ -13,11 +13,13 @@ import (
 	"github.com/Skaanning/runr/internal/config"
 )
 
-// depConfig builds a config from projects given as name → (cmd, deps, ready_log).
+// depConfig builds a config from projects given as name → (cmd, deps, ready_log,
+// one-shot).
 type depProject struct {
 	cmd      string
 	deps     []string
 	readyLog string
+	oneShot  bool
 }
 
 func depSupervisor(t *testing.T, projects map[string]depProject, groups map[string][]string) (*Supervisor, *recorder) {
@@ -27,6 +29,9 @@ func depSupervisor(t *testing.T, projects map[string]depProject, groups map[stri
 	dir := t.TempDir()
 	for name, p := range projects {
 		cfg.Projects[name] = &config.Project{Dir: dir, Cmd: p.cmd, DependsOn: p.deps, ReadyLog: p.readyLog}
+		if p.oneShot {
+			cfg.Projects[name].Ready = config.ReadyExit
+		}
 	}
 	for name, members := range groups {
 		cfg.Groups[name] = members
@@ -164,6 +169,94 @@ func TestExitedDependencyCountsAsReady(t *testing.T) {
 	}
 	r.waitState(t, "migrate", Exited)
 	r.waitState(t, "api", Running)
+}
+
+func TestOneShotHoldsBackDependentsUntilItExits(t *testing.T) {
+	gate := fifo(t)
+	s, r := depSupervisor(t, map[string]depProject{
+		"migrate": {cmd: "echo migrating; read x < " + gate + "; echo migrated", oneShot: true},
+		"api":     {cmd: "echo api up; sleep 30", deps: []string{"migrate"}},
+	}, nil)
+
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "migrate", Starting)
+	r.waitState(t, "api", Waiting)
+	waitLog(t, s, "migrate", "out:migrating")
+
+	// migrate is running but not done, so api must still be waiting.
+	time.Sleep(100 * time.Millisecond)
+	if got := r.states("api"); !reflect.DeepEqual(got, []State{Waiting}) {
+		t.Fatalf("api states before migrate exits = %v", got)
+	}
+
+	openGate(t, gate)
+	r.waitState(t, "migrate", Exited)
+	r.waitState(t, "api", Running)
+	waitLog(t, s, "api", "out:api up")
+	if got := r.states("migrate"); !reflect.DeepEqual(got, []State{Starting, Exited}) {
+		t.Errorf("migrate states = %v", got)
+	}
+}
+
+func TestOneShotFailureBlocksDependentsUntilRestarted(t *testing.T) {
+	// migrate fails the first time and succeeds once the marker file exists.
+	marker := filepath.Join(t.TempDir(), "ok")
+	s, r := depSupervisor(t, map[string]depProject{
+		"migrate": {cmd: "test -f " + marker + " || exit 1; echo migrated", oneShot: true},
+		"api":     {cmd: "sleep 30", deps: []string{"migrate"}},
+	}, nil)
+
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "migrate", Crashed)
+	r.waitState(t, "api", Blocked)
+	if !containsLine(logLines(s, "api"), "fail:blocked: dependency migrate is crashed") {
+		t.Errorf("api logs = %q", logLines(s, "api"))
+	}
+
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Restart("migrate"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "api", Running)
+	if got := r.states("migrate"); !reflect.DeepEqual(got, []State{Starting, Crashed, Starting, Exited}) {
+		t.Errorf("migrate states = %v", got)
+	}
+	if got := r.states("api"); !reflect.DeepEqual(got, []State{Waiting, Blocked, Waiting, Running}) {
+		t.Errorf("api states = %v", got)
+	}
+}
+
+func TestRestartFinishedOneShotLeavesDependentsRunning(t *testing.T) {
+	s, r := depSupervisor(t, map[string]depProject{
+		"migrate": {cmd: "echo migrated", oneShot: true},
+		"api":     {cmd: "sleep 30", deps: []string{"migrate"}},
+	}, nil)
+
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "api", Running)
+	if err := s.Restart("migrate"); err != nil {
+		t.Fatal(err)
+	}
+	want := []State{Starting, Exited, Starting, Exited}
+	for deadline := time.Now().Add(5 * time.Second); !reflect.DeepEqual(r.states("migrate"), want); {
+		if time.Now().After(deadline) {
+			t.Fatalf("migrate states = %v, want %v", r.states("migrate"), want)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	if got := r.states("api"); !reflect.DeepEqual(got, []State{Waiting, Running}) {
+		t.Errorf("api states = %v", got)
+	}
 }
 
 func TestBlockedWhenDependencyFailsBeforeReady(t *testing.T) {

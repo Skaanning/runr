@@ -83,9 +83,19 @@ type Project struct {
 	Env         map[string]string `toml:"env,omitempty,inline"`
 	EnvFile     string            `toml:"env_file,omitempty"`
 	DependsOn   []string          `toml:"depends_on,omitempty"`
+	Ready       string            `toml:"ready,omitempty"` // ReadyExit or ""
 	ReadyLog    string            `toml:"ready_log,omitempty"`
 	Color       string            `toml:"color,omitempty"`
 	DisplayName string            `toml:"display_name,omitempty"`
+}
+
+// ReadyExit is the value of Project.Ready for one-shot tasks: the project is
+// ready once it exits with code 0, so dependents wait until it is done.
+const ReadyExit = "exit"
+
+// OneShot reports whether the project is a one-shot task (ready = "exit").
+func (p *Project) OneShot() bool {
+	return p.Ready == ReadyExit
 }
 
 // ResolvedDir returns Dir with a leading ~ expanded to the user's home directory.

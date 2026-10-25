@@ -70,6 +70,9 @@ func (f *editForm) statusInfo(st *styles) string {
 		st.err.Render(" · "+strings.ToLower(first.title)+": "+first.err.Error())
 }
 
+// oneShotOption is the one option of the form's one-shot field.
+const oneShotOption = "yes"
+
 // projectValues holds the project form's fields.
 type projectValues struct {
 	original string // name of the project being edited; "" for a new one
@@ -77,6 +80,7 @@ type projectValues struct {
 	cmd      string
 	dir      string
 	deps     []string
+	oneShot  []string // oneShotOption when ready = "exit"
 	readyLog string
 	env      string // KEY=VALUE lines
 	envFile  string
@@ -94,9 +98,13 @@ func newProjectValues(cfg *config.Config, name string) *projectValues {
 	for _, k := range slices.Sorted(maps.Keys(p.Env)) {
 		env = append(env, k+"="+p.Env[k])
 	}
+	var oneShot []string
+	if p.OneShot() {
+		oneShot = []string{oneShotOption}
+	}
 	return &projectValues{
 		original: name, name: name, cmd: p.Cmd, dir: p.Dir, deps: slices.Clone(p.DependsOn),
-		readyLog: p.ReadyLog, env: strings.Join(env, "\n"), envFile: p.EnvFile,
+		oneShot: oneShot, readyLog: p.ReadyLog, env: strings.Join(env, "\n"), envFile: p.EnvFile,
 		color: p.Color, label: p.DisplayName,
 	}
 }
@@ -147,12 +155,17 @@ func (v *projectValues) candidate(cfg *config.Config) (*config.Config, error) {
 	if len(v.deps) > 0 {
 		deps = slices.Clone(v.deps)
 	}
+	ready := ""
+	if len(v.oneShot) > 0 {
+		ready = config.ReadyExit
+	}
 	c.Projects[v.projectName()] = &config.Project{
 		Dir:         dir,
 		Cmd:         strings.TrimSpace(v.cmd),
 		Env:         env,
 		EnvFile:     strings.TrimSpace(v.envFile),
 		DependsOn:   deps,
+		Ready:       ready,
 		ReadyLog:    v.readyLog,
 		Color:       strings.TrimSpace(v.color),
 		DisplayName: strings.TrimSpace(v.label),
@@ -522,6 +535,10 @@ func newProjectForm(st *styles, cfg *config.Config, name string, git GitReader) 
 		deps.check = check("depends_on")
 		startup.fields = append(startup.fields, deps)
 	}
+	oneShot := newChoiceField("ready", "One-shot task", []formOption{{value: oneShotOption}}, &v.oneShot)
+	oneShot.desc = "dependents wait until it exits with code 0"
+	oneShot.check = check("ready")
+	startup.fields = append(startup.fields, oneShot)
 	readyLog := newInputField("ready_log", "Ready log", &v.readyLog)
 	readyLog.input.Placeholder = "regex; empty: ready once started"
 	readyLog.check = check("ready_log")

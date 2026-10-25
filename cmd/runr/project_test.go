@@ -19,16 +19,18 @@ func TestAdd(t *testing.T) {
 	if !strings.Contains(out, `Added project "db"`) {
 		t.Errorf("output: %q", out)
 	}
+	mustRun(t, "add", "migrate", "--dir", dir, "--ready", "exit", "--", "go", "run", "./cmd/migrate")
 	mustRun(t, "add", "api", "--dir", dir, "--env", "PORT=8080", "--env", "URL=http://x?a=b", "--env-file", ".env",
-		"--depends-on", "db", "--color", "cyan", "--display-name", "API", "--", "go", "run", "./cmd/server")
+		"--depends-on", "db,migrate", "--color", "cyan", "--display-name", "API", "--", "go", "run", "./cmd/server")
 
 	got := loadConfig(t).Projects
 	want := map[string]*config.Project{
-		"db": {Dir: dir, Cmd: "docker compose up", ReadyLog: "ready"},
+		"db":      {Dir: dir, Cmd: "docker compose up", ReadyLog: "ready"},
+		"migrate": {Dir: dir, Cmd: "go run ./cmd/migrate", Ready: "exit"},
 		"api": {
 			Dir: dir, Cmd: "go run ./cmd/server",
 			Env:     map[string]string{"PORT": "8080", "URL": "http://x?a=b"},
-			EnvFile: ".env", DependsOn: []string{"db"}, Color: "cyan", DisplayName: "API",
+			EnvFile: ".env", DependsOn: []string{"db", "migrate"}, Color: "cyan", DisplayName: "API",
 		},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -173,7 +175,13 @@ func TestEditErrors(t *testing.T) {
 	_, _, err = run(t, "edit", "api", "--depends-on", "api")
 	wantErr(t, err, "cannot depend on itself")
 
-	if p := loadConfig(t).Projects["api"]; p.DependsOn != nil {
+	_, _, err = run(t, "edit", "api", "--ready", "port")
+	wantErr(t, err, `ready: unknown value "port"`)
+
+	_, _, err = run(t, "edit", "api", "--ready", "exit", "--ready-log", "up")
+	wantErr(t, err, "can't also have a ready_log")
+
+	if p := loadConfig(t).Projects["api"]; p.DependsOn != nil || p.Ready != "" || p.ReadyLog != "" {
 		t.Errorf("failed edit was saved: %+v", p)
 	}
 }
@@ -225,8 +233,9 @@ func TestLs(t *testing.T) {
 
 	dir := t.TempDir()
 	missing := filepath.Join(t.TempDir(), "gone")
-	mustRun(t, "add", "db", "--dir", dir, "--", "docker compose up")
+	mustRun(t, "add", "db", "--dir", dir, "--ready-log", "accepting", "--", "docker compose up")
 	mustRun(t, "add", "api", "--dir", missing, "--depends-on", "db", "--", "go run .")
+	mustRun(t, "add", "migrate", "--dir", dir, "--ready", "exit", "--", "migrate up")
 	c := loadConfig(t)
 	c.Groups["backend"] = []string{"db", "api"}
 	path, _ := config.Path()
@@ -239,7 +248,7 @@ func TestLs(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	wantPrefixes := []string{"PROJECT", "api ", "db ", "", "GROUP", "backend "}
+	wantPrefixes := []string{"PROJECT", "api ", "db ", "migrate ", "", "GROUP", "backend "}
 	if len(lines) != len(wantPrefixes) {
 		t.Fatalf("ls output:\n%s", out)
 	}
@@ -248,11 +257,17 @@ func TestLs(t *testing.T) {
 			t.Errorf("line %d = %q, want prefix %q", i, lines[i], prefix)
 		}
 	}
-	if !strings.Contains(lines[1], "go run .") || !strings.HasSuffix(lines[1], "db") {
+	if !strings.Contains(lines[1], "go run .") || !strings.HasSuffix(strings.TrimSpace(lines[1]), "db") {
 		t.Errorf("api row: %q", lines[1])
 	}
-	if !strings.Contains(lines[5], "db, api") {
-		t.Errorf("group row: %q", lines[5])
+	if !strings.HasSuffix(lines[2], "log: accepting") {
+		t.Errorf("db row: %q", lines[2])
+	}
+	if !strings.HasSuffix(lines[3], "on exit (one-shot)") {
+		t.Errorf("migrate row: %q", lines[3])
+	}
+	if !strings.Contains(lines[6], "db, api") {
+		t.Errorf("group row: %q", lines[6])
 	}
 	if !strings.Contains(stderr, `warning: project "api": dir:`) {
 		t.Errorf("stderr: %q", stderr)
