@@ -152,7 +152,7 @@ func TestPlainSecondSignalForces(t *testing.T) {
 		"stubborn": {Cmd: "trap '' TERM; echo trapped; while :; do sleep 0.05; done"},
 	})
 	out, sigs, result := startPlain(t, cfg, "stubborn")
-	waitOutput(t, out, "trapped")
+	waitOutput(t, out, "stubborn │ trapped") // not the "starting: …" line, which has it too
 
 	start := time.Now()
 	sigs <- os.Interrupt

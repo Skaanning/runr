@@ -13,12 +13,17 @@ import (
 	"time"
 )
 
-// hangEnv makes the test binary stand in for a git that never finishes.
-const hangEnv = "RUNR_GITINFO_HANG"
+// helperEnv makes the test binary stand in for git: "hang" never
+// finishes, "session" prints its pid and session ID (Unix).
+const helperEnv = "RUNR_GITINFO_HELPER"
 
 func TestMain(m *testing.M) {
-	if os.Getenv(hangEnv) != "" {
+	switch os.Getenv(helperEnv) {
+	case "hang":
 		time.Sleep(time.Hour)
+	case "session":
+		printSession()
+		os.Exit(0)
 	}
 	// Keep the user's git config out of the tests, and keep repository
 	// discovery from walking above the temp dir.
@@ -333,7 +338,7 @@ func TestStatusDoesNotTouchIndex(t *testing.T) {
 }
 
 func TestTimeout(t *testing.T) {
-	t.Setenv(hangEnv, "1")
+	t.Setenv(helperEnv, "hang")
 	g := &Git{path: os.Args[0], Timeout: 50 * time.Millisecond}
 	_, err := g.Find(context.Background(), realDir(t))
 	if !errors.Is(err, context.DeadlineExceeded) || err.Error() != "git rev-parse: timed out" {

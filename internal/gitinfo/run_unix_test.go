@@ -5,9 +5,13 @@ package gitinfo
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // A stand-in for git: /bin/sh, so the tests control what the command does.
@@ -28,15 +32,24 @@ func TestTimeoutKillsChildren(t *testing.T) {
 }
 
 func TestRunsInOwnSession(t *testing.T) {
-	// "sess" is the session ID on Linux and the session's address on macOS
-	// (whose ps has no "sid"); either way it differs from the parent's (this
-	// test) only in a new session.
-	out, err := shGit().run(context.Background(), t.TempDir(), nil, "-c", "ps -o sess= -p $$; ps -o sess= -p $PPID")
+	t.Setenv(helperEnv, "session")
+	out, err := (&Git{path: os.Args[0]}).run(context.Background(), t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fields := strings.Fields(string(out))
-	if len(fields) != 2 || fields[0] == fields[1] {
-		t.Errorf("session of git and of runr = %q, want different (a new session)", fields)
+	if len(fields) != 2 || fields[0] != fields[1] {
+		t.Errorf("pid and session id = %q, want equal (a new session)", fields)
 	}
+}
+
+// printSession prints the process's pid and session ID (macOS's ps has no
+// column for the latter).
+func printSession() {
+	sid, err := unix.Getsid(0)
+	if err != nil {
+		fmt.Println("error", err)
+		return
+	}
+	fmt.Println(os.Getpid(), sid)
 }

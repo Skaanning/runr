@@ -58,7 +58,9 @@ func runHelper(mode string) {
 		signalReady()
 		time.Sleep(time.Hour)
 	case "trap":
-		signal.Ignore(syscall.SIGTERM, os.Interrupt) // CTRL_BREAK arrives as os.Interrupt on Windows
+		// Catch the signals rather than ignore them: on Windows an ignored
+		// CTRL_BREAK (os.Interrupt) still ends the process.
+		signal.Notify(make(chan os.Signal, 1), syscall.SIGTERM, os.Interrupt)
 		signalReady()
 		time.Sleep(time.Hour)
 	case "slow-graceful": // takes a while to shut down
