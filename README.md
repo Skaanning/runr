@@ -47,6 +47,14 @@ go install ./cmd/runr        # or: make build → bin/runr
 
 `make cross` builds binaries for Linux, macOS and Windows into `dist/`.
 
+Or download a binary from the [releases](https://github.com/Skaanning/runr/releases)
+(`runr-<os>-<arch>`, with `checksums.txt`), rename it to `runr` (`runr.exe` on Windows),
+make it executable (`chmod +x runr`) and put it on your `PATH`. On macOS the binaries
+aren't signed: remove the quarantine flag with `xattr -d com.apple.quarantine runr`.
+
+Releasing: push a tag like `v0.1.0`; `.github/workflows/release.yml` builds the binaries
+with `make cross` and publishes them as a GitHub release.
+
 ## Quick start
 
 Register your projects. `--dir` defaults to the current directory; everything after `--`
@@ -522,3 +530,7 @@ session's projects; in the launcher `F` covers all registered projects and `P` t
 - **A project's spinner keeps spinning:** it is waiting for a dependency, or its `ready_log` hasn't
   matched, or its `ready_port`/`ready_url` doesn't answer (wrong port, or the server listens
   on another address than `localhost`). Select it and press `tab` to see its log; runr's lines say what it's waiting for.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
