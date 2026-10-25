@@ -3,10 +3,15 @@
 package supervisor
 
 import (
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,10 +21,12 @@ import (
 // depConfig builds a config from projects given as name → (cmd, deps, ready_log,
 // one-shot).
 type depProject struct {
-	cmd      string
-	deps     []string
-	readyLog string
-	oneShot  bool
+	cmd       string
+	deps      []string
+	readyLog  string
+	oneShot   bool
+	readyPort int
+	readyURL  string
 }
 
 func depSupervisor(t *testing.T, projects map[string]depProject, groups map[string][]string) (*Supervisor, *recorder) {
@@ -28,7 +35,8 @@ func depSupervisor(t *testing.T, projects map[string]depProject, groups map[stri
 	cfg.Settings.ShutdownTimeoutValue.Duration = testTimeout
 	dir := t.TempDir()
 	for name, p := range projects {
-		cfg.Projects[name] = &config.Project{Dir: dir, Cmd: p.cmd, DependsOn: p.deps, ReadyLog: p.readyLog}
+		cfg.Projects[name] = &config.Project{Dir: dir, Cmd: p.cmd, DependsOn: p.deps, ReadyLog: p.readyLog,
+			ReadyPort: p.readyPort, ReadyURL: p.readyURL}
 		if p.oneShot {
 			cfg.Projects[name].Ready = config.ReadyExit
 		}
@@ -256,6 +264,121 @@ func TestRestartFinishedOneShotLeavesDependentsRunning(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	if got := r.states("api"); !reflect.DeepEqual(got, []State{Waiting, Running}) {
 		t.Errorf("api states = %v", got)
+	}
+}
+
+// fastProbes makes readiness probes poll every 10 ms for the test.
+func fastProbes(t *testing.T) {
+	old := probeEvery
+	probeEvery = 10 * time.Millisecond
+	t.Cleanup(func() { probeEvery = old })
+}
+
+// freePort returns a TCP port that nothing listens on (for now).
+func freePort(t *testing.T) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+func TestWaitsForReadyPort(t *testing.T) {
+	fastProbes(t)
+	port := freePort(t)
+	s, r := depSupervisor(t, map[string]depProject{
+		"db":  {cmd: "echo booting; sleep 30", readyPort: port},
+		"api": {cmd: "echo api up; sleep 30", deps: []string{"db"}},
+	}, nil)
+
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "db", Starting)
+	r.waitState(t, "api", Waiting)
+	waitLog(t, s, "db", "sys:waiting for port "+strconv.Itoa(port))
+
+	// Nothing listens yet, so api must still be waiting.
+	time.Sleep(100 * time.Millisecond)
+	if got := r.states("api"); !reflect.DeepEqual(got, []State{Waiting}) {
+		t.Fatalf("api states before the port opens = %v", got)
+	}
+
+	ln, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	r.waitState(t, "db", Running)
+	r.waitState(t, "api", Running)
+	if got := r.states("db"); !reflect.DeepEqual(got, []State{Starting, Running}) {
+		t.Errorf("db states = %v", got)
+	}
+	if !containsLine(logLines(s, "db"), "sys:ready") {
+		t.Errorf("db logs = %q", logLines(s, "db"))
+	}
+}
+
+func TestWaitsForReadyURL(t *testing.T) {
+	fastProbes(t)
+	var healthy atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !healthy.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+	}))
+	defer srv.Close()
+	s, r := depSupervisor(t, map[string]depProject{
+		"web": {cmd: "sleep 30", readyURL: srv.URL + "/health"},
+		"e2e": {cmd: "sleep 30", deps: []string{"web"}},
+	}, nil)
+
+	if err := s.Start("e2e"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "web", Starting)
+	waitLog(t, s, "web", "sys:waiting for "+srv.URL+"/health")
+
+	// The server answers 503, so web isn't ready.
+	time.Sleep(100 * time.Millisecond)
+	if got := r.states("e2e"); !reflect.DeepEqual(got, []State{Waiting}) {
+		t.Fatalf("e2e states while unhealthy = %v", got)
+	}
+
+	healthy.Store(true)
+	r.waitState(t, "web", Running)
+	r.waitState(t, "e2e", Running)
+}
+
+func TestProbeStopsWhenProcessCrashes(t *testing.T) {
+	fastProbes(t)
+	var hits atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	s, r := depSupervisor(t, map[string]depProject{
+		"web": {cmd: "sleep 0.2; exit 1", readyURL: srv.URL},
+		"e2e": {cmd: "sleep 30", deps: []string{"web"}},
+	}, nil)
+
+	if err := s.Start("e2e"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "web", Crashed)
+	r.waitState(t, "e2e", Blocked)
+	if hits.Load() == 0 {
+		t.Fatal("the probe never ran")
+	}
+
+	time.Sleep(50 * time.Millisecond) // a request in flight may still land
+	before := hits.Load()
+	time.Sleep(100 * time.Millisecond)
+	if after := hits.Load(); after != before {
+		t.Errorf("probe still polling after the crash: %d → %d requests", before, after)
 	}
 }
 

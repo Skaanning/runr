@@ -47,6 +47,18 @@ func TestValidateOneShot(t *testing.T) {
 	}
 }
 
+func TestValidateReadyPortAndURL(t *testing.T) {
+	c := validConfig(t)
+	c.Projects["api"].ReadyPort = 8080
+	c.Projects["auth"].ReadyURL = "https://localhost:9000/health?deep=1"
+	if _, err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Projects["api"].ReadyConditions(); !reflect.DeepEqual(got, []string{"ready_port"}) {
+		t.Errorf("api conditions = %v", got)
+	}
+}
+
 func TestValidateErrors(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -106,7 +118,34 @@ func TestValidateErrors(t *testing.T) {
 		{
 			"one-shot with ready_log",
 			func(c *Config) { c.Projects["db"].Ready = ReadyExit },
-			[]string{`project "db": ready: a one-shot task (ready = "exit") can't also have a ready_log`},
+			[]string{`project "db": ready: only one readiness condition per project (it already has ready_log)`},
+		},
+		{
+			"two readiness conditions",
+			func(c *Config) {
+				c.Projects["api"].ReadyPort, c.Projects["api"].ReadyURL = 8080, "http://localhost:8080/health"
+			},
+			[]string{`project "api": ready_url: only one readiness condition per project (it already has ready_port)`},
+		},
+		{
+			"bad port",
+			func(c *Config) { c.Projects["api"].ReadyPort = 70000 },
+			[]string{`project "api": ready_port: 70000 is not a port (1-65535)`},
+		},
+		{
+			"negative port",
+			func(c *Config) { c.Projects["api"].ReadyPort = -1 },
+			[]string{`project "api": ready_port: -1 is not a port (1-65535)`},
+		},
+		{
+			"url without scheme",
+			func(c *Config) { c.Projects["api"].ReadyURL = "localhost:8080/health" },
+			[]string{`project "api": ready_url: "localhost:8080/health" must start with http:// or https://`},
+		},
+		{
+			"url without host",
+			func(c *Config) { c.Projects["api"].ReadyURL = "http:///health" },
+			[]string{`project "api": ready_url: "http:///health" has no host`},
 		},
 		{
 			"bad color",

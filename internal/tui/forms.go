@@ -9,6 +9,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,17 +76,19 @@ const oneShotOption = "yes"
 
 // projectValues holds the project form's fields.
 type projectValues struct {
-	original string // name of the project being edited; "" for a new one
-	name     string
-	cmd      string
-	dir      string
-	deps     []string
-	oneShot  []string // oneShotOption when ready = "exit"
-	readyLog string
-	env      string // KEY=VALUE lines
-	envFile  string
-	color    string
-	label    string // display name
+	original  string // name of the project being edited; "" for a new one
+	name      string
+	cmd       string
+	dir       string
+	deps      []string
+	oneShot   []string // oneShotOption when ready = "exit"
+	readyLog  string
+	readyPort string
+	readyURL  string
+	env       string // KEY=VALUE lines
+	envFile   string
+	color     string
+	label     string // display name
 }
 
 func newProjectValues(cfg *config.Config, name string) *projectValues {
@@ -102,9 +105,13 @@ func newProjectValues(cfg *config.Config, name string) *projectValues {
 	if p.OneShot() {
 		oneShot = []string{oneShotOption}
 	}
+	readyPort := ""
+	if p.ReadyPort != 0 {
+		readyPort = strconv.Itoa(p.ReadyPort)
+	}
 	return &projectValues{
 		original: name, name: name, cmd: p.Cmd, dir: p.Dir, deps: slices.Clone(p.DependsOn),
-		oneShot: oneShot, readyLog: p.ReadyLog, env: strings.Join(env, "\n"), envFile: p.EnvFile,
+		oneShot: oneShot, readyLog: p.ReadyLog, readyPort: readyPort, readyURL: p.ReadyURL, env: strings.Join(env, "\n"), envFile: p.EnvFile,
 		color: p.Color, label: p.DisplayName,
 	}
 }
@@ -142,6 +149,12 @@ func (v *projectValues) candidate(cfg *config.Config) (*config.Config, error) {
 	if err != nil {
 		return nil, &fieldError{"dir", err}
 	}
+	readyPort := 0
+	if s := strings.TrimSpace(v.readyPort); s != "" {
+		if readyPort, err = strconv.Atoi(s); err != nil {
+			return nil, &fieldError{"ready_port", errors.New("not a number")}
+		}
+	}
 	c := cfg.Clone()
 	if c.Projects == nil {
 		c.Projects = map[string]*config.Project{}
@@ -167,6 +180,8 @@ func (v *projectValues) candidate(cfg *config.Config) (*config.Config, error) {
 		DependsOn:   deps,
 		Ready:       ready,
 		ReadyLog:    v.readyLog,
+		ReadyPort:   readyPort,
+		ReadyURL:    strings.TrimSpace(v.readyURL),
 		Color:       strings.TrimSpace(v.color),
 		DisplayName: strings.TrimSpace(v.label),
 	}
@@ -540,9 +555,15 @@ func newProjectForm(st *styles, cfg *config.Config, name string, git GitReader) 
 	oneShot.check = check("ready")
 	startup.fields = append(startup.fields, oneShot)
 	readyLog := newInputField("ready_log", "Ready log", &v.readyLog)
-	readyLog.input.Placeholder = "regex; empty: ready once started"
+	readyLog.input.Placeholder = "regex matching an output line"
 	readyLog.check = check("ready_log")
-	startup.fields = append(startup.fields, readyLog)
+	readyPort := newInputField("ready_port", "Ready port", &v.readyPort)
+	readyPort.input.Placeholder = "TCP port on localhost"
+	readyPort.check, readyPort.width = check("ready_port"), 24
+	readyURL := newInputField("ready_url", "Ready URL", &v.readyURL)
+	readyURL.input.Placeholder = "http://…; ready on 2xx or 3xx"
+	readyURL.check = check("ready_url")
+	startup.fields = append(startup.fields, readyLog, readyPort, readyURL)
 
 	env := newTextField("env", "Variables", &v.env)
 	env.desc = "KEY=VALUE, one per line"

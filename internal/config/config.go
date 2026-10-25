@@ -85,6 +85,8 @@ type Project struct {
 	DependsOn   []string          `toml:"depends_on,omitempty"`
 	Ready       string            `toml:"ready,omitempty"` // ReadyExit or ""
 	ReadyLog    string            `toml:"ready_log,omitempty"`
+	ReadyPort   int               `toml:"ready_port,omitempty"`
+	ReadyURL    string            `toml:"ready_url,omitempty"`
 	Color       string            `toml:"color,omitempty"`
 	DisplayName string            `toml:"display_name,omitempty"`
 }
@@ -96,6 +98,27 @@ const ReadyExit = "exit"
 // OneShot reports whether the project is a one-shot task (ready = "exit").
 func (p *Project) OneShot() bool {
 	return p.Ready == ReadyExit
+}
+
+// ReadyConditions returns the readiness fields that are set, in the order
+// ready_log, ready_port, ready_url, ready. A valid project has at most one;
+// with none it is ready as soon as it is started.
+func (p *Project) ReadyConditions() []string {
+	var set []string
+	for _, c := range []struct {
+		field string
+		on    bool
+	}{
+		{"ready_log", p.ReadyLog != ""},
+		{"ready_port", p.ReadyPort != 0},
+		{"ready_url", p.ReadyURL != ""},
+		{"ready", p.Ready != ""},
+	} {
+		if c.on {
+			set = append(set, c.field)
+		}
+	}
+	return set
 }
 
 // ResolvedDir returns Dir with a leading ~ expanded to the user's home directory.

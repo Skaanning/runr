@@ -105,6 +105,8 @@ Flags for `add` and `edit`:
 | `--depends-on <name>` | `depends_on`, repeatable or comma-separated; `edit` replaces the list, `--depends-on=` clears it |
 | `--ready exit` | `ready` (`--ready=` clears it) |
 | `--ready-log <regex>` | `ready_log` |
+| `--ready-port <port>` | `ready_port` (`--ready-port=` clears it) |
+| `--ready-url <url>` | `ready_url` |
 | `--color <color>` | `color` |
 | `--display-name <label>` | `display_name` |
 
@@ -195,8 +197,14 @@ saves the one you pick. `runr theme` lists them and `runr theme <name>` sets one
 | `env` | no | Environment variables, e.g. `{ PORT = "8080" }` |
 | `env_file` | no | A `.env` file, relative to `dir` (absolute and `~` paths work too) |
 | `depends_on` | no | Projects that must be ready before this one starts |
-| `ready` | no | `"exit"` makes the project a one-shot task (a migration, a build step, `npm install`): it is ready once it exits with code 0, so its dependents wait until it has finished, and a non-zero exit blocks them. Can't be combined with `ready_log`. |
-| `ready_log` | no | Regular expression ([Go syntax](https://pkg.go.dev/regexp/syntax)); the project is ready once an output line matches. Colors are stripped before matching. Without it, a project is ready as soon as it has started. |
+| `ready` | no | `"exit"` makes the project a one-shot task (a migration, a build step, `npm install`): it is ready once it exits with code 0, so its dependents wait until it has finished, and a non-zero exit blocks them. |
+| `ready_log` | no | Regular expression ([Go syntax](https://pkg.go.dev/regexp/syntax)); the project is ready once an output line matches. Colors are stripped before matching. |
+| `ready_port` | no | TCP port; the project is ready once a connection to it on `localhost` succeeds, e.g. `5432` for a database. |
+| `ready_url` | no | `http://` or `https://` URL; the project is ready once a GET answers with a 2xx or 3xx status (redirects aren't followed), e.g. `"http://localhost:8080/health"`. The probe's requests show up in the server's access log. |
+
+A project has at most one of `ready`, `ready_log`, `ready_port` and `ready_url`. Without
+any, it is ready as soon as it has started. Ports and URLs are tried every 250 ms (each try
+times out after 1 s) for as long as the process runs; there is no overall time limit.
 | `color` | no | Color of the name in the TUI: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, their `bright-` variants (`bright-red`, …), an ANSI number `0`–`255`, or a hex code `#f80` / `#ff8800`. Projects without one get a color from a fixed palette, in name order, so a project has the same color in the launcher and every session. |
 | `display_name` | no | Label shown in the TUI instead of the project name |
 
@@ -209,8 +217,9 @@ runr checks the config when it loads it and before every save:
 
 - group members and `depends_on` entries must exist, and dependencies can't form a cycle
   (reported as e.g. `api → auth → api`)
-- `ready` must be `"exit"` (or absent) and can't be combined with `ready_log`; `ready_log`
-  must be a valid regex, `color` a known color
+- at most one readiness condition per project; `ready` must be `"exit"`, `ready_log` a
+  valid regex, `ready_port` a port 1–65535, `ready_url` an `http(s)://` URL with a host;
+  `color` a known color
 - `dir` and `env_file` should exist — only a warning in `runr ls` and the forms, but
   `runr up` refuses to start a project whose directory is missing
 
@@ -288,7 +297,7 @@ crashes or is blocked, a toast in the corner of the output says so for 5 seconds
 | Icon | State |
 |---|---|
 | `○` | pending |
-| `⠋` (spinning) | waiting for dependencies, or started but not ready yet (its `ready_log` hasn't matched, or a one-shot task is still running); faint while stopping |
+| `⠋` (spinning) | waiting for dependencies, or started but not ready yet (its `ready_log` hasn't matched, its port or URL doesn't answer yet, or a one-shot task is still running); faint while stopping |
 | `●` | running (ready) |
 | `✓` | exited with code 0 (`done` for a one-shot task) |
 | `✗` | crashed — the exit code is shown next to it |
@@ -374,7 +383,7 @@ is left to you:
 
 - **Dependencies.** Starting a project starts everything in its `depends_on`, transitively.
   Independent projects start in parallel; a project starts once all its dependencies are
-  ready. Without `ready_log` or `ready`, a project is ready as soon as it has started — so
+  ready. Without a readiness condition, a project is ready as soon as it has started — so
   give a migration or build step `ready = "exit"`: its dependents then wait until it exits
   with code 0. If a dependency exits or crashes *before* it was ready, its dependents are
   blocked (`⊘`); restarting the dependency unblocks them. A crash *after* it was ready leaves
@@ -410,4 +419,5 @@ is left to you:
   it exits, but not when it's killed with `SIGKILL`. Run `reset`, or
   `printf '\e]110\a\e]111\a'`.
 - **A project's spinner keeps spinning:** it is waiting for a dependency, or its `ready_log` hasn't
-  matched. Select it and press `tab` to see its log; runr's lines say what it's waiting for.
+  matched, or its `ready_port`/`ready_url` doesn't answer (wrong port, or the server listens
+  on another address than `localhost`). Select it and press `tab` to see its log; runr's lines say what it's waiting for.

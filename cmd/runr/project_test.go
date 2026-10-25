@@ -159,6 +159,20 @@ func TestEdit(t *testing.T) {
 	if p.DependsOn != nil || p.Env != nil || p.Cmd != "new cmd" {
 		t.Errorf("api after clearing = %+v", p)
 	}
+
+	// Readiness: set a port, switch to a URL, clear it.
+	mustRun(t, "edit", "api", "--ready-port", "8080")
+	if p := loadConfig(t).Projects["api"]; p.ReadyPort != 8080 {
+		t.Errorf("ReadyPort = %d", p.ReadyPort)
+	}
+	mustRun(t, "edit", "api", "--ready-port=", "--ready-url", "http://localhost:8080/health")
+	if p := loadConfig(t).Projects["api"]; p.ReadyPort != 0 || p.ReadyURL != "http://localhost:8080/health" {
+		t.Errorf("after switching to a URL: %+v", p)
+	}
+	mustRun(t, "edit", "api", "--ready-url=")
+	if p := loadConfig(t).Projects["api"]; p.ReadyURL != "" {
+		t.Errorf("ReadyURL = %q after clearing", p.ReadyURL)
+	}
 }
 
 func TestEditErrors(t *testing.T) {
@@ -179,9 +193,21 @@ func TestEditErrors(t *testing.T) {
 	wantErr(t, err, `ready: unknown value "port"`)
 
 	_, _, err = run(t, "edit", "api", "--ready", "exit", "--ready-log", "up")
-	wantErr(t, err, "can't also have a ready_log")
+	wantErr(t, err, "only one readiness condition per project")
 
-	if p := loadConfig(t).Projects["api"]; p.DependsOn != nil || p.Ready != "" || p.ReadyLog != "" {
+	_, _, err = run(t, "edit", "api", "--ready-port", "http")
+	wantErr(t, err, `--ready-port "http": not a number`)
+
+	_, _, err = run(t, "edit", "api", "--ready-port", "0x10000")
+	wantErr(t, err, "not a number")
+
+	_, _, err = run(t, "edit", "api", "--ready-port", "70000")
+	wantErr(t, err, "70000 is not a port")
+
+	_, _, err = run(t, "edit", "api", "--ready-url", "localhost:8080")
+	wantErr(t, err, "must start with http:// or https://")
+
+	if p := loadConfig(t).Projects["api"]; p.DependsOn != nil || len(p.ReadyConditions()) > 0 {
 		t.Errorf("failed edit was saved: %+v", p)
 	}
 }
@@ -236,6 +262,8 @@ func TestLs(t *testing.T) {
 	mustRun(t, "add", "db", "--dir", dir, "--ready-log", "accepting", "--", "docker compose up")
 	mustRun(t, "add", "api", "--dir", missing, "--depends-on", "db", "--", "go run .")
 	mustRun(t, "add", "migrate", "--dir", dir, "--ready", "exit", "--", "migrate up")
+	mustRun(t, "add", "cache", "--dir", dir, "--ready-port", "6379", "--", "redis-server")
+	mustRun(t, "add", "web", "--dir", dir, "--ready-url", "http://localhost:5173/", "--", "npm run dev")
 	c := loadConfig(t)
 	c.Groups["backend"] = []string{"db", "api"}
 	path, _ := config.Path()
@@ -248,7 +276,7 @@ func TestLs(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	wantPrefixes := []string{"PROJECT", "api ", "db ", "migrate ", "", "GROUP", "backend "}
+	wantPrefixes := []string{"PROJECT", "api ", "cache ", "db ", "migrate ", "web ", "", "GROUP", "backend "}
 	if len(lines) != len(wantPrefixes) {
 		t.Fatalf("ls output:\n%s", out)
 	}
@@ -260,14 +288,13 @@ func TestLs(t *testing.T) {
 	if !strings.Contains(lines[1], "go run .") || !strings.HasSuffix(strings.TrimSpace(lines[1]), "db") {
 		t.Errorf("api row: %q", lines[1])
 	}
-	if !strings.HasSuffix(lines[2], "log: accepting") {
-		t.Errorf("db row: %q", lines[2])
+	for i, want := range map[int]string{2: "port 6379", 3: "log: accepting", 4: "on exit (one-shot)", 5: "url http://localhost:5173/"} {
+		if !strings.HasSuffix(lines[i], want) {
+			t.Errorf("line %d = %q, want suffix %q", i, lines[i], want)
+		}
 	}
-	if !strings.HasSuffix(lines[3], "on exit (one-shot)") {
-		t.Errorf("migrate row: %q", lines[3])
-	}
-	if !strings.Contains(lines[6], "db, api") {
-		t.Errorf("group row: %q", lines[6])
+	if !strings.Contains(lines[8], "db, api") {
+		t.Errorf("group row: %q", lines[8])
 	}
 	if !strings.Contains(stderr, `warning: project "api": dir:`) {
 		t.Errorf("stderr: %q", stderr)

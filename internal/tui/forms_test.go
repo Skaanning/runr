@@ -306,7 +306,7 @@ func TestProjectFormOneShot(t *testing.T) {
 	}
 
 	v.readyLog = "listening"
-	if err := v.check(cfg, "ready"); err == nil || !strings.Contains(err.Error(), "can't also have a ready_log") {
+	if err := v.check(cfg, "ready"); err == nil || !strings.Contains(err.Error(), "only one readiness condition per project") {
 		t.Errorf("one-shot with a ready log: %v", err)
 	}
 	v.oneShot = nil
@@ -329,6 +329,45 @@ func TestProjectFormOneShot(t *testing.T) {
 	m.Update(key("space"))
 	if !strings.Contains(screenText(m), "[x] yes") {
 		t.Errorf("not ticked:\n%s", screenText(m))
+	}
+}
+
+func TestProjectFormReadyPortAndURL(t *testing.T) {
+	cfg := launcherConfig(t)
+	cfg.Projects["db"].ReadyPort = 5432
+	v := newProjectValues(cfg, "db")
+	if v.readyPort != "5432" {
+		t.Fatalf("readyPort = %q", v.readyPort)
+	}
+	c, err := v.candidate(cfg)
+	if err != nil || c.Projects["db"].ReadyPort != 5432 {
+		t.Fatalf("candidate: %+v, %v", c.Projects["db"], err)
+	}
+
+	for port, want := range map[string]string{
+		"pg":     "not a number",
+		"0":      "",
+		"99999":  "99999 is not a port",
+		" 6543 ": "",
+	} {
+		v.readyPort = port
+		err := v.check(cfg, "ready_port")
+		if (want == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), want)) {
+			t.Errorf("port %q: %v, want %q", port, err, want)
+		}
+	}
+
+	v.readyPort, v.readyURL = "5432", "http://localhost:5432"
+	if err := v.check(cfg, "ready_url"); err == nil || !strings.Contains(err.Error(), "it already has ready_port") {
+		t.Errorf("port and URL: %v", err)
+	}
+	v.readyPort = ""
+	if err := v.check(cfg, "ready_url"); err != nil {
+		t.Errorf("URL only: %v", err)
+	}
+	v.readyURL = "localhost:5432"
+	if err := v.check(cfg, "ready_url"); err == nil || !strings.Contains(err.Error(), "must start with http://") {
+		t.Errorf("URL without scheme: %v", err)
 	}
 }
 
@@ -550,8 +589,9 @@ func TestProjectFormKeys(t *testing.T) {
 	typeInto(m, "B=2")
 	m.Update(key("enter"))
 	m.Update(key("tab"))
-	if fd := f.focused(); fd.key != "env_file" || *f.fields[6].str != "A=1\nB=2\n" {
-		t.Fatalf("focused %q, env %q", fd.key, *f.fields[6].str)
+	env := f.fields[slices.IndexFunc(f.fields, func(fd *formField) bool { return fd.key == "env" })]
+	if fd := f.focused(); fd.key != "env_file" || *env.str != "A=1\nB=2\n" {
+		t.Fatalf("focused %q, env %q", fd.key, *env.str)
 	}
 }
 

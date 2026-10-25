@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -39,6 +40,8 @@ type Supervisor struct {
 
 	msgs      chan func()
 	closed    chan struct{}
+	ctx       context.Context // cancelled by Close; ends readiness probes
+	cancel    context.CancelFunc
 	closeOnce sync.Once
 	events    *eventQueue
 	running   sync.WaitGroup // live processes, for Close
@@ -53,7 +56,8 @@ type Supervisor struct {
 type managed struct {
 	name    string
 	project *config.Project
-	readyRe *regexp.Regexp // nil: ready as soon as spawned
+	readyRe *regexp.Regexp // ready_log; nil if not set
+	probe   *probe         // ready_port or ready_url; nil if not set
 	info    ProcessInfo
 
 	proc           *proc.Process
@@ -61,6 +65,13 @@ type managed struct {
 	stopRequested  bool
 	restartPending bool
 	killTimer      *time.Timer
+	cancelProbe    context.CancelFunc // stops the current run's probe; nil if none
+}
+
+// waitsForReady reports whether a run of m becomes ready later than its
+// spawn: on a ready_log line, a successful probe, or a clean exit.
+func (m *managed) waitsForReady() bool {
+	return m.readyRe != nil || m.probe != nil || m.project.OneShot()
 }
 
 // New creates a supervisor for the projects in cfg, which should be valid
@@ -71,7 +82,10 @@ func New(cfg *config.Config, opts Options) *Supervisor {
 	if baseEnv == nil {
 		baseEnv = os.Environ()
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	s := &Supervisor{
+		ctx:     ctx,
+		cancel:  cancel,
 		cfg:     cfg,
 		logs:    NewLogs(cfg.Settings.ScrollbackLines()),
 		baseEnv: baseEnv,
@@ -287,6 +301,7 @@ func (s *Supervisor) Close() {
 	})
 	s.running.Wait()
 	s.closeOnce.Do(func() {
+		s.cancel()
 		close(s.closed)
 		s.events.close()
 	})
@@ -331,6 +346,7 @@ func (s *Supervisor) managed(name string) (*managed, error) {
 		}
 		m.readyRe = re
 	}
+	m.probe = newProbe(p)
 	s.procs[name] = m
 	s.order = append(s.order, name)
 	return m, nil

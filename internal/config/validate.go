@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -125,15 +126,26 @@ func (c *Config) Validate() (warnings []Issue, err error) {
 			seen[dep] = true
 		}
 
-		switch {
-		case p.Ready != "" && p.Ready != ReadyExit:
+		if p.Ready != "" && p.Ready != ReadyExit {
 			addErr("project", name, "ready", "unknown value %q (the only value is %q)", p.Ready, ReadyExit)
-		case p.OneShot() && p.ReadyLog != "":
-			addErr("project", name, "ready", "a one-shot task (ready = %q) can't also have a ready_log", ReadyExit)
 		}
 		if p.ReadyLog != "" {
 			if _, err := regexp.Compile(p.ReadyLog); err != nil {
 				addErr("project", name, "ready_log", "invalid regex: %v", err)
+			}
+		}
+		if p.ReadyPort != 0 && (p.ReadyPort < 1 || p.ReadyPort > 65535) {
+			addErr("project", name, "ready_port", "%d is not a port (1-65535)", p.ReadyPort)
+		}
+		if p.ReadyURL != "" {
+			if err := checkReadyURL(p.ReadyURL); err != nil {
+				addErr("project", name, "ready_url", "%v", err)
+			}
+		}
+		// The first condition set is kept; the others are reported.
+		if conds := p.ReadyConditions(); len(conds) > 1 {
+			for _, field := range conds[1:] {
+				addErr("project", name, field, "only one readiness condition per project (it already has %s)", conds[0])
 			}
 		}
 		if p.Color != "" && !ValidColor(p.Color) {
@@ -176,6 +188,20 @@ func (c *Config) Validate() (warnings []Issue, err error) {
 }
 
 // ColorNames are the named colors accepted in a project's color field.
+// checkReadyURL reports why a ready_url can't be probed, if it can't.
+func checkReadyURL(raw string) error {
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil:
+		return fmt.Errorf("invalid URL: %v", err)
+	case u.Scheme != "http" && u.Scheme != "https":
+		return fmt.Errorf("%q must start with http:// or https://", raw)
+	case u.Host == "":
+		return fmt.Errorf("%q has no host", raw)
+	}
+	return nil
+}
+
 var ColorNames = []string{
 	"black", "red", "green", "yellow", "blue", "magenta", "cyan", "white",
 	"bright-black", "bright-red", "bright-green", "bright-yellow",

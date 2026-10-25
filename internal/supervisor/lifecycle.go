@@ -50,10 +50,14 @@ func (s *Supervisor) spawn(m *managed) {
 	}()
 
 	s.unblockDependents(m)
-	// With a ready_log, the run becomes ready on a matching line; a one-shot
-	// task becomes ready by exiting with code 0 (Exited).
-	if m.readyRe != nil || m.project.OneShot() {
+	// With a ready_log, the run becomes ready on a matching line, with
+	// ready_port or ready_url once the probe succeeds; a one-shot task
+	// becomes ready by exiting with code 0 (Exited).
+	if m.waitsForReady() {
 		s.setState(m, Starting)
+		if m.probe != nil {
+			s.startProbe(m)
+		}
 		return
 	}
 	s.setState(m, Running)
@@ -84,6 +88,7 @@ func (s *Supervisor) becameReady(m *managed, gen int) {
 	if gen != m.gen || m.info.State != Starting {
 		return
 	}
+	m.stopProbe()
 	s.system(m, "ready")
 	s.setState(m, Running)
 	s.schedule()
@@ -149,6 +154,7 @@ func (s *Supervisor) exited(m *managed, gen int, status proc.ExitStatus) {
 		m.killTimer.Stop()
 		m.killTimer = nil
 	}
+	m.stopProbe()
 	m.proc = nil
 	m.info.Pid = 0
 	m.info.Exit = status

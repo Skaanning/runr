@@ -29,6 +29,16 @@ depends_on = ["db"]
 color = "cyan"
 display_name = "API"
 
+[projects.web]
+dir = "~/code/web"
+cmd = "npm run dev"
+ready_url = "http://localhost:5173/"
+
+[projects.cache]
+dir = "~/code/infra"
+cmd = "redis-server"
+ready_port = 6379
+
 [projects.migrate]
 dir = "~/code/api"
 cmd = "go run ./cmd/migrate"
@@ -74,6 +84,9 @@ func TestLoadSpecExample(t *testing.T) {
 	}
 	if got := c.Projects["db"].ReadyLog; got != "ready to accept connections" {
 		t.Errorf("db.ReadyLog = %q", got)
+	}
+	if c.Projects["web"].ReadyURL != "http://localhost:5173/" || c.Projects["cache"].ReadyPort != 6379 {
+		t.Errorf("web = %+v, cache = %+v", c.Projects["web"], c.Projects["cache"])
 	}
 	if !c.Projects["migrate"].OneShot() {
 		t.Errorf("migrate.Ready = %q, want one-shot", c.Projects["migrate"].Ready)

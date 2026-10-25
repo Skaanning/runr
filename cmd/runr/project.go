@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -23,6 +24,8 @@ type projectFlags struct {
 	displayName string
 	ready       string
 	readyLog    string
+	readyPort   string // a string so that --ready-port= can clear it
+	readyURL    string
 }
 
 func (f *projectFlags) register(cmd *cobra.Command) {
@@ -35,6 +38,8 @@ func (f *projectFlags) register(cmd *cobra.Command) {
 	fs.StringVar(&f.displayName, "display-name", "", "label shown in the TUI")
 	fs.StringVar(&f.ready, "ready", "", `"exit": a one-shot task, ready once it exits with code 0`)
 	fs.StringVar(&f.readyLog, "ready-log", "", "regex; project is ready once an output line matches")
+	fs.StringVar(&f.readyPort, "ready-port", "", "project is ready once this TCP port on localhost accepts connections")
+	fs.StringVar(&f.readyURL, "ready-url", "", "project is ready once a GET of this URL answers 2xx or 3xx")
 
 	_ = cmd.RegisterFlagCompletionFunc("depends-on", completeProjects)
 	_ = cmd.RegisterFlagCompletionFunc("ready", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
@@ -90,6 +95,19 @@ func (f *projectFlags) apply(cmd *cobra.Command, p *config.Project) error {
 	}
 	if changed("ready-log") {
 		p.ReadyLog = f.readyLog
+	}
+	if changed("ready-port") {
+		p.ReadyPort = 0
+		if f.readyPort != "" {
+			port, err := strconv.Atoi(f.readyPort)
+			if err != nil {
+				return fmt.Errorf("--ready-port %q: not a number", f.readyPort)
+			}
+			p.ReadyPort = port
+		}
+	}
+	if changed("ready-url") {
+		p.ReadyURL = f.readyURL
 	}
 	return nil
 }
@@ -317,6 +335,10 @@ func readyText(p *config.Project) string {
 		return "on exit (one-shot)"
 	case p.ReadyLog != "":
 		return "log: " + p.ReadyLog
+	case p.ReadyPort != 0:
+		return "port " + strconv.Itoa(p.ReadyPort)
+	case p.ReadyURL != "":
+		return "url " + p.ReadyURL
 	}
 	return ""
 }
