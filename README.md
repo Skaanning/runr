@@ -8,22 +8,7 @@ groups, and then start any combination with one command. runr starts dependencie
 waits until they are ready, interleaves everyone's output, and shuts everything down in
 reverse order when you quit.
 
-```
-╭─ processes ───────────────╮╭─ logs · combined ─────────────────────────────── following ─╮
-│  ● db         9s ▁▁▁▁▁▄▁▁ ││ api    2026/10/25 12:20:39 GET /users 24µs                  │
-│    :55432                 ││ web    12:20:39 PM fetched 2 users from api                 │
-│ ▌● api        8s ▁▁▁▁▁▄▃▂ ││ worker panic: missing QUEUE_URL                             │
-│ ▌  :8080 · master         ││ worker crashed (exit code 1)                                │
-│  ✗ worker exit 1 ▁▁▁▁▁▂▂▁ ││ api    2026/10/25 12:20:41 GET /users 4µs                   │
-│                           ││ web    12:20:41 PM fetched 2 users from api                 │
-│  ● web        9s ▁▁▁▁▁▄▃▂ ││ api    2026/10/25 12:20:43 GET /users 27µs                  │
-│    :3000                  ││ web    12:20:43 PM fetched 2 users from api                 │
-│                           ││ api    2026/10/25 12:20:45 GET /users 5µs                   │
-│                           ││ web    12:20:45 PM fetched 2 users from api                 │
-╰───────────────────────────╯╰─────────────────────────────────────────────────────────────╯
-  FOLLOW  backend + web  ● 3 ✗ 1                                       api · master  12:20
-  ↑↓  select  tab  view  r  restart  s  stop  +  group  b  branch  p  pull  q  quit
-```
+![runr's running view: four processes, their combined logs and a crash toast](docs/images/running.png)
 
 Works on Linux, macOS and Windows.
 
@@ -39,6 +24,20 @@ Works on Linux, macOS and Windows.
 - **Import** projects from a `Procfile` or a Docker Compose file.
 - **Logs** saved to files on demand or for every session, plain output when piped, and color
   themes.
+
+## Screenshots
+
+The launcher, where you pick what to start and manage projects and groups:
+
+![The launcher](docs/images/launcher.png)
+
+Switching a project's git branch from the running view:
+
+![The branch picker](docs/images/branch-picker.png)
+
+Searching the logs:
+
+![Search](docs/images/search.png)
 
 ## Install
 

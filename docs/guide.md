@@ -201,25 +201,7 @@ start them in the running view, or manage the registry with in-TUI forms. Groups
 cards with a colored dot per member, side by side as far as the terminal is wide; projects
 are listed below them with their color, directory, branch, command and dependencies.
 
-```
-   ┏━┓╻ ╻┏┓╻┏━┓
-   ┣┳┛┃ ┃┃┗┫┣┳┛   4 projects · 2 groups
-   ╹┗╸┗━┛╹ ╹╹┗╸
-
-   Groups
-   ╭─ all ──────────────────────────── 3 ─╮  ╭─ backend ──────────────────────── 3 ─╮
-   │ [-] ● db  ● api  ● web               │  │ [-] ● db  ● api  ● worker            │
-   ╰──────────────────────────────────────╯  ╰──────────────────────────────────────╯
-
-   Projects
-   [ ] ● api     ~/code/api    master  go run . · needs db
- ▸ [x] ● db      ~/code/infra          go run .
-   [ ] ● web     ~/code/web            npm run dev
-   [ ] ● worker  ~/code/infra          echo connecting to queue; sleep 3; echo "panic: miss…
-
-  SELECT  4 projects · 2 groups · 1 selected                                     db  11:20
-  ↑↓←→  move  space  select  enter  start  n  new  e  edit  g  group  d  delete  q  quit
-```
+![The launcher with the backend group selected](images/launcher.png)
 
 The bottom line is the status bar: what the launcher is doing (`SELECT`, `NEW PROJECT`,
 `SWITCH`, …), how much is registered and selected, and the project under the cursor with its
@@ -250,6 +232,8 @@ can't be saved until they are fixed. The directory and env file are checked as y
 (`✓ exists · git: main`), and a preview shows the project's row as the running view will.
 
 ## The running view
+
+![The running view: four processes, combined logs and a crash toast](images/running.png)
 
 The `processes` pane gives each process two lines: its state, how long it's been running
 (or `exit 1` in red once it crashed) and a sparkline of its output over the last 32 seconds,
@@ -306,6 +290,8 @@ so for 5 seconds.
 Search is plain text (no regex) and smart-case: an all-lowercase query ignores case, any
 uppercase letter makes it case-sensitive.
 
+![Searching the combined logs for POST](images/search.png)
+
 runr adds its own lines to each process's log, such as `starting: <cmd>`,
 `waiting for db`, `ready` and `crashed (exit code 1)`, so you can see what happened when.
 
@@ -356,6 +342,8 @@ the branch of the repository each project's `dir` is in, with markers:
 
 Projects outside a repository show nothing. The state is read every 5 seconds and after
 each action; runr never fetches on its own — press `F` to update `↑n` / `↓n`.
+
+![The branch picker for api](images/branch-picker.png)
 
 `b` (switch branch) and `p` (pull) work in the launcher and the running view. They act on the
 selected project's repository, and only in the simple cases — anything that needs a decision
