@@ -14,8 +14,8 @@ func TestCommandLine(t *testing.T) {
 	if err := os.Mkdir(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	line := CommandLine(dir, []string{"RUNR_TEST_A=1", "RUNR_TEST_B=hello world"}, "echo [%RUNR_TEST_B%] [%RUNR_TEST_A%] [%CD%]")
-	want := `cd /d "` + dir + `" && set "RUNR_TEST_A=1" && set "RUNR_TEST_B=hello world" && cmd /d /s /c "echo [%RUNR_TEST_B%] [%RUNR_TEST_A%] [%CD%]"`
+	line := CommandLine(dir, []string{"RUNR_TEST_A=1", "RUNR_TEST_B=hello world"}, "echo [%RUNR_TEST_B%] [%RUNR_TEST_A%] && cd")
+	want := `cd /d "` + dir + `" && set "RUNR_TEST_A=1" && set "RUNR_TEST_B=hello world" && cmd /d /s /c "echo [%RUNR_TEST_B%] [%RUNR_TEST_A%] && cd"`
 	if line != want {
 		t.Fatalf("line:\n%s\nwant:\n%s", line, want)
 	}
@@ -26,8 +26,9 @@ func TestCommandLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// cd prints the directory (%CD% would be expanded before the cd /d runs).
 	// The temp dir may show up as a short (8.3) path; its last part doesn't.
-	if got := strings.TrimSpace(string(out)); !strings.HasPrefix(got, "[hello world] [1] [") || !strings.HasSuffix(got, `\my code]`) {
+	if got := strings.TrimSpace(string(out)); !strings.HasPrefix(got, "[hello world] [1]") || !strings.HasSuffix(got, `\my code`) {
 		t.Fatalf("output = %q", got)
 	}
 }
