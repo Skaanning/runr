@@ -11,9 +11,6 @@ import (
 	"time"
 )
 
-// leftoverPoll is how often stopLeftovers checks whether the group is gone.
-const leftoverPoll = 10 * time.Millisecond
-
 func newCommand(command string) *exec.Cmd {
 	cmd := exec.Command("/bin/sh", "-c", command)
 	// Run in a new process group (pgid = pid) so signals reach every process

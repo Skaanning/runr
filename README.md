@@ -415,7 +415,10 @@ is left to you:
   Look for a flag or variable that forces colors / line buffering (e.g. `--color=always`)
   and add it to `cmd` or `env`.
 - **`stopped (signal: terminated)` although the program shut down cleanly:** wrappers like
-  `go run` report the signal rather than the program's own exit code. Harmless.
+  `go run` report the signal rather than the program's own exit code. So does the shell on
+  systems where `/bin/sh` is dash (Debian, Ubuntu): it doesn't replace itself with the
+  command, and stops on SIGTERM before the program does. Harmless (the program still gets
+  `shutdown_timeout`); start `cmd` with `exec` to see the program's own status.
 - **npm prints an update notice when stopping:** add
   `--env NPM_CONFIG_UPDATE_NOTIFIER=false`.
 - **`theme_background = true` has no effect:** the terminal didn't answer runr's question

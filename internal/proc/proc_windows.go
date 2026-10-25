@@ -41,11 +41,12 @@ type platformHandle struct {
 }
 
 type jobState struct {
-	mu       sync.Mutex
-	job      windows.Handle // 0 if the process could not be assigned to a job
-	pid      uint32
-	process  *os.Process
-	released bool
+	mu         sync.Mutex
+	job        windows.Handle // 0 if the process could not be assigned to a job
+	pid        uint32
+	process    *os.Process
+	released   bool
+	terminated bool // CTRL_BREAK sent by terminate
 }
 
 func attach(cmd *exec.Cmd) (platformHandle, error) {
@@ -94,6 +95,7 @@ func (s *jobState) terminate() error {
 	if s.released {
 		return nil
 	}
+	s.terminated = true
 	if err := windows.GenerateConsoleCtrlEvent(windows.CTRL_BREAK_EVENT, s.pid); err != nil {
 		return s.killLocked()
 	}
@@ -119,9 +121,27 @@ func (s *jobState) killLocked() error {
 	return nil
 }
 
-// stopLeftovers is a no-op on Windows: release closes the job, which kills
-// anything the command left running.
-func (s *jobState) stopLeftovers(time.Duration) bool { return false }
+// stopLeftovers runs after the shell has exited. After terminate, the
+// programs in the job get up to timeout to exit on their own: cmd.exe exits
+// on CTRL_BREAK right away, before the programs it runs have shut down. It
+// reports whether any were still running then. Otherwise, and once the
+// timeout has passed, release closes the job, which kills anything left.
+func (s *jobState) stopLeftovers(timeout time.Duration) bool {
+	s.mu.Lock()
+	wait := s.terminated && s.job != 0
+	s.mu.Unlock()
+	if !wait {
+		return false
+	}
+	deadline := time.Now().Add(timeout)
+	for len(s.pids()) > 0 {
+		if time.Now().After(deadline) {
+			return true
+		}
+		time.Sleep(leftoverPoll)
+	}
+	return false
+}
 
 // release closes the job once the command has exited. Because of
 // KILL_ON_JOB_CLOSE this also stops any children it left running.

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -107,7 +108,7 @@ func TestProjectValuesNormalizesDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d := c.Projects["x"].Dir; !strings.HasPrefix(d, "/") || !strings.HasSuffix(d, "relative/dir") {
+	if d := c.Projects["x"].Dir; !filepath.IsAbs(d) || !strings.HasSuffix(d, filepath.FromSlash("relative/dir")) {
 		t.Fatalf("dir = %q", d)
 	}
 	v.dir = "~/code"

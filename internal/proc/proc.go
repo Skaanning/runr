@@ -20,8 +20,9 @@ type Spec struct {
 
 	// LeftoverTimeout is how long processes the command leaves running in
 	// its process group after it exits get to stop after SIGTERM before they
-	// are killed (Unix; on Windows they are killed right away). Zero means
-	// 500ms.
+	// are killed. On Windows they are killed right away, unless Terminate
+	// was called: then they get this long to exit after CTRL_BREAK. Zero
+	// means 500ms.
 	LeftoverTimeout time.Duration
 }
 
@@ -48,6 +49,10 @@ const MaxLineBytes = 64 * 1024
 // behind that still hold its stdout/stderr open.
 const drainTimeout = 500 * time.Millisecond
 
+// leftoverPoll is how often stopLeftovers checks whether the processes the
+// command left running are gone.
+const leftoverPoll = 10 * time.Millisecond
+
 // ExitStatus describes how a process ended.
 type ExitStatus struct {
 	Code   int    // exit code, or -1 if killed by a signal or never waited on
@@ -55,7 +60,8 @@ type ExitStatus struct {
 	Err    error  // error waiting for the process, if any
 
 	// Leftovers reports that processes started by the command were still
-	// running after it exited, and had to be stopped (Unix only).
+	// running after it exited, and had to be stopped (on Windows: only
+	// after Terminate, when they outlived the timeout).
 	Leftovers bool
 }
 

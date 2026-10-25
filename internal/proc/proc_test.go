@@ -175,3 +175,17 @@ func TestPidsListsTree(t *testing.T) {
 		t.Errorf("Pids after exit = %v, want none", pids)
 	}
 }
+
+func TestTerminateWaitsForSlowShutdown(t *testing.T) {
+	// On Windows, cmd.exe exits on CTRL_BREAK before the helper is done.
+	p, c := startHelper(t, "slow-graceful", Spec{LeftoverTimeout: 5 * time.Second})
+	c.waitForPrefix(t, "ready")
+	if err := p.Terminate(); err != nil {
+		t.Fatal(err)
+	}
+	status := waitDone(t, p, 5*time.Second)
+	if status.Leftovers {
+		t.Errorf("status = %+v, want no leftovers killed", status)
+	}
+	c.waitForPrefix(t, "bye")
+}

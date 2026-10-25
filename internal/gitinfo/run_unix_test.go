@@ -28,12 +28,15 @@ func TestTimeoutKillsChildren(t *testing.T) {
 }
 
 func TestRunsInOwnSession(t *testing.T) {
-	out, err := shGit().run(context.Background(), t.TempDir(), nil, "-c", "echo $$; ps -o sid= -p $$")
+	// "sess" is the session ID on Linux and the session's address on macOS
+	// (whose ps has no "sid"); either way it differs from the parent's (this
+	// test) only in a new session.
+	out, err := shGit().run(context.Background(), t.TempDir(), nil, "-c", "ps -o sess= -p $$; ps -o sess= -p $PPID")
 	if err != nil {
 		t.Fatal(err)
 	}
 	fields := strings.Fields(string(out))
-	if len(fields) != 2 || fields[0] != fields[1] {
-		t.Errorf("pid and session id = %q, want equal (a new session)", fields)
+	if len(fields) != 2 || fields[0] == fields[1] {
+		t.Errorf("session of git and of runr = %q, want different (a new session)", fields)
 	}
 }

@@ -61,6 +61,13 @@ func runHelper(mode string) {
 		signal.Ignore(syscall.SIGTERM, os.Interrupt) // CTRL_BREAK arrives as os.Interrupt on Windows
 		signalReady()
 		time.Sleep(time.Hour)
+	case "slow-graceful": // takes a while to shut down
+		c := make(chan os.Signal, 1)
+		signal.Notify(c, syscall.SIGTERM, os.Interrupt)
+		fmt.Println("ready")
+		<-c
+		time.Sleep(200 * time.Millisecond)
+		fmt.Println("bye")
 	case "graceful":
 		c := make(chan os.Signal, 1)
 		signal.Notify(c, syscall.SIGTERM, os.Interrupt)
@@ -153,12 +160,15 @@ func (c *collector) waitForPrefix(t *testing.T, prefix string) string {
 	return ""
 }
 
-// helperCommand is a shell command line that runs this test binary.
+// helperCommand is a shell command line that runs this test binary. On
+// Unix the shell execs it, so signals and exit statuses are the helper's:
+// bash does that by itself for a single command, dash (/bin/sh on Debian
+// and Ubuntu) does not.
 func helperCommand() string {
 	if runtime.GOOS == "windows" {
 		return `"` + os.Args[0] + `"`
 	}
-	return "'" + strings.ReplaceAll(os.Args[0], "'", `'\''`) + "'"
+	return "exec '" + strings.ReplaceAll(os.Args[0], "'", `'\''`) + "'"
 }
 
 // startHelper starts the test binary in the given helper mode.
