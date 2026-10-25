@@ -136,3 +136,45 @@ func (s *jobState) release() {
 }
 
 func exitSignal(*os.ProcessState) string { return "" }
+
+// treePids lists the processes in each Job Object. Without a job (it could
+// not be set up) the tree is just the shell process.
+func treePids(hs []platformHandle) [][]int {
+	out := make([][]int, len(hs))
+	for i, h := range hs {
+		out[i] = h.pids()
+	}
+	return out
+}
+
+func (s *jobState) pids() []int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch {
+	case s.released:
+		return nil
+	case s.job == 0:
+		return []int{int(s.pid)}
+	}
+	// JOBOBJECT_BASIC_PROCESS_ID_LIST: two DWORD counts, then an array of
+	// ULONG_PTR process IDs; buf holds the counts in its first 8 bytes.
+	header := int(8 / unsafe.Sizeof(uintptr(0)))
+	for n := 64; ; n *= 4 {
+		buf := make([]uintptr, header+n)
+		size := uint32(len(buf)) * uint32(unsafe.Sizeof(uintptr(0)))
+		err := windows.QueryInformationJobObject(s.job, windows.JobObjectBasicProcessIdList,
+			uintptr(unsafe.Pointer(&buf[0])), size, nil)
+		if errors.Is(err, windows.ERROR_MORE_DATA) && n < 1<<16 {
+			continue
+		}
+		if err != nil {
+			return []int{int(s.pid)}
+		}
+		count := int((*[2]uint32)(unsafe.Pointer(&buf[0]))[1]) // NumberOfProcessIdsInList
+		pids := make([]int, 0, count)
+		for _, pid := range buf[header : header+min(count, n)] {
+			pids = append(pids, int(pid))
+		}
+		return pids
+	}
+}

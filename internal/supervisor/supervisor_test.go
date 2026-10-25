@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -413,6 +415,38 @@ func TestProcesses(t *testing.T) {
 	got := s.Processes() // session order, not alphabetical
 	if len(got) != 2 || got[0].Name != "b" || got[0].State != Running || got[1].Name != "a" || got[1].State != Exited {
 		t.Errorf("Processes() = %+v", got)
+	}
+}
+
+func TestPids(t *testing.T) {
+	s, r := newTestSupervisor(t, map[string]string{"a": "sleep 30 & echo $!; wait", "b": "true"})
+	if err := s.Start("a", "b"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "b", Exited)
+	info := r.waitState(t, "a", Running)
+	child := 0
+	for deadline := time.Now().Add(5 * time.Second); child == 0 && time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		for _, l := range logLines(s, "a") {
+			if pid, ok := strings.CutPrefix(l, "out:"); ok {
+				child, _ = strconv.Atoi(pid)
+			}
+		}
+	}
+	if child == 0 {
+		t.Fatalf("no pid in the logs %q", logLines(s, "a"))
+	}
+
+	got := s.Pids() // b has exited: no tree
+	if len(got) != 1 || !slices.Contains(got["a"], info.Pid) || !slices.Contains(got["a"], child) {
+		t.Errorf("Pids() = %v, want a: [%d %d]", got, info.Pid, child)
+	}
+	if err := s.Stop("a"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "a", Stopped)
+	if got := s.Pids(); len(got) != 0 {
+		t.Errorf("Pids() after stop = %v", got)
 	}
 }
 

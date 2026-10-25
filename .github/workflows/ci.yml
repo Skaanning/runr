@@ -1,0 +1,26 @@
+name: CI
+
+# Pushes to main and pull requests only: the repository is private, and
+# Windows and macOS runners count double and ten times against the free
+# minutes.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Keep LF line endings on Windows; tests compare output byte for byte.
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...

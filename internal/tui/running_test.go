@@ -24,6 +24,7 @@ type fakeSession struct {
 	calls    []string            // Start/Stop/Restart calls, e.g. "stop api"
 	notes    map[string][]string // lines passed to Note, by project
 	err      error               // returned by Start/Stop/Restart
+	pids     map[string][]int    // returned by Pids
 }
 
 func newFakeSession(names ...string) *fakeSession {
@@ -52,6 +53,7 @@ func (f *fakeSession) Restart(name string) error {
 func (f *fakeSession) Events() <-chan supervisor.Event { return f.events }
 func (f *fakeSession) StopAll() <-chan struct{}        { f.stopAll++; return f.stopDone }
 func (f *fakeSession) KillAll()                        { f.killAll++ }
+func (f *fakeSession) Pids() map[string][]int          { return f.pids }
 func (f *fakeSession) Note(name string, lines ...string) error {
 	if f.notes == nil {
 		f.notes = map[string][]string{}

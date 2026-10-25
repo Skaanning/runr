@@ -158,6 +158,30 @@ func (s *Supervisor) Processes() []ProcessInfo {
 	return out
 }
 
+// Pids returns the process IDs in the process tree of every project with a
+// live process, by name (see proc.Pids). The trees are read outside the
+// loop.
+func (s *Supervisor) Pids() map[string][]int {
+	var names []string
+	var procs []*proc.Process
+	_ = s.call(func() error {
+		for _, name := range s.order {
+			if p := s.procs[name].proc; p != nil {
+				names = append(names, name)
+				procs = append(procs, p)
+			}
+		}
+		return nil
+	})
+	out := make(map[string][]int, len(names))
+	for i, pids := range proc.Pids(procs) {
+		if len(pids) > 0 {
+			out[names[i]] = pids
+		}
+	}
+	return out
+}
+
 // Start starts the given projects and groups, plus all their dependencies.
 // Projects that are already alive or waiting are left alone. Each project
 // starts as soon as its dependencies are ready; until then it is Waiting.

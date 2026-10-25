@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -144,5 +145,33 @@ func TestPid(t *testing.T) {
 	c.waitForPrefix(t, "ready")
 	if p.Pid() <= 0 {
 		t.Errorf("Pid() = %d", p.Pid())
+	}
+}
+
+func TestPidsListsTree(t *testing.T) {
+	p, c := startHelper(t, "grandchild", Spec{})
+	line := c.waitForPrefix(t, "child ")
+	child, err := strconv.Atoi(strings.TrimPrefix(line, "child "))
+	if err != nil {
+		t.Fatalf("bad child line %q", line)
+	}
+	other, oc := startHelper(t, "sleep", Spec{})
+	oc.waitForPrefix(t, "ready")
+
+	trees := Pids([]*Process{p, other})
+	if len(trees) != 2 {
+		t.Fatalf("Pids returned %d trees, want 2", len(trees))
+	}
+	if !slices.Contains(trees[0], p.Pid()) || !slices.Contains(trees[0], child) {
+		t.Errorf("tree = %v, want the shell %d and the grandchild %d", trees[0], p.Pid(), child)
+	}
+	if !slices.Contains(trees[1], other.Pid()) || slices.Contains(trees[1], child) {
+		t.Errorf("other tree = %v, want %d and not %d", trees[1], other.Pid(), child)
+	}
+
+	_ = p.Kill()
+	waitDone(t, p, 5*time.Second)
+	if pids := Pids([]*Process{p})[0]; len(pids) > 0 {
+		t.Errorf("Pids after exit = %v, want none", pids)
 	}
 }

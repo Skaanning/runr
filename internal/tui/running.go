@@ -30,6 +30,7 @@ type Session interface {
 	StopAll() <-chan struct{}
 	KillAll()
 	Note(name string, lines ...string) error
+	Pids() map[string][]int // process trees of the live processes, by project
 }
 
 const (
@@ -107,6 +108,7 @@ type runningModel struct {
 
 	git       *gitTracker // nil: git is not installed
 	gitAction string      // git action running in the background, e.g. "git switch"
+	ports     *portTracker
 
 	width, height int
 	now           func() time.Time // for the clock, uptimes and spinners
@@ -119,6 +121,7 @@ type runningModel struct {
 
 func newRunningModel(sess Session, cfg *config.Config, names []string, st *styles) *runningModel {
 	m := &runningModel{sess: sess, cfg: cfg, st: st, titles: names, byName: map[string]*sidebarEntry{}, now: time.Now}
+	m.ports = newPortTracker(sess.Pids)
 	m.showAll = cfg.Settings.ShowAll()
 	for _, info := range sess.Processes() {
 		m.entry(info.Name).info = info
@@ -194,7 +197,7 @@ func (m *runningModel) showSingle(name string) {
 }
 
 func (m *runningModel) Init() tea.Cmd {
-	return tea.Batch(m.waitEvents(), m.git.refresh(m.gitDirs()), tea.RequestBackgroundColor, clockTick(m, m.now()))
+	return tea.Batch(m.waitEvents(), m.git.refresh(m.gitDirs()), m.ports.refresh(), tea.RequestBackgroundColor, clockTick(m, m.now()))
 }
 
 // gitDirs returns the directories of the projects in the sidebar.
@@ -340,6 +343,14 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 		if !m.stopping {
 			return m.git.update(msg, m.gitDirs)
 		}
+	case portsMsg:
+		cmd := m.ports.update(msg, m.alive() > 0 && !m.stopping)
+		m.layout() // the second lines may have changed width
+		return cmd
+	case portTickMsg:
+		if !m.stopping {
+			return m.ports.update(msg, true)
+		}
 	case branchesMsg:
 		if msg.owner == m {
 			return m.showBranches(msg)
@@ -410,13 +421,17 @@ func (m *runningModel) handleEvents(events []supervisor.Event) tea.Cmd {
 	if len(single) > 0 {
 		m.single.append(single...)
 	}
+	var cmd tea.Cmd
 	if states {
 		m.layout() // exit codes change the sidebar's width
+		if !m.stopping {
+			cmd = m.ports.refresh() // started processes may listen soon, ended ones don't
+		}
 	}
 	if toasts {
-		return tea.Tick(toastFor, func(time.Time) tea.Msg { return toastMsg{} })
+		return tea.Batch(cmd, tea.Tick(toastFor, func(time.Time) tea.Msg { return toastMsg{} }))
 	}
-	return nil
+	return cmd
 }
 
 func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
@@ -829,11 +844,12 @@ func (m *runningModel) logWidth() int {
 func (m *runningModel) sidebarLayout() sidebarCols {
 	base := m.sidebarPrefix() + m.labelWidth + 1 // marker and icon + label + " "
 	limit := max(m.width*2/5, 12)
-	want := 0 // widest git label
+	want, details := 0, 0 // widest git label, widest second line
 	for _, e := range m.entries {
 		if g, ok := m.git.get(e.info.Name); ok {
 			want = max(want, gitWidth(g))
 		}
+		details = max(details, m.detailsWidth(e))
 	}
 	status := 0 // widest status
 	for _, e := range m.entries {
@@ -842,7 +858,7 @@ func (m *runningModel) sidebarLayout() sidebarCols {
 		}
 	}
 	if m.panes() {
-		c := twoLineLayout(m.sidebarPrefix(), base, limit, want, status)
+		c := twoLineLayout(m.sidebarPrefix(), base, limit, details, status)
 		c.width = max(c.width, min(m.idleRowWidth(), limit))
 		return c
 	}
@@ -877,11 +893,11 @@ func (m *runningModel) sidebarLayout() sidebarCols {
 }
 
 // twoLineLayout lays out a sidebar whose processes take two lines: the
-// name, status column and sparkline, then the details (the git label) under
-// the name. When narrow, line 1 drops the sparkline first, then the status
-// column, before names are truncated; the details are truncated to fit.
-// The sidebar grows to fit the widest git label (up to maxGitWidth).
-func twoLineLayout(prefix, base, limit, gitWant, status int) sidebarCols {
+// name, status column and sparkline, then the details (ports and git label)
+// under the name. When narrow, line 1 drops the sparkline first, then the
+// status column, before names are truncated; the details are truncated to
+// fit. The sidebar grows to fit the widest details (see detailsWidth).
+func twoLineLayout(prefix, base, limit, details, status int) sidebarCols {
 	c := sidebarCols{twoLine: true}
 	for _, o := range []struct{ spark, status bool }{{true, true}, {false, true}, {false, false}} {
 		c.width, c.spark, c.status = base, 0, 0
@@ -897,8 +913,8 @@ func twoLineLayout(prefix, base, limit, gitWant, status int) sidebarCols {
 			break
 		}
 	}
-	if gitWant > 0 {
-		c.width = max(c.width, prefix+min(gitWant, maxGitWidth)+1)
+	if details > 0 {
+		c.width = max(c.width, prefix+details+1)
 	}
 	c.width = max(min(c.width, limit), 12)
 	return c
@@ -1328,7 +1344,7 @@ func (m *runningModel) sidebarRow(i int, cols sidebarCols) []string {
 	}
 	rows := []string{pad(row, full)}
 	if cols.twoLine {
-		rows = append(rows, pad(" "+marker+"  "+m.details(e.info.Name, full-m.sidebarPrefix()-1), full))
+		rows = append(rows, pad(" "+marker+"  "+m.details(e, full-m.sidebarPrefix()-1), full))
 	}
 	if selected && m.st.selBar != "" {
 		for i, r := range rows {
@@ -1339,12 +1355,43 @@ func (m *runningModel) sidebarRow(i int, cols sidebarCols) []string {
 }
 
 // details renders the second line of a process in the sidebar, in at most
-// width cells: its git label, faint except for the markers.
-func (m *runningModel) details(name string, width int) string {
-	if g, ok := m.git.get(name); ok && width > 0 {
+// width cells: its ports and git label joined by " · ", faint except for
+// the git markers. The git label is truncated first.
+func (m *runningModel) details(e *sidebarEntry, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	out := ""
+	if e.info.State.Alive() {
+		out = ansi.Truncate(portsLabel(m.ports.get(e.info.Name)), width, "…")
+	}
+	g, ok := m.git.get(e.info.Name)
+	if !ok {
+		return m.st.faint.Render(out)
+	}
+	if out == "" {
 		return gitLabelStyled(m.st, g, width, m.st.faint)
 	}
-	return ""
+	if rest := width - ansi.StringWidth(out) - 3; rest >= 2 { // room for at least "x…"
+		return m.st.faint.Render(out+" · ") + gitLabelStyled(m.st, g, rest, m.st.faint)
+	}
+	return m.st.faint.Render(out)
+}
+
+// detailsWidth is the width the second line of a process wants (see
+// details), with the git label at most maxGitWidth wide.
+func (m *runningModel) detailsWidth(e *sidebarEntry) int {
+	w := 0
+	if e.info.State.Alive() {
+		w = ansi.StringWidth(portsLabel(m.ports.get(e.info.Name)))
+	}
+	if g, ok := m.git.get(e.info.Name); ok {
+		if w > 0 {
+			w += 3 // " · "
+		}
+		w += min(gitWidth(g), maxGitWidth)
+	}
+	return w
 }
 
 func (m *runningModel) help() string {

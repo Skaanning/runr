@@ -11,13 +11,13 @@ reverse order when you quit.
 ```
 ╭─ processes ───────────────╮╭─ logs · combined ─────────────────────────────── following ─╮
 │  ● db         9s ▁▁▁▁▁▄▁▁ ││ api    2026/10/25 12:20:39 GET /users 24µs                  │
-│                           ││ web    12:20:39 PM fetched 2 users from api                 │
+│    :55432                 ││ web    12:20:39 PM fetched 2 users from api                 │
 │ ▌● api        8s ▁▁▁▁▁▄▃▂ ││ worker panic: missing QUEUE_URL                             │
-│ ▌  master                 ││ worker crashed (exit code 1)                                │
+│ ▌  :8080 · master         ││ worker crashed (exit code 1)                                │
 │  ✗ worker exit 1 ▁▁▁▁▁▂▂▁ ││ api    2026/10/25 12:20:41 GET /users 4µs                   │
 │                           ││ web    12:20:41 PM fetched 2 users from api                 │
 │  ● web        9s ▁▁▁▁▁▄▃▂ ││ api    2026/10/25 12:20:43 GET /users 27µs                  │
-│                           ││ web    12:20:43 PM fetched 2 users from api                 │
+│    :3000                  ││ web    12:20:43 PM fetched 2 users from api                 │
 │                           ││ api    2026/10/25 12:20:45 GET /users 5µs                   │
 │                           ││ web    12:20:45 PM fetched 2 users from api                 │
 ╰───────────────────────────╯╰─────────────────────────────────────────────────────────────╯
@@ -280,8 +280,9 @@ can't be saved until they are fixed. The directory and env file are checked as y
 
 The `processes` pane gives each process two lines: its state, how long it's been running
 (or `exit 1` in red once it crashed) and a sparkline of its output over the last 32 seconds,
-then its git branch underneath. On narrow terminals the sparkline goes first, then the
-uptime, and the branch is shortened. The `logs` pane shows their output — either all of them interleaved (the
+then the ports it listens on and its git branch underneath (`:5173 +1 · main`: port 5173
+and one more). On narrow terminals the sparkline goes first, then the uptime, and the
+branch is shortened. The `logs` pane shows their output — either all of them interleaved (the
 combined view) or just the selected one — with `following`, or `paused · 12 more below` once
 you scroll up, in its border. The status bar below shows the mode (`FOLLOW`, `PAUSED`,
 `SEARCH`, `STOPPING`, …), the session, how many processes are running, starting and failed,
@@ -404,6 +405,9 @@ is left to you:
   the background, runr stops that too (on Unix it gets SIGTERM and `shutdown_timeout`
   first). Programs that fully detach themselves (daemons) are not affected.
 - runr never restarts a process on its own.
+- **Ports** shown in the `processes` pane are the TCP ports the project's processes listen
+  on, including ones opened by programs it started (e.g. `npm run dev` → `node`). They are
+  checked every 2 seconds. On macOS this needs `lsof` (installed by default).
 
 ## Troubleshooting
 

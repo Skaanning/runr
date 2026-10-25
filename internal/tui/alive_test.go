@@ -123,12 +123,15 @@ func TestTwoLineLayout(t *testing.T) {
 			t.Errorf("limit %d: %+v, want %+v", tt.limit, got, tt.want)
 		}
 	}
-	// The sidebar grows to fit a git label on the second line, up to maxGitWidth.
-	if got := twoLineLayout(4, 11, 40, 30, 6); got.width != 4+maxGitWidth+1 {
-		t.Errorf("wide git label: width %d, want %d", got.width, 4+maxGitWidth+1)
+	// The sidebar grows to fit the second line, up to the limit.
+	if got := twoLineLayout(4, 11, 40, 30, 6); got.width != 4+30+1 {
+		t.Errorf("wide details: width %d, want %d", got.width, 4+30+1)
+	}
+	if got := twoLineLayout(4, 11, 30, 40, 6); got.width != 30 {
+		t.Errorf("details wider than the limit: width %d, want 30", got.width)
 	}
 	if got := twoLineLayout(4, 11, 40, 20, 0); got.width != 4+20+1 || got.spark != 8 {
-		t.Errorf("git label wider than line 1: %+v", got)
+		t.Errorf("details wider than line 1: %+v", got)
 	}
 }
 

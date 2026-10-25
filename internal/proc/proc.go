@@ -228,3 +228,14 @@ func cleanLine(b []byte) string {
 	b = bytes.TrimSuffix(b, []byte("\r"))
 	return strings.ToValidUTF8(string(b), "�")
 }
+
+// Pids returns the IDs of the processes in each process's tree, in the
+// order of ps: the members of its process group on Unix, of its Job Object
+// on Windows. A tree that has ended, or can't be read, has none.
+func Pids(ps []*Process) [][]int {
+	handles := make([]platformHandle, len(ps))
+	for i, p := range ps {
+		handles[i] = p.handle
+	}
+	return treePids(handles)
+}
