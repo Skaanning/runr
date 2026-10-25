@@ -587,20 +587,6 @@ func TestStopAllWithNothingRunning(t *testing.T) {
 	}
 }
 
-func TestStripANSI(t *testing.T) {
-	tests := map[string]string{
-		"plain":                                  "plain",
-		"\x1b[32mready\x1b[0m to accept":         "ready to accept",
-		"\x1b[1;38;5;208mbold\x1b[m":             "bold",
-		"\x1b]8;;http://x\x1b\\link\x1b]8;;\x07": "link",
-	}
-	for in, want := range tests {
-		if got := stripANSI(in); got != want {
-			t.Errorf("stripANSI(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestCloseKeepsBlockedState(t *testing.T) {
 	cfg := config.New()
 	dir := t.TempDir()

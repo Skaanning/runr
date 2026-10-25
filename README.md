@@ -80,7 +80,7 @@ complete config file.
 | Command | Description |
 |---|---|
 | `runr` | Open the launcher |
-| `runr up <name...>` | Start groups and/or projects (plus their dependencies) and open the running view |
+| `runr up <name...> [--log-dir <dir>]` | Start groups and/or projects (plus their dependencies) and open the running view; `--log-dir` also saves each project's output to `<dir>/<project>.log` (see [Saving logs](#saving-logs)) |
 | `runr add <name> [flags] -- <cmd>` | Register a project |
 | `runr edit <name> [flags] [-- <cmd>]` | Change a project; only the given flags change |
 | `runr rm <name> [--force]` | Remove a project (and from its groups); refuses if others depend on it unless `--force` |
@@ -168,6 +168,7 @@ backend = ["db", "api"]
 | `theme` | `"terminal"` | Colors of the TUI: `terminal` (your terminal's own colors), `catppuccin`, `tokyo-night`, `gruvbox` or `nord`. See [Themes](#themes). |
 | `theme_background` | `false` | Paint the theme's background and text color behind the whole TUI instead of letting your terminal's show through. See [Themes](#themes). |
 | `show_all` | `true` | List the registered projects that aren't running in the running view's sidebar, below the session's (`a` toggles it for a session) |
+| `log_dir` | — | Directory where every session appends each project's output to `<project>.log`, e.g. `"~/.local/state/runr/logs"`; `runr up --log-dir` overrides it (see [Saving logs](#saving-logs)) |
 
 ### Themes
 
@@ -325,6 +326,7 @@ so for 5 seconds.
 | `PgUp` / `PgDn` | Scroll a page |
 | `g` / `G` (`home` / `end`) | Jump to the top / bottom |
 | `f` | Toggle follow (auto-scroll); scrolling to the bottom resumes it |
+| `w` | Save the output on screen (all of it, or the selected process's) to a file in the current directory (see [Saving logs](#saving-logs)) |
 | `q`, `Ctrl+C` | Stop everything and quit; a second `Ctrl+C` kills everything immediately |
 
 Search is plain text (no regex) and smart-case: an all-lowercase query ignores case, any
@@ -332,6 +334,29 @@ uppercase letter makes it case-sensitive.
 
 runr adds its own lines to each process's log, such as `starting: <cmd>`,
 `waiting for db`, `ready` and `crashed (exit code 1)`, so you can see what happened when.
+
+## Saving logs
+
+- **`w`** in the running view writes the output on screen — the combined view, or the
+  selected process's — to `runr-<project|combined>-<YYYYMMDD-HHMMSS>.log` in the directory
+  you started runr from. It holds what runr still has in memory (`scrollback_lines` per
+  process), including runr's own lines (`starting: …`, `crashed …`).
+- **`--log-dir <dir>`** (or `log_dir` in `[settings]`) keeps everything: each project's
+  output is appended to `<dir>/<project>.log` as it arrives, written to disk at least once a
+  second, so a crash leaves its last lines behind. Each session starts with a
+  `--- runr session 2026-10-25 13:27:50 ---` line. The directory is created if needed; files
+  are never rotated or deleted by runr. If a file can't be written, the project's log says
+  so and runr stops saving its output there. Works with the launcher and with plain output
+  too.
+
+Both are plain text without colors, one line per output line:
+
+```
+13:27:52.145 » starting: go run .
+13:27:52.204 │ 2026/10/25 13:27:52 database connection ok
+```
+
+Saved combined logs put the project's name before `│` / `»`; `»` marks runr's own lines.
 
 ## Git
 

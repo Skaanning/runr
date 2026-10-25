@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -18,6 +19,7 @@ import (
 
 func newUpCmd() *cobra.Command {
 	var plain bool
+	var logDirFlag string
 	cmd := &cobra.Command{
 		Use:               "up <name...>",
 		Short:             "Start groups and/or projects",
@@ -33,6 +35,11 @@ func newUpCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			dir, err := logDir(s.cfg, logDirFlag)
+			if err != nil {
+				return err
+			}
+			opts := supervisor.Options{LogDir: dir}
 
 			sigs := make(chan os.Signal, 2)
 			signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
@@ -40,11 +47,13 @@ func newUpCmd() *cobra.Command {
 			// The TUI needs a terminal for both keys and drawing; otherwise
 			// (e.g. piped to a file) behave like --plain.
 			if plain || !isTerminal(cmd.InOrStdin()) || !isTerminal(cmd.OutOrStdout()) {
-				return runPlain(cmd.OutOrStdout(), s.cfg, args, projects, sigs, colorsFor(cmd.OutOrStdout()))
+				return runPlain(cmd.OutOrStdout(), s.cfg, opts, args, projects, sigs, colorsFor(cmd.OutOrStdout()))
 			}
-			return runTUI(cmd.ErrOrStderr(), s.cfg, args, sigs)
+			return runTUI(cmd.ErrOrStderr(), s.cfg, opts, args, sigs)
 		},
 	}
+	cmd.Flags().StringVar(&logDirFlag, "log-dir", "", "append each project's output to <dir>/<project>.log (overrides settings.log_dir)")
+	_ = cmd.MarkFlagDirname("log-dir")
 	// Plain interleaved output, for debugging and non-interactive use.
 	cmd.Flags().BoolVar(&plain, "plain", false, "print interleaved output instead of opening the TUI")
 	_ = cmd.Flags().MarkHidden("plain")
@@ -54,14 +63,33 @@ func newUpCmd() *cobra.Command {
 // runTUI starts the projects and shows the running view until the user
 // quits. Projects that ended crashed or blocked are listed on stderr
 // afterwards, since the TUI's screen is gone by then.
-func runTUI(stderr io.Writer, cfg *config.Config, names []string, sigs <-chan os.Signal) error {
-	sup := supervisor.New(cfg, supervisor.Options{})
+func runTUI(stderr io.Writer, cfg *config.Config, opts supervisor.Options, names []string, sigs <-chan os.Signal) error {
+	sup := supervisor.New(cfg, opts)
 	err := sup.Start(names...)
 	if err == nil {
 		err = tui.Run(sup, cfg, names, gitReader(), sigs)
 	}
 	finish(stderr, sup)
 	return err
+}
+
+// logDir returns the directory for persistent logs: flag if set, else
+// settings.log_dir, with ~ expanded and created if needed; "" for none.
+func logDir(cfg *config.Config, flag string) (string, error) {
+	dir, err := cfg.Settings.LogDir()
+	if flag != "" {
+		dir, err = config.ExpandHome(flag)
+	}
+	if err != nil || dir == "" {
+		return "", err
+	}
+	if dir, err = filepath.Abs(dir); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("log dir: %w", err)
+	}
+	return dir, nil
 }
 
 // gitReader returns the reader for the TUI's git display, or nil (hiding

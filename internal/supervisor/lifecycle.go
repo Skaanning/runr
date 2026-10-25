@@ -3,11 +3,11 @@ package supervisor
 import (
 	"fmt"
 	"os"
-	"regexp"
 	"sync/atomic"
 	"time"
 
 	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/plaintext"
 	"github.com/Skaanning/runr/internal/proc"
 )
 
@@ -80,7 +80,7 @@ func (s *Supervisor) lineHandler(m *managed) func(proc.Line) {
 		}
 		s.events.push(LineEvent{Line: s.logs.Append(name, stream, l.Text)})
 
-		if re != nil && !ready.Load() && re.MatchString(stripANSI(l.Text)) {
+		if re != nil && !ready.Load() && re.MatchString(plaintext.StripANSI(l.Text)) {
 			ready.Store(true)
 			s.post(func() { s.becameReady(m, gen) })
 		}
@@ -217,17 +217,4 @@ func (s *Supervisor) spec(p *config.Project) (proc.Spec, error) {
 		// command itself does.
 		LeftoverTimeout: s.timeout,
 	}, nil
-}
-
-// ansiPattern matches CSI sequences (colors, cursor movement) and OSC
-// sequences (e.g. hyperlinks, window titles).
-var ansiPattern = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)`)
-
-func stripANSI(s string) string {
-	for i := 0; i < len(s); i++ {
-		if s[i] == 0x1b {
-			return ansiPattern.ReplaceAllString(s, "")
-		}
-	}
-	return s
 }

@@ -35,6 +35,7 @@ type Logs struct {
 	seq      uint64
 	buffers  map[string]*ring
 	now      func() time.Time
+	onAppend func(LogLine) // called with every line, in order, under mu; nil: none
 }
 
 // NewLogs returns a store keeping at most capacity lines per project.
@@ -58,6 +59,9 @@ func (l *Logs) Append(project string, stream Stream, text string) LogLine {
 		l.buffers[project] = buf
 	}
 	buf.push(line)
+	if l.onAppend != nil {
+		l.onAppend(line)
+	}
 	return line
 }
 

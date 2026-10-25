@@ -74,6 +74,11 @@ func (c *Config) Validate() (warnings []Issue, err error) {
 	if t := c.Settings.ThemeValue; t != "" && !slices.Contains(ThemeNames, t) {
 		addErr("settings", "", "theme", "unknown theme %q (one of %s)", t, strings.Join(ThemeNames, ", "))
 	}
+	if dir, err := c.Settings.LogDir(); err != nil {
+		addErr("settings", "", "log_dir", "%v", err)
+	} else if fi, err := os.Stat(dir); dir != "" && err == nil && !fi.IsDir() {
+		addErr("settings", "", "log_dir", "%s is not a directory", dir)
+	}
 
 	for _, name := range sortedKeys(c.Projects) {
 		p := c.Projects[name]

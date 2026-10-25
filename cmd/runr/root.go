@@ -81,7 +81,11 @@ func runLauncher(cmd *cobra.Command) error {
 		if _, err := prepareUp(s.cfg, names, io.Discard); err != nil {
 			return nil, err
 		}
-		sup = supervisor.New(s.cfg, supervisor.Options{})
+		dir, err := logDir(s.cfg, "")
+		if err != nil {
+			return nil, err
+		}
+		sup = supervisor.New(s.cfg, supervisor.Options{LogDir: dir})
 		if err := sup.Start(names...); err != nil {
 			sup.Close()
 			sup = nil

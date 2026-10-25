@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/logfile"
 	"github.com/Skaanning/runr/internal/proc"
 )
 
@@ -24,6 +25,9 @@ var (
 type Options struct {
 	// BaseEnv is the environment every process starts from; defaults to os.Environ().
 	BaseEnv []string
+	// LogDir, if set, is an existing directory where each project's lines
+	// are appended to <project>.log (see logfile.Writer).
+	LogDir string
 }
 
 // Supervisor runs projects from a config, tracks their state and collects
@@ -41,6 +45,7 @@ type Supervisor struct {
 	msgs      chan func()
 	closed    chan struct{}
 	ctx       context.Context // cancelled by Close; ends readiness probes
+	files     *logfile.Writer // persistent logs (Options.LogDir); nil if off
 	cancel    context.CancelFunc
 	closeOnce sync.Once
 	events    *eventQueue
@@ -97,8 +102,22 @@ func New(cfg *config.Config, opts Options) *Supervisor {
 		events:  newEventQueue(),
 		procs:   map[string]*managed{},
 	}
+	if opts.LogDir != "" {
+		s.files = logfile.NewWriter(opts.LogDir, s.logFileFailed)
+		s.logs.onAppend = func(l LogLine) { s.files.Write(l.Project, l.Time, l.Stream.Runr(), l.Text) }
+	}
 	go s.loop()
 	return s
+}
+
+// logFileFailed reports in a project's log that its log file can't be
+// written any more. It runs with the Writer's lock held, maybe on the loop.
+func (s *Supervisor) logFileFailed(project, path string, err error) {
+	go s.post(func() {
+		if m := s.procs[project]; m != nil {
+			s.systemError(m, "can't write the log file, no more output is saved there: %v", err)
+		}
+	})
 }
 
 // Events delivers state changes and log lines in order. It is closed after Close.
@@ -350,6 +369,9 @@ func (s *Supervisor) Close() {
 		s.cancel()
 		close(s.closed)
 		s.events.close()
+		if s.files != nil {
+			s.files.Close()
+		}
 	})
 }
 

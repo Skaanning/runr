@@ -110,6 +110,7 @@ type runningModel struct {
 	git       *gitTracker // nil: git is not installed
 	gitAction string      // git action running in the background, e.g. "git switch"
 	ports     *portTracker
+	saveDir   string // where w saves logs; "" for the current directory
 
 	width, height int
 	now           func() time.Time // for the clock, uptimes and spinners
@@ -353,6 +354,10 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 			cmd = tea.Batch(cmd, func() tea.Msg { sess.RememberPorts(seen); return nil })
 		}
 		return cmd
+	case savedLogMsg:
+		if msg.owner == m {
+			m.notice = savedNotice(msg)
+		}
 	case openedMsg:
 		if msg.owner == m {
 			m.notice = "opened " + msg.url
@@ -532,6 +537,8 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		return m.openPull()
 	case "o":
 		return m.openPorts()
+	case "w":
+		return m.saveLog()
 	case "r":
 		m.restart()
 	case "s":
@@ -1456,7 +1463,7 @@ func (m *runningModel) help() string {
 		}
 	}
 	keys = append(keys, [][2]string{
-		{"/", "search"}, {"pgup/pgdn", "scroll"}, {"g/G", "top/bottom"}, {"f", "follow"},
+		{"/", "search"}, {"pgup/pgdn", "scroll"}, {"g/G", "top/bottom"}, {"f", "follow"}, {"w", "save"},
 	}...)
 	if len(m.idle) > 0 || !m.showAll && len(m.entries) < len(m.cfg.Projects) {
 		all := "hide others"

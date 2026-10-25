@@ -24,9 +24,9 @@ type plainColors struct {
 // runPlain starts the projects and prints their output interleaved, one line
 // per output line, until every project has finished. The first signal on
 // sigs stops everything gracefully; a second one kills it.
-func runPlain(out io.Writer, cfg *config.Config, names, projects []string, sigs <-chan os.Signal, colors plainColors) error {
+func runPlain(out io.Writer, cfg *config.Config, opts supervisor.Options, names, projects []string, sigs <-chan os.Signal, colors plainColors) error {
 	pr := newPlainPrinter(out, cfg, projects, colors)
-	sup := supervisor.New(cfg, supervisor.Options{})
+	sup := supervisor.New(cfg, opts)
 	if err := sup.Start(names...); err != nil {
 		sup.Close()
 		return err

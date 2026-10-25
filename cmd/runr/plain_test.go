@@ -60,7 +60,7 @@ func startPlain(t *testing.T, cfg *config.Config, names ...string) (*syncBuffer,
 	out := &syncBuffer{}
 	sigs := make(chan os.Signal, 2)
 	result := make(chan error, 1)
-	go func() { result <- runPlain(out, cfg, names, projects, sigs, plainColors{}) }()
+	go func() { result <- runPlain(out, cfg, supervisor.Options{}, names, projects, sigs, plainColors{}) }()
 	return out, sigs, result
 }
 
@@ -257,6 +257,28 @@ func TestPlainPrinterThemeColors(t *testing.T) {
 		p := newPlainPrinter(&bytes.Buffer{}, cfg, []string{"api", "db"}, tt.colors)
 		if p.labels["api"] != tt.api || p.labels["db"] != tt.db {
 			t.Errorf("%+v: labels %q, %q, want %q, %q", tt.colors, p.labels["api"], p.labels["db"], tt.api, tt.db)
+		}
+	}
+}
+
+func TestPlainLogDir(t *testing.T) {
+	logs := t.TempDir()
+	cfg := plainConfig(t, map[string]*config.Project{"api": {Cmd: "echo hello; exit 1"}})
+	projects, err := prepareUp(cfg, []string{"api"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = runPlain(&syncBuffer{}, cfg, supervisor.Options{LogDir: logs}, []string{"api"}, projects, make(chan os.Signal), plainColors{})
+	if err == nil {
+		t.Error("a crash should fail the run")
+	}
+	b, err := os.ReadFile(filepath.Join(logs, "api.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"--- runr session ", " » starting: echo hello; exit 1\n", " │ hello\n", " » crashed (exit code 1)\n"} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("api.log lacks %q:\n%s", want, b)
 		}
 	}
 }

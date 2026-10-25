@@ -185,6 +185,11 @@ func TestValidateErrors(t *testing.T) {
 			func(c *Config) { c.Settings.ThemeValue = "solarized" },
 			[]string{`settings: theme: unknown theme "solarized" (one of terminal, catppuccin, tokyo-night, gruvbox, nord)`},
 		},
+		{
+			"log_dir is a file",
+			func(c *Config) { c.Settings.LogDirValue = "validate_test.go" }, // relative to the package
+			[]string{`settings: log_dir: validate_test.go is not a directory`},
+		},
 	}
 
 	for _, tt := range tests {

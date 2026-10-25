@@ -38,6 +38,13 @@ type Settings struct {
 	ShowAllValue         *bool    `toml:"show_all,omitempty"`
 	ThemeValue           string   `toml:"theme,omitempty"`
 	ThemeBackgroundValue bool     `toml:"theme_background,omitempty"`
+	LogDirValue          string   `toml:"log_dir,omitempty"`
+}
+
+// LogDir is the directory where runr up appends each project's output to
+// <project>.log, with ~ expanded; "" when output isn't saved.
+func (s Settings) LogDir() (string, error) {
+	return ExpandHome(s.LogDirValue)
 }
 
 // Theme is the name of the UI's color theme, one of ThemeNames.
