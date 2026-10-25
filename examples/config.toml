@@ -18,11 +18,12 @@ theme = "terminal"        # terminal (default), catppuccin, tokyo-night, gruvbox
 theme_background = false  # paint the theme's background behind the UI (default false)
 
 # A database that takes a moment to boot. Dependents wait until a line of its
-# output matches ready_log.
+# output matches ready_log. (Postgres also prints "ready to accept connections"
+# during its first-run setup, before it listens on TCP, so match this instead.)
 [projects.db]
 dir = "~/code/infra"
 cmd = "docker compose up postgres"
-ready_log = "ready to accept connections"
+ready_log = "listening on IPv4"
 
 # One-shot jobs are fine too: a dependency that exits with code 0 counts as ready.
 [projects.migrate]
