@@ -559,6 +559,12 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.confirmPullAll()
 	case "w":
 		return m.saveLog()
+	case "c":
+		if e := m.selectedEntry(); e != nil {
+			var cmd tea.Cmd
+			m.notice, cmd = copyCommand(m.cfg, e.info.Name)
+			return cmd
+		}
 	case "r":
 		m.restart()
 	case "s":
@@ -1487,6 +1493,7 @@ func (m *runningModel) help() string {
 	}
 	keys = append(keys, [][2]string{
 		{"/", "search"}, {"pgup/pgdn", "scroll"}, {"g/G", "top/bottom"}, {"f", "follow"}, {"w", "save"},
+		{"c", "copy cmd"},
 	}...)
 	if len(m.idle) > 0 || !m.showAll && len(m.entries) < len(m.cfg.Projects) {
 		all := "hide others"

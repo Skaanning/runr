@@ -221,6 +221,7 @@ branch. On terminals shorter than 20 rows the `runr` mark makes room for the lis
 | `p` | Pull the git repository of the project under the cursor (`git pull --ff-only`), after confirming |
 | `F` | Fetch the git repositories of all registered projects |
 | `P` | Pull the git repositories of the selection, or of the group or project under the cursor, after confirming |
+| `c` | Copy the command line that starts the project under the cursor the way runr does: `cd` to its directory, runr's default variables, its `env_file` and `env`, then the command, e.g. `cd ~/code/api && env FORCE_COLOR=1 … PORT=8080 /bin/sh -c 'go run .'` (`cmd.exe` syntax on Windows). It goes to the clipboard through the terminal (OSC 52; in tmux, `set-clipboard on`) and is shown on the bottom line |
 | `t` | Pick a color theme; the launcher previews the theme under the cursor, `enter` saves it, `esc` keeps the old one |
 | `q`, `esc` | Quit |
 
@@ -287,6 +288,7 @@ so for 5 seconds.
 | `g` / `G` (`home` / `end`) | Jump to the top / bottom |
 | `f` | Toggle follow (auto-scroll); scrolling to the bottom resumes it |
 | `w` | Save the output on screen (all of it, or the selected process's) to a file in the current directory (see [Saving logs](#saving-logs)) |
+| `c` | Copy the command line that starts the selected project the way runr does: `cd` to its directory, runr's default variables, its `env_file` and `env`, then the command, e.g. `cd ~/code/api && env FORCE_COLOR=1 … PORT=8080 /bin/sh -c 'go run .'` (`cmd.exe` syntax on Windows). It goes to the clipboard through the terminal (OSC 52; in tmux, `set-clipboard on`) and is shown on the bottom line |
 | `q`, `Ctrl+C` | Stop everything and quit; a second `Ctrl+C` kills everything immediately |
 
 Search is plain text (no regex) and smart-case: an all-lowercase query ignores case, any

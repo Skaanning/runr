@@ -241,6 +241,12 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.openPull()
 		case "t":
 			return m, m.openThemes()
+		case "c":
+			if it, ok := m.current(); ok && !it.group {
+				var cmd tea.Cmd
+				m.notice, cmd = copyCommand(m.cfg, it.name)
+				return m, cmd
+			}
 		}
 	}
 	return m, nil
@@ -892,6 +898,9 @@ func (m *launcherModel) help() string {
 	}
 	if m.git != nil && len(m.git.repos.ByRoot) > 0 {
 		keys = append(keys, [2]string{"F", "fetch all"}, [2]string{"P", "pull all"})
+	}
+	if it, ok := m.current(); ok && !it.group {
+		keys = append(keys, [2]string{"c", "copy cmd"})
 	}
 	keys = append(keys, [2]string{"t", "theme"}, [2]string{"q", "quit"})
 	switch {
