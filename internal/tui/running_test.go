@@ -198,6 +198,39 @@ func TestRunningSelectionAndSidebarScroll(t *testing.T) {
 	}
 }
 
+func TestRunningSidebarScrollTwoLines(t *testing.T) {
+	sess := newFakeSession()
+	cfg := &config.Config{Projects: map[string]*config.Project{}}
+	for i := range 10 {
+		name := fmt.Sprintf("p%d", i)
+		cfg.Projects[name] = &config.Project{Cmd: "x"}
+		sess.procs = append(sess.procs, supervisor.ProcessInfo{Name: name})
+	}
+	m := newRunningModel(sess, cfg, []string{"all"}, newStyles(terminalTheme))
+	m.Update(tea.WindowSizeMsg{Width: 60, Height: 11}) // panes: 7 rows, 3 processes
+	for range 4 {
+		m.Update(key("down"))
+	}
+	want := []string{"│  ○ p2 ▁▁▁▁▁▁▁▁", "│", "│  ○ p3 ▁▁▁▁▁▁▁▁", "│", "│ ▌○ p4 ▁▁▁▁▁▁▁▁", "│ ▌", "│"}
+	got := screen(m)[1:8]
+	for i, w := range want {
+		if side, _, _ := strings.Cut(got[i], "││"); strings.TrimRight(side, " ") != w {
+			t.Fatalf("sidebar:\n%s\nwant rows starting %q", strings.Join(got, "\n"), want)
+		}
+	}
+	for range 20 {
+		m.Update(key("down"))
+	}
+	if m.selected != 9 || m.sideTop != 7 {
+		t.Fatalf("selected = %d, sideTop = %d", m.selected, m.sideTop)
+	}
+	m.Update(key("!"))                                 // no toast: nothing changes
+	m.Update(tea.WindowSizeMsg{Width: 60, Height: 24}) // everything fits again
+	if m.sideTop != 0 {
+		t.Fatalf("sideTop = %d after growing", m.sideTop)
+	}
+}
+
 func TestRunningScrollKeys(t *testing.T) {
 	m, _ := newTestModel(t, 60, 6) // 2 body rows
 	var events []supervisor.Event
@@ -245,15 +278,15 @@ func TestRunningWrapsLongLinesUnderLabel(t *testing.T) {
 }
 
 func TestRunningNewProjectFromEvents(t *testing.T) {
-	m, _ := newTestModel(t, 60, 10)
+	m, _ := newTestModel(t, 60, 14)
 	m.cfg.Projects["frontend-application"] = &config.Project{Cmd: "x"}
 	m.Update(eventsMsg{events: []supervisor.Event{
 		state("frontend-application", supervisor.Waiting),
 		line("frontend-application", "hi"),
 	}})
 	got := screen(m)
-	if !strings.HasPrefix(got[4], "│  ⠋ frontend-applicati… ││") {
-		t.Fatalf("sidebar row = %q", got[4])
+	if !strings.HasPrefix(got[7], "│  ⠋ frontend-applicati… ││") {
+		t.Fatalf("sidebar row = %q", got[7])
 	}
 	if !strings.Contains(got[1], "││ frontend-applic… hi") {
 		t.Fatalf("log row = %q", got[1])
@@ -701,8 +734,8 @@ func TestPickerStartsProject(t *testing.T) {
 	if got := statusRow(m); !strings.HasPrefix(got, "  FOLLOW  backend + worker ") {
 		t.Fatalf("status bar = %q", got)
 	}
-	if !strings.HasPrefix(got[3], "│ ▌○ Worker") {
-		t.Fatalf("sidebar row = %q, want the new project selected", got[3])
+	if !strings.HasPrefix(got[5], "│ ▌○ Worker") {
+		t.Fatalf("sidebar row = %q, want the new project selected", got[5])
 	}
 }
 

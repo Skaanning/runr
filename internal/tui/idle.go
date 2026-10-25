@@ -108,7 +108,7 @@ func (m *runningModel) idleRows(h int) int {
 	if len(m.idle) == 0 {
 		return 0
 	}
-	rows := min(len(m.idle)+1, h-len(m.entries))
+	rows := min(len(m.idle)+1, h-len(m.entries)*m.entryLines())
 	if m.selectedIdle() != "" {
 		rows = max(rows, min(2, h))
 	}
@@ -148,10 +148,18 @@ func (m *runningModel) idleRow(i int, cols sidebarCols) string {
 	if m.panes() {
 		row = " " + marker + icon + " " + style.Render(label)
 	}
-	if cols.git > 0 {
+	g, hasGit := m.git.get(name)
+	switch {
+	case !hasGit:
+	case cols.git > 0:
 		row = pad(row, width)
-		if g, ok := m.git.get(name); ok {
-			row += m.st.faint.Render(ansi.Strip(gitLabel(m.st, g, cols.git)))
+		row += m.st.faint.Render(ansi.Strip(gitLabel(m.st, g, cols.git)))
+	case cols.twoLine:
+		// One line each, so the list doesn't double in height: the git
+		// label goes after the names, aligned, if there is room.
+		at := m.sidebarPrefix() + m.idleWidth + 1
+		if room := full - at - 1; room >= minGitWidth {
+			row = pad(row, at) + m.st.faint.Render(ansi.Strip(gitLabel(m.st, g, min(room, maxGitWidth))))
 		}
 	}
 	row = pad(row, full)
@@ -162,13 +170,14 @@ func (m *runningModel) idleRow(i int, cols sidebarCols) string {
 }
 
 // sidebarRows renders the sidebar's h rows: the session's projects from
-// sideTop, then the heading and the projects not started from idleTop.
+// sideTop (entryLines rows each), then the heading and the projects not
+// started from idleTop.
 func (m *runningModel) sidebarRows(h int, cols sidebarCols) []string {
 	idle := m.idleRows(h)
-	session := min(len(m.entries)-m.sideTop, h-idle)
+	session := min(len(m.entries)-m.sideTop, (h-idle)/m.entryLines())
 	rows := make([]string, 0, h)
 	for r := range session {
-		rows = append(rows, m.sidebarRow(m.sideTop+r, cols))
+		rows = append(rows, m.sidebarRow(m.sideTop+r, cols)...)
 	}
 	if idle > 0 {
 		rows = append(rows, m.idleHeadingRow(cols))

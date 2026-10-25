@@ -143,6 +143,56 @@ func TestRunningSidebarGitWidths(t *testing.T) {
 	}
 }
 
+func TestRunningSidebarGitTwoLines(t *testing.T) {
+	for _, tt := range []struct {
+		width int
+		want  []string // the sidebar, trimmed
+	}{
+		{100, []string{
+			" ▌● db     ▁▁▁▁▁▁▁▁",
+			" ▌  main",
+			"  ○ api    ▁▁▁▁▁▁▁▂",
+			"    feat/login * ↓2",
+			"  ○ Worker ▁▁▁▁▁▁▁▁",
+			"    feat/login * ↓2",
+		}},
+		{52, []string{ // 20 columns: the branch is cut, the markers stay
+			" ▌● db     ▁▁▁▁▁▁▁▁",
+			" ▌  main",
+			"  ○ api    ▁▁▁▁▁▁▁▂",
+			"    feature/l… * ↓2",
+			"  ○ Worker ▁▁▁▁▁▁▁▁",
+			"    feature/l… * ↓2",
+		}},
+	} {
+		m, _ := newTestModel(t, tt.width, 12)
+		g := testGit()
+		if tt.width < 100 {
+			g.status["/r/app"] = gitinfo.Status{Branch: "feature/long-branch-name", Changed: true, Behind: 2}
+		}
+		m.git = newGitTracker(g)
+		loadGit(t, func(msg tea.Msg) { m.Update(msg) }, m.git, m.gitDirs())
+		m.Update(eventsMsg{events: []supervisor.Event{state("db", supervisor.Running), line("api", "hello")}})
+		if got := sidebarText(m)[:6]; !slices.Equal(got, tt.want) {
+			t.Errorf("width %d:\n%s\nwant:\n%s", tt.width, strings.Join(got, "\n"), strings.Join(tt.want, "\n"))
+		}
+		for i, row := range strings.Split(m.render(), "\n") {
+			if w := ansi.StringWidth(row); w > tt.width {
+				t.Errorf("width %d: row %d is %d cells", tt.width, i, w)
+			}
+		}
+	}
+
+	// The branch is faint, the markers keep their colors.
+	m, _ := newTestModel(t, 100, 12)
+	m.git = newGitTracker(testGit())
+	loadGit(t, func(msg tea.Msg) { m.Update(msg) }, m.git, m.gitDirs())
+	row := strings.Split(m.render(), "\n")[4]
+	if !strings.Contains(row, m.st.faint.Render("feat/login")) || !strings.Contains(row, m.st.warn.Render("*")) {
+		t.Errorf("api details = %q", row)
+	}
+}
+
 func TestRunningWithoutGit(t *testing.T) {
 	m, _ := newTestModel(t, 120, 7)
 	if m.git != nil || m.Init() == nil {

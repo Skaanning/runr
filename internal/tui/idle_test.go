@@ -52,15 +52,17 @@ func TestIdleProjectsListed(t *testing.T) {
 	m, _ := newIdleModel(t, 80, 12)
 	checkSidebar(t, m,
 		" ▌● db  ▁▁▁▁▁▁▁▁",
+		" ▌", // the second line: the selection bar, and no git state
 		"  ● api ▁▁▁▁▁▁▁▁",
-		" not running",
+		"",
+		" not running", // one line each
 		"  ○ cron",
 		"  ○ docs",
 		"  ○ Worker",
 	)
 	raw := strings.Split(m.render(), "\n")
-	if !strings.Contains(raw[4], m.st.faint.Render("cron")) || !strings.Contains(raw[4], m.st.faint.Render("○")) {
-		t.Errorf("not-started row isn't faint: %q", raw[4])
+	if !strings.Contains(raw[6], m.st.faint.Render("cron")) || !strings.Contains(raw[6], m.st.faint.Render("○")) {
+		t.Errorf("not-started row isn't faint: %q", raw[6])
 	}
 
 	// Nothing to list when every project is in the session.
@@ -103,11 +105,13 @@ func TestIdleSelectAndStart(t *testing.T) {
 	}
 	checkSidebar(t, m,
 		"  ● db   ▁▁▁▁▁▁▁▁",
+		"",
 		"  ● api  ▁▁▁▁▁▁▁▁",
+		"",
 		" ▌○ cron ▁▁▁▁▁▁▁▁",
+		" ▌",
 		" not running",
 		"  ○ docs",
-		"  ○ Worker",
 	)
 	if got := statusRow(m); !strings.HasPrefix(got, "  FOLLOW  backend + cron ") {
 		t.Errorf("status bar = %q, want cron in the title", got)
@@ -139,11 +143,13 @@ func TestIdleStartWithDependencies(t *testing.T) {
 	}
 	checkSidebar(t, m,
 		"  ○ cron ▁▁▁▁▁▁▁▁",
+		"",
 		"  ○ db   ▁▁▁▁▁▁▁▁",
+		"",
 		" ▌○ api  ▁▁▁▁▁▁▁▁",
+		" ▌",
 		" not running",
 		"  ○ docs",
-		"  ○ Worker",
 	)
 }
 
@@ -193,7 +199,7 @@ func TestIdleToggle(t *testing.T) {
 		t.Errorf("help = %q", got)
 	}
 	m.Update(key("a"))
-	checkSidebar(t, m, "  ● db  ▁▁▁▁▁▁▁▁", " ▌● api ▁▁▁▁▁▁▁▁")
+	checkSidebar(t, m, "  ● db  ▁▁▁▁▁▁▁▁", "", " ▌● api ▁▁▁▁▁▁▁▁", " ▌")
 	if got := helpRow(m); !strings.Contains(got, "a  show all") || !strings.Contains(got, "+  start") {
 		t.Errorf("help = %q", got)
 	}
@@ -238,8 +244,8 @@ func TestIdleGit(t *testing.T) {
 	m.git = newGitTracker(f)
 	loadGit(t, func(msg tea.Msg) { m.Update(msg) }, m.git, m.gitDirs())
 	rows := sidebarText(m)
-	if !strings.HasPrefix(rows[5], "  ○ Worker ") || !strings.HasSuffix(rows[5], " feat/login * ↓2") {
-		t.Errorf("worker row = %q, want its git label", rows[5])
+	if !strings.HasPrefix(rows[7], "  ○ Worker ") || !strings.HasSuffix(rows[7], " feat/login * ↓2") {
+		t.Errorf("worker row = %q, want its git label", rows[7])
 	}
 	m.selectEntry(m.indexOf("worker"))
 	if got := helpRow(m); !strings.Contains(got, "b  branch") {

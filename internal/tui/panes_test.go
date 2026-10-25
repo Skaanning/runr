@@ -32,10 +32,10 @@ func TestPaneLayout(t *testing.T) {
 	want := []string{
 		"╭─ processes ───────────────╮╭─ logs · combined ─────────── following ─╮",
 		"│ ▌● db            ▁▁▁▁▁▁▁▁ ││ db     starting: db                     │",
-		"│  ⠋ api           ▁▁▁▁▁▁▁▂ ││ api    listening on :8080               │",
+		"│ ▌                         ││ api    listening on :8080               │",
+		"│  ⠋ api           ▁▁▁▁▁▁▁▂ ││                                         │",
+		"│                           ││                                         │",
 		"│  ✗ Worker exit 1 ▁▁▁▁▁▁▁▁ ││                                         │",
-		"│                           ││                                         │",
-		"│                           ││                                         │",
 		"│                           ││                                         │",
 		"╰───────────────────────────╯╰─────────────────────────────────────────╯",
 		"  FOLLOW  backend  ● 1 ⠋ 1 ✗ 1                               db  14:32",

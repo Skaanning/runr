@@ -821,10 +821,11 @@ func (m *runningModel) logWidth() int {
 }
 
 // sidebarLayout returns the width of the sidebar's content (without borders
-// or the divider) and the width of its git column, 0 if hidden. The sidebar
-// takes at most two fifths of the screen; when narrow, the sparkline is
-// dropped first, then the status column, then the git column is narrowed
-// and dropped, before names are truncated.
+// or the divider) and its columns. The sidebar takes at most two fifths of
+// the screen. In panes, each process takes two lines (see twoLineLayout);
+// in the compact layout one, and when narrow the sparkline is dropped first,
+// then the status column, then the git column is narrowed and dropped,
+// before names are truncated.
 func (m *runningModel) sidebarLayout() sidebarCols {
 	base := m.sidebarPrefix() + m.labelWidth + 1 // marker and icon + label + " "
 	limit := max(m.width*2/5, 12)
@@ -839,6 +840,11 @@ func (m *runningModel) sidebarLayout() sidebarCols {
 		if text, _ := statusText(e.info, e.oneShot, m.now()); text != "" {
 			status = max(status, len(text), statusWidth)
 		}
+	}
+	if m.panes() {
+		c := twoLineLayout(m.sidebarPrefix(), base, limit, want, status)
+		c.width = max(c.width, min(m.idleRowWidth(), limit))
+		return c
 	}
 	// Column sets from most to least complete.
 	for _, o := range []struct{ spark, status, git bool }{
@@ -870,11 +876,71 @@ func (m *runningModel) sidebarLayout() sidebarCols {
 	return sidebarCols{width: max(min(base, limit), 12)}
 }
 
+// twoLineLayout lays out a sidebar whose processes take two lines: the
+// name, status column and sparkline, then the details (the git label) under
+// the name. When narrow, line 1 drops the sparkline first, then the status
+// column, before names are truncated; the details are truncated to fit.
+// The sidebar grows to fit the widest git label (up to maxGitWidth).
+func twoLineLayout(prefix, base, limit, gitWant, status int) sidebarCols {
+	c := sidebarCols{twoLine: true}
+	for _, o := range []struct{ spark, status bool }{{true, true}, {false, true}, {false, false}} {
+		c.width, c.spark, c.status = base, 0, 0
+		if o.spark {
+			c.spark = sparkCells
+			c.width += sparkCells + 1
+		}
+		if o.status && status > 0 {
+			c.status = status
+			c.width += status + 1
+		}
+		if c.width <= limit {
+			break
+		}
+	}
+	if gitWant > 0 {
+		c.width = max(c.width, prefix+min(gitWant, maxGitWidth)+1)
+	}
+	c.width = max(min(c.width, limit), 12)
+	return c
+}
+
+// idleRowWidth is the width the rows of the projects not started want in
+// the two-line layout: their names, then their git labels aligned after
+// them. 0 when there are none.
+func (m *runningModel) idleRowWidth() int {
+	if len(m.idle) == 0 {
+		return 0
+	}
+	git := 0
+	for _, n := range m.idle {
+		if g, ok := m.git.get(n); ok {
+			git = max(git, gitWidth(g))
+		}
+	}
+	w := m.sidebarPrefix() + m.idleWidth + 1
+	if git > 0 {
+		w += min(git, maxGitWidth) + 1
+	}
+	return w
+}
+
 // sidebarCols is the sidebar's layout: its width without borders or the
 // divider, and the widths of its status, sparkline and git columns, 0 if
-// hidden.
+// hidden. With twoLine, each process takes two lines and git is unused: the
+// git label goes on the second line.
 type sidebarCols struct {
 	width, status, spark, git int
+	twoLine                   bool
+}
+
+// entryLines is the number of sidebar lines each of the session's
+// processes takes: two in panes (see twoLineLayout), one in the compact
+// layout.
+func (m *runningModel) entryLines() int {
+	if m.panes() {
+		return 2
+	}
+	return 1
 }
 
 // statusText returns what the status column shows for a process: its
@@ -931,7 +997,7 @@ func (m *runningModel) layout() {
 	}
 	// The session's projects scroll in the rows the ones not started leave.
 	idle := m.idleRows(h)
-	sh, ih := h-idle, max(idle-1, 0)
+	sh, ih := (h-idle)/m.entryLines(), max(idle-1, 0)
 	switch sel := m.selected; {
 	case sel >= len(m.entries):
 	case sel < m.sideTop:
@@ -1203,10 +1269,12 @@ func (m *runningModel) alive() int {
 	return n
 }
 
-func (m *runningModel) sidebarRow(i int, cols sidebarCols) string {
+// sidebarRow renders a process of the session: one line in the compact
+// layout, two in panes (see twoLineLayout).
+func (m *runningModel) sidebarRow(i int, cols sidebarCols) []string {
 	full, width := cols.width, cols.width
 	if i >= len(m.entries) {
-		return strings.Repeat(" ", width)
+		return []string{strings.Repeat(" ", width)}
 	}
 	if cols.git > 0 {
 		width -= cols.git + 1 // the git column and the margin after it
@@ -1258,11 +1326,25 @@ func (m *runningModel) sidebarRow(i int, cols sidebarCols) string {
 			row += gitLabel(m.st, g, cols.git)
 		}
 	}
-	row = pad(row, full)
-	if selected && m.st.selBar != "" {
-		row = onBackground(row, m.st.selBar)
+	rows := []string{pad(row, full)}
+	if cols.twoLine {
+		rows = append(rows, pad(" "+marker+"  "+m.details(e.info.Name, full-m.sidebarPrefix()-1), full))
 	}
-	return row
+	if selected && m.st.selBar != "" {
+		for i, r := range rows {
+			rows[i] = onBackground(r, m.st.selBar)
+		}
+	}
+	return rows
+}
+
+// details renders the second line of a process in the sidebar, in at most
+// width cells: its git label, faint except for the markers.
+func (m *runningModel) details(name string, width int) string {
+	if g, ok := m.git.get(name); ok && width > 0 {
+		return gitLabelStyled(m.st, g, width, m.st.faint)
+	}
+	return ""
 }
 
 func (m *runningModel) help() string {

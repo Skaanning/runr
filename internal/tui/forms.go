@@ -499,19 +499,20 @@ func (pf *projectForm) preview(width int) []string {
 	if label == "" {
 		name = st.faint.Render("name")
 	}
-	row := color.Render("▌") + st.stateIcon(supervisor.Starting, "◐") + " " + name
+	// Two lines, like the processes pane: the name, then the git label.
+	rows := []string{color.Render("▌") + st.stateIcon(supervisor.Starting, "◐") + " " + name, color.Render("▌") + "  "}
 	if c := pf.checked; c != nil && c.git != nil && strings.TrimSpace(pf.v.dir) != "" {
-		row = pad(row, max(ansi.StringWidth(row)+2, 16)) + gitLabel(st, *c.git, maxGitWidth)
+		rows[1] += gitLabelStyled(st, *c.git, max(inner-3, 1), st.faint)
 	}
-	row = pad(ansi.Truncate(row, inner, "…"), inner)
-	if st.selBar != "" {
-		row = onBackground(row, st.selBar)
+	out := []string{"  " + st.faint.Render("╭"+strings.Repeat("─", inner+2)+"╮")}
+	for _, row := range rows {
+		row = pad(ansi.Truncate(row, inner, "…"), inner)
+		if st.selBar != "" {
+			row = onBackground(row, st.selBar)
+		}
+		out = append(out, "  "+st.faint.Render("│")+" "+row+" "+st.faint.Render("│"))
 	}
-	return []string{
-		"  " + st.faint.Render("╭"+strings.Repeat("─", inner+2)+"╮"),
-		"  " + st.faint.Render("│") + " " + row + " " + st.faint.Render("│"),
-		"  " + st.faint.Render("╰"+strings.Repeat("─", inner+2)+"╯"),
-	}
+	return append(out, "  "+st.faint.Render("╰"+strings.Repeat("─", inner+2)+"╯"))
 }
 
 // newProjectForm opens a form for an existing project, or a new one if name

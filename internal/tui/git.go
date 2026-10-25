@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Skaanning/runr/internal/config"
@@ -185,6 +186,12 @@ func gitWidth(g projectGit) int {
 // gitLabel renders a project's git state in at most width cells. The branch
 // is truncated first, so the markers stay visible.
 func gitLabel(st *styles, g projectGit, width int) string {
+	return gitLabelStyled(st, g, width, st.plain)
+}
+
+// gitLabelStyled is gitLabel with the branch in the given style; the markers
+// keep their colors.
+func gitLabelStyled(st *styles, g projectGit, width int, branchStyle lipgloss.Style) string {
 	branch, markers := gitParts(g)
 	if g.err != nil {
 		return st.faint.Render(branch)
@@ -196,7 +203,7 @@ func gitLabel(st *styles, g projectGit, width int) string {
 		markers = nil // not even the markers fit next to a branch
 	}
 	branch = ansi.Truncate(branch, width, "…")
-	out := branch
+	out := branchStyle.Render(branch)
 	for _, mk := range markers {
 		style := st.plain
 		switch mk {

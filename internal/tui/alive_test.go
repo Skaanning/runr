@@ -62,7 +62,7 @@ func aliveEvents(m *runningModel) {
 }
 
 func TestSidebarStatusColumn(t *testing.T) {
-	m, _ := newTestModel(t, 100, 12)
+	m, _ := newTestModel(t, 100, 16)
 	aliveEvents(m)
 	want := []string{
 		"│ ▌● db        4m02s ▁▁▁▁▁▁▁▁ ││",
@@ -73,7 +73,7 @@ func TestSidebarStatusColumn(t *testing.T) {
 		"│  ■ docs            ▁▁▁▁▁▁▁▁ ││",
 	}
 	for i, w := range want {
-		if got := screen(m)[1+i]; !strings.HasPrefix(got, w) {
+		if got := screen(m)[1+2*i]; !strings.HasPrefix(got, w) { // two lines per process
 			t.Errorf("row %d = %q, want prefix %q", i, got, w)
 		}
 	}
@@ -84,16 +84,17 @@ func TestSidebarStatusColumn(t *testing.T) {
 	}
 }
 
-func TestStatusColumnDroppedBeforeGit(t *testing.T) {
+func TestSidebarColumnsWhenNarrow(t *testing.T) {
 	for _, tt := range []struct {
 		width, row int
 		want       string // the db row
 	}{
-		{120, 1, "│ ▌● db      4m02s ▁▁▁▁▁▁▁▁ main            ││"},
-		{80, 1, "│ ▌● db      4m02s main          ││"}, // the sparkline goes first
-		{56, 1, "│ ▌● db     main       ││"},           // then the uptime
-		{48, 2, " ▌ ● db      4m02s │"},                // no room for the git column alone (no panes)
-		{40, 2, " ▌ ● db     │"},                       // nor for the uptime
+		{120, 1, "│ ▌● db      4m02s ▁▁▁▁▁▁▁▁ ││"},
+		{120, 2, "│ ▌  main                   ││"}, // git on the second line
+		{56, 1, "│ ▌● db        4m02s ││"},         // the sparkline goes first
+		{56, 2, "│ ▌  main            ││"},
+		{48, 2, " ▌ ● db      4m02s │"}, // no panes: one line, no room for the git column alone
+		{40, 2, " ▌ ● db     │"},        // nor for the uptime
 	} {
 		m, _ := newTestModel(t, tt.width, 12)
 		m.git = newGitTracker(testGit())
@@ -107,14 +108,38 @@ func TestStatusColumnDroppedBeforeGit(t *testing.T) {
 	}
 }
 
+func TestTwoLineLayout(t *testing.T) {
+	// prefix 4, names 4+6+1 = 11, status 6, git label 12 wide.
+	for _, tt := range []struct {
+		limit int
+		want  sidebarCols
+	}{
+		{40, sidebarCols{width: 27, status: 6, spark: 8, twoLine: true}},
+		{26, sidebarCols{width: 18, status: 6, twoLine: true}}, // the sparkline goes first
+		{17, sidebarCols{width: 12, twoLine: true}},            // then the status column (11, at least 12)
+		{9, sidebarCols{width: 12, twoLine: true}},             // names truncated, never below 12
+	} {
+		if got := twoLineLayout(4, 11, tt.limit, 0, 6); got != tt.want {
+			t.Errorf("limit %d: %+v, want %+v", tt.limit, got, tt.want)
+		}
+	}
+	// The sidebar grows to fit a git label on the second line, up to maxGitWidth.
+	if got := twoLineLayout(4, 11, 40, 30, 6); got.width != 4+maxGitWidth+1 {
+		t.Errorf("wide git label: width %d, want %d", got.width, 4+maxGitWidth+1)
+	}
+	if got := twoLineLayout(4, 11, 40, 20, 0); got.width != 4+20+1 || got.spark != 8 {
+		t.Errorf("git label wider than line 1: %+v", got)
+	}
+}
+
 func TestSpinnersMoveInStep(t *testing.T) {
 	m, _ := newTestModel(t, 100, 12)
 	aliveEvents(m)
 	for i, frame := range []string{"⠋", "⠙", "⠹"} {
 		m.now = func() time.Time { return testNow().Add(time.Duration(i) * animateEvery) }
 		rows := screen(m)
-		if !strings.HasPrefix(rows[2], "│  "+frame+" api") || !strings.Contains(rows[len(rows)-2], frame+" 1") {
-			t.Errorf("frame %d: sidebar %q, status bar %q", i, rows[2], rows[len(rows)-2])
+		if !strings.HasPrefix(rows[3], "│  "+frame+" api") || !strings.Contains(rows[len(rows)-2], frame+" 1") {
+			t.Errorf("frame %d: sidebar %q, status bar %q", i, rows[3], rows[len(rows)-2])
 		}
 	}
 }

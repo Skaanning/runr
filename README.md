@@ -9,19 +9,19 @@ waits until they are ready, interleaves everyone's output, and shuts everything 
 reverse order when you quit.
 
 ```
-╭─ processes ──────────────────────╮╭─ logs · combined ──────────────────────── following ─╮
-│  ● db        10s ▁▁▁▁▁▄▁▁        ││ api    2026/10/25 11:20:17 GET /users 23µs           │
-│ ▌● api        9s ▁▁▁▁▁▄▃▃ master ││ web    11:20:17 AM fetched 2 users from api          │
-│  ✗ worker exit 1 ▁▁▁▁▁▂▂▁        ││ worker panic: missing QUEUE_URL                      │
-│  ● web       10s ▁▁▁▁▁▄▃▃        ││ worker crashed (exit code 1)                         │
-│                                  ││ api    2026/10/25 11:20:19 GET /users 24µs           │
-│                                  ││ web    11:20:19 AM fetched 2 users from api          │
-│                                  ││ api    2026/10/25 11:20:21 GET /users 30µs           │
-│                                  ││ web    11:20:21 AM fetched 2 users from api          │
-│                                  ││ api    2026/10/25 11:20:23 GET /users 5µs            │
-│                                  ││ web    11:20:23 AM fetched 2 users from api          │
-╰──────────────────────────────────╯╰──────────────────────────────────────────────────────╯
-  FOLLOW  backend + web  ● 3 ✗ 1                                       api · master  11:20
+╭─ processes ───────────────╮╭─ logs · combined ─────────────────────────────── following ─╮
+│  ● db         9s ▁▁▁▁▁▄▁▁ ││ api    2026/10/25 12:20:39 GET /users 24µs                  │
+│                           ││ web    12:20:39 PM fetched 2 users from api                 │
+│ ▌● api        8s ▁▁▁▁▁▄▃▂ ││ worker panic: missing QUEUE_URL                             │
+│ ▌  master                 ││ worker crashed (exit code 1)                                │
+│  ✗ worker exit 1 ▁▁▁▁▁▂▂▁ ││ api    2026/10/25 12:20:41 GET /users 4µs                   │
+│                           ││ web    12:20:41 PM fetched 2 users from api                 │
+│  ● web        9s ▁▁▁▁▁▄▃▂ ││ api    2026/10/25 12:20:43 GET /users 27µs                  │
+│                           ││ web    12:20:43 PM fetched 2 users from api                 │
+│                           ││ api    2026/10/25 12:20:45 GET /users 5µs                   │
+│                           ││ web    12:20:45 PM fetched 2 users from api                 │
+╰───────────────────────────╯╰─────────────────────────────────────────────────────────────╯
+  FOLLOW  backend + web  ● 3 ✗ 1                                       api · master  12:20
   ↑↓  select  tab  view  r  restart  s  stop  +  group  b  branch  p  pull  q  quit
 ```
 
@@ -278,10 +278,10 @@ can't be saved until they are fixed. The directory and env file are checked as y
 
 ## The running view
 
-The `processes` pane lists the processes with their state, how long they've been running
-(or `exit 1` in red once they crashed), a sparkline of their output over the last 32 seconds
-and their git branch; on narrow terminals the sparkline goes first, then the uptime, then
-the branch. The `logs` pane shows their output — either all of them interleaved (the
+The `processes` pane gives each process two lines: its state, how long it's been running
+(or `exit 1` in red once it crashed) and a sparkline of its output over the last 32 seconds,
+then its git branch underneath. On narrow terminals the sparkline goes first, then the
+uptime, and the branch is shortened. The `logs` pane shows their output — either all of them interleaved (the
 combined view) or just the selected one — with `following`, or `paused · 12 more below` once
 you scroll up, in its border. The status bar below shows the mode (`FOLLOW`, `PAUSED`,
 `SEARCH`, `STOPPING`, …), the session, how many processes are running, starting and failed,
@@ -332,13 +332,16 @@ runr adds its own lines to each process's log, such as `starting: <cmd>`,
 
 ## Git
 
-When `git` is installed, the sidebar and the launcher show the branch of the repository
-each project's `dir` is in, with markers:
+When `git` is installed, the sidebar (on each process's second line) and the launcher show
+the branch of the repository each project's `dir` is in, with markers:
 
 ```
-│ ▌● api     4m02s ▁▂▃▅▃▂▁▂ feat/login * ↓2 │
-│  ● web     3m58s ▁▁▂▁▁▂▁▁ main ↑1         │
-│  ✗ worker exit 1 ▁▁▁▁▁▃▇▁ (a1b2c3d) !     │
+│ ▌● api     4m02s ▁▂▃▅▃▂▁▂ │
+│ ▌  feat/login * ↓2        │
+│  ● web     3m58s ▁▁▂▁▁▂▁▁ │
+│    main ↑1                │
+│  ✗ worker exit 1 ▁▁▁▁▁▃▇▁ │
+│    (a1b2c3d) !            │
 ```
 
 | Marker | Meaning |

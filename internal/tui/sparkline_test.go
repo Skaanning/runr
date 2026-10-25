@@ -76,7 +76,7 @@ func TestSparklineColors(t *testing.T) {
 	m, _ := newTestModel(t, 100, 12)
 	at := testNow()
 	feed(m, "api", at, 1)
-	cells := func() string { return strings.Split(m.render(), "\n")[2] }
+	cells := func() string { return strings.Split(m.render(), "\n")[3] }         // api: two lines per process
 	if got := cells(); !strings.Contains(got, "\x1b[2m▁▁▁▁▁▁▁\x1b[m\x1b[36m▂") { // faint, then cyan
 		t.Errorf("api sparkline = %q", got)
 	}

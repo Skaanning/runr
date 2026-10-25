@@ -758,15 +758,22 @@ func TestProjectFormPreview(t *testing.T) {
 	cfg := launcherConfig(t)
 	g := testGit()
 	m := openProjectForm(t, cfg, "api", g, 96, 30)
+	// preview returns the preview's two lines, from the selection bar on.
 	preview := func() string {
-		for _, r := range launcherScreen(m) {
+		rows := launcherScreen(m)
+		for i, r := range rows {
 			if strings.Contains(r, "▌◐") {
-				return strings.TrimSpace(strings.Trim(strings.TrimSpace(r)[strings.Index(strings.TrimSpace(r), "▌"):], "│ "))
+				var lines []string
+				for _, l := range rows[i : i+2] {
+					l = strings.TrimSpace(l)
+					lines = append(lines, strings.TrimSpace(strings.Trim(l[strings.Index(l, "▌"):], "│ ")))
+				}
+				return strings.Join(lines, "\n")
 			}
 		}
 		return ""
 	}
-	if got := preview(); got != "▌◐ api          feat/login * ↓2" {
+	if got := preview(); got != "▌◐ api\n▌  feat/login * ↓2" {
 		t.Fatalf("preview = %q", got)
 	}
 	f := m.form.form
@@ -774,7 +781,7 @@ func TestProjectFormPreview(t *testing.T) {
 		m.Update(key("tab"))
 	}
 	typeInto(m, "API")
-	if got := preview(); !strings.HasPrefix(got, "▌◐ API ") {
+	if got := preview(); !strings.HasPrefix(got, "▌◐ API\n") {
 		t.Fatalf("preview after typing a display name = %q", got)
 	}
 	m.Update(key("shift+tab"))
