@@ -88,7 +88,8 @@ func TestProjectFormCompletesDir(t *testing.T) {
 	projects := filepath.Join(root, "Projects") + string(filepath.Separator)
 	m := openProjectForm(t, launcherConfig(t), "", nil, 200, 30)
 	fd := focusDir(t, m, projects+"BI")
-	if !strings.Contains(screenText(m), "› "+projects+"BIlling-api"+string(filepath.Separator)) {
+	// The end of the value, as a long one scrolls.
+	if !strings.Contains(screenText(m), "Projects"+string(filepath.Separator)+"BIlling-api"+string(filepath.Separator)) {
 		t.Fatalf("no completion shown:\n%s", screenText(m))
 	}
 	if help := launcherScreen(m)[29]; !strings.Contains(help, "→  complete  ctrl+o  browse") {
@@ -181,7 +182,7 @@ func TestDirBrowser(t *testing.T) {
 		t.Fatalf("dir %q, filter %q", *fd.str, m.picker.input.Value())
 	}
 	m.Update(key("enter"))
-	if !strings.Contains(screenText(m), config.DisplayPath(filepath.Join(projects, "customer-portal"))) {
+	if !strings.Contains(screenText(m), filepath.Join("Projects", "customer-portal")+"  ") { // shortened in front if long
 		t.Fatalf("not in customer-portal:\n%s", screenText(m))
 	}
 	m.Update(key("backspace"))

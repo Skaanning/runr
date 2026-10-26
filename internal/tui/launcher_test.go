@@ -50,6 +50,9 @@ func TestLauncherList(t *testing.T) {
 	dir := cfg.Projects["db"].Dir
 	m.Update(tea.WindowSizeMsg{Width: 120, Height: 15})
 	got := launcherScreen(m)[2:13]
+	// Long temporary directories (macOS, Windows) lose directories.
+	dirWidth := min(len(dir+"/gone"), maxDirWidth)
+	short := func(d string) string { return pad(shortenPath(d, dirWidth), dirWidth) }
 	want := []string{
 		"   Groups",
 		"   ╭─ backend ──────────────────────── 2 ─╮  ╭─ empty ────────────────────────── 0 ─╮",
@@ -57,9 +60,9 @@ func TestLauncherList(t *testing.T) {
 		"   ╰──────────────────────────────────────╯  ╰──────────────────────────────────────╯",
 		"",
 		"   Projects",
-		"   [ ] ● api  " + pad(dir, len(dir)+5) + "  go run ./cmd/server · needs db",
-		"   [ ] ● db   " + pad(dir, len(dir)+5) + "  go run .",
-		"   [ ] ● web  " + dir + "/gone  dir does not exist",
+		"   [ ] ● api  " + short(dir) + "  go run ./cmd/server · needs db",
+		"   [ ] ● db   " + short(dir) + "  go run .",
+		"   [ ] ● web  " + short(dir+"/gone") + "  dir does not exist",
 		"",
 		"",
 	}
