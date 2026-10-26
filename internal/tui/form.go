@@ -62,6 +62,8 @@ type formField struct {
 	// ghost, if set, returns a completion of an input's value, shown faint
 	// after it while the cursor is at its end.
 	ghost func() string
+	// path marks an input holding a path: a paste loses quotes around it.
+	path bool
 	// display, if set, renders a text field's value while it isn't focused.
 	display func(width int) []string
 
@@ -291,7 +293,11 @@ func (f *form) updateField(msg tea.Msg) tea.Cmd {
 	}
 	if p, ok := msg.(tea.PasteMsg); ok && fd.kind == inputField {
 		// A copied line often ends in a newline, which would become a space.
-		msg = tea.PasteMsg{Content: strings.TrimRight(p.Content, "\r\n")}
+		content := strings.TrimRight(p.Content, "\r\n")
+		if fd.path {
+			content = cleanPath(content)
+		}
+		msg = tea.PasteMsg{Content: content}
 	}
 	var cmd tea.Cmd
 	switch fd.kind {

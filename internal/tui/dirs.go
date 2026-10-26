@@ -47,6 +47,16 @@ func subdirs(dir string, repos bool) ([]subdir, error) {
 	return out, err
 }
 
+// cleanPath trims a path typed or pasted into a form, and drops quotes
+// around it, as Explorer's "Copy as path" adds: "C:\code\api".
+func cleanPath(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 && (s[0] == '"' || s[0] == '\'') && s[len(s)-1] == s[0] {
+		s = strings.TrimSpace(s[1 : len(s)-1])
+	}
+	return s
+}
+
 func isPathSep(r rune) bool { return r == '/' || r == filepath.Separator }
 
 // typedParent splits a directory being typed into the part up to its last
@@ -155,7 +165,7 @@ type dirBrowser struct {
 // browseStart returns where to start browsing for the directory typed in a
 // form: it, or the nearest of its parents that exists.
 func browseStart(value string) string {
-	dir, err := filepath.Abs(expandDir(strings.TrimSpace(value)))
+	dir, err := filepath.Abs(expandDir(cleanPath(value)))
 	if err != nil {
 		dir, _ = os.UserHomeDir()
 	}

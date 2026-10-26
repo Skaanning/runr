@@ -44,6 +44,55 @@ func TestSubdirs(t *testing.T) {
 	}
 }
 
+func TestCleanPath(t *testing.T) {
+	for in, want := range map[string]string{
+		`"C:\code\api"`:   `C:\code\api`, // Explorer's "Copy as path"
+		` '~/code/api' `:  "~/code/api",
+		`"~/code/my app"`: "~/code/my app",
+		`~/code/api`:      "~/code/api",
+		`"~/code/api`:     `"~/code/api`, // not a pair
+		`'~/code/api"`:    `'~/code/api"`,
+		`"`:               `"`,
+		`"" `:             "",
+	} {
+		if got := cleanPath(in); got != want {
+			t.Errorf("cleanPath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestProjectFormQuotedPaths(t *testing.T) {
+	root := dirTree(t)
+	api := filepath.Join(root, "Projects", "billing-api")
+	m := openProjectForm(t, launcherConfig(t), "", nil, 100, 30)
+	fd := focusDir(t, m, `"`+api+`"`+"\r\n") // a paste loses the quotes
+	if *fd.str != api {
+		t.Fatalf("dir = %q", *fd.str)
+	}
+	for f := m.form.form; f.focused().key != "env_file"; {
+		m.Update(key("tab"))
+	}
+	m.Update(tea.PasteMsg{Content: `".env.local"`})
+	if got := *m.form.form.focused().str; got != ".env.local" {
+		t.Fatalf("env file = %q", got)
+	}
+
+	// Typed quotes go when the project is saved and checked.
+	cfg := launcherConfig(t)
+	v := newProjectValues(cfg, "")
+	v.name, v.cmd, v.dir, v.envFile = "x", "run", `"`+api+`"`, `".env"`
+	c, err := v.candidate(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := c.Projects["x"]; p.Dir != api || p.EnvFile != ".env" {
+		t.Fatalf("dir %q, env file %q", p.Dir, p.EnvFile)
+	}
+	if check := checkDir(nil, "x", `"`+api+`"`, ""); check.err != nil {
+		t.Fatalf("check: %v", check.err)
+	}
+}
+
 func TestTypedParent(t *testing.T) {
 	sep := string(filepath.Separator)
 	for _, tt := range []struct{ value, parent, sep string }{

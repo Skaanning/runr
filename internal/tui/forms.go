@@ -145,7 +145,7 @@ func (v *projectValues) candidate(cfg *config.Config) (*config.Config, error) {
 	if err != nil {
 		return nil, &fieldError{"env", err}
 	}
-	dir, err := config.NormalizeDir(strings.TrimSpace(v.dir))
+	dir, err := config.NormalizeDir(cleanPath(v.dir))
 	if err != nil {
 		return nil, &fieldError{"dir", err}
 	}
@@ -176,7 +176,7 @@ func (v *projectValues) candidate(cfg *config.Config) (*config.Config, error) {
 		Dir:         dir,
 		Cmd:         strings.TrimSpace(v.cmd),
 		Env:         env,
-		EnvFile:     strings.TrimSpace(v.envFile),
+		EnvFile:     cleanPath(v.envFile),
 		DependsOn:   deps,
 		Ready:       ready,
 		ReadyLog:    v.readyLog,
@@ -355,7 +355,7 @@ func (pf *projectForm) handle(msg tea.Msg) tea.Cmd {
 // counts the variables in its env file. name is the project's, for git.
 func checkDir(git GitReader, name, dir, envFile string) dirCheck {
 	var c dirCheck
-	dir, err := config.NormalizeDir(strings.TrimSpace(dir))
+	dir, err := config.NormalizeDir(cleanPath(dir))
 	if err == nil {
 		dir, err = config.ExpandHome(dir)
 	}
@@ -383,7 +383,7 @@ func checkDir(git GitReader, name, dir, envFile string) dirCheck {
 			c.git = &projectGit{root: root, status: status, err: err}
 		}
 	}
-	if envFile = strings.TrimSpace(envFile); envFile != "" {
+	if envFile = cleanPath(envFile); envFile != "" {
 		c.env = true
 		p := config.Project{Dir: dir, EnvFile: envFile}
 		path, err := p.ResolvedEnvFile()
@@ -551,7 +551,7 @@ func newProjectForm(st *styles, cfg *config.Config, name string, git GitReader) 
 	cmdField.check = check("cmd")
 	dirField := newInputField("dir", "Directory", &v.dir)
 	dirField.check, dirField.info = check("dir"), pf.dirInfo
-	dirField.keys, dirField.ghost = pf.completeDir, pf.dirGhost
+	dirField.keys, dirField.ghost, dirField.path = pf.completeDir, pf.dirGhost, true
 	dirField.hints = [][2]string{{"→", "complete"}, {"ctrl+o", "browse"}}
 	pf.dirField = dirField
 	basics := &formSection{title: "Basics", fields: []*formField{nameField, cmdField, dirField}}
@@ -589,7 +589,7 @@ func newProjectForm(st *styles, cfg *config.Config, name string, git GitReader) 
 	env.check, env.display = check("env"), pf.envRows
 	envFile := newInputField("env_file", "Env file", &v.envFile)
 	envFile.input.Placeholder = "relative to the directory"
-	envFile.check, envFile.info = check("env_file"), pf.envFileInfo
+	envFile.check, envFile.info, envFile.path = check("env_file"), pf.envFileInfo, true
 	environment := &formSection{title: "Environment", right: true, fields: []*formField{env, envFile}}
 
 	color := newInputField("color", "Color", &v.color)

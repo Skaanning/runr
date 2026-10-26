@@ -238,7 +238,9 @@ In the directory field, the first folder matching what you've typed shows faint 
 cursor; `→` at the end of the line accepts it (hidden folders show once you type a `.`).
 `ctrl+o` opens a folder browser at the directory typed (or the nearest folder above it that
 exists): type to filter, `enter` opens a folder, `backspace` goes up, `ctrl+o` uses the folder
-shown and `esc` goes back to the form. Git repositories are marked `git`.
+shown and `esc` goes back to the form. Git repositories are marked `git`. Quotes around a
+directory or env file are dropped, so a path from Explorer's "Copy as path" can be pasted
+as is.
 
 ## The running view
 
