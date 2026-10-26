@@ -20,6 +20,14 @@ import (
 
 const testTimeout = 300 * time.Millisecond
 
+// Tests that check something happens before the shutdown timeout use
+// longTimeout, and allow quickLimit: far apart, so a slow CI runner can't
+// reach the limit, while waiting for the timeout still would.
+const (
+	longTimeout = 10 * time.Second
+	quickLimit  = 2 * time.Second
+)
+
 // recorder consumes a supervisor's events and records state history.
 type recorder struct {
 	mu       sync.Mutex
@@ -80,8 +88,14 @@ func (r *recorder) waitState(t *testing.T, name string, want State) ProcessInfo 
 // newTestSupervisor creates a supervisor for projects given as name → command.
 func newTestSupervisor(t *testing.T, projects map[string]string) (*Supervisor, *recorder) {
 	t.Helper()
+	return newTestSupervisorTimeout(t, projects, testTimeout)
+}
+
+// newTestSupervisorTimeout is newTestSupervisor with the given shutdown timeout.
+func newTestSupervisorTimeout(t *testing.T, projects map[string]string, timeout time.Duration) (*Supervisor, *recorder) {
+	t.Helper()
 	cfg := config.New()
-	cfg.Settings.ShutdownTimeoutValue.Duration = testTimeout
+	cfg.Settings.ShutdownTimeoutValue.Duration = timeout
 	dir := t.TempDir()
 	for name, cmd := range projects {
 		cfg.Projects[name] = &config.Project{Dir: dir, Cmd: cmd}
@@ -185,7 +199,7 @@ func TestStartErrors(t *testing.T) {
 }
 
 func TestStopGraceful(t *testing.T) {
-	s, r := newTestSupervisor(t, map[string]string{"api": "sleep 30"})
+	s, r := newTestSupervisorTimeout(t, map[string]string{"api": "sleep 30"}, longTimeout)
 	if err := s.Start("api"); err != nil {
 		t.Fatal(err)
 	}
@@ -196,8 +210,8 @@ func TestStopGraceful(t *testing.T) {
 		t.Fatal(err)
 	}
 	info := r.waitState(t, "api", Stopped)
-	if elapsed := time.Since(start); elapsed >= testTimeout {
-		t.Errorf("graceful stop took %v (kill timeout is %v)", elapsed, testTimeout)
+	if elapsed := time.Since(start); elapsed >= quickLimit {
+		t.Errorf("graceful stop took %v (kill timeout is %v)", elapsed, longTimeout)
 	}
 	if info.Exit.Signal != "terminated" {
 		t.Errorf("exit = %+v", info.Exit)
@@ -291,7 +305,7 @@ func TestNote(t *testing.T) {
 }
 
 func TestKill(t *testing.T) {
-	s, r := newTestSupervisor(t, map[string]string{"api": "trap '' TERM; echo ready; sleep 30"})
+	s, r := newTestSupervisorTimeout(t, map[string]string{"api": "trap '' TERM; echo ready; sleep 30"}, longTimeout)
 	if err := s.Start("api"); err != nil {
 		t.Fatal(err)
 	}
@@ -302,8 +316,8 @@ func TestKill(t *testing.T) {
 		t.Fatal(err)
 	}
 	info := r.waitState(t, "api", Stopped)
-	if elapsed := time.Since(start); elapsed >= testTimeout {
-		t.Errorf("kill took %v", elapsed)
+	if elapsed := time.Since(start); elapsed >= quickLimit {
+		t.Errorf("kill took %v (shutdown timeout is %v)", elapsed, longTimeout)
 	}
 	if info.Exit.Signal != "killed" {
 		t.Errorf("exit = %+v", info.Exit)

@@ -26,7 +26,9 @@ func TestTimeoutKillsChildren(t *testing.T) {
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("err = %v", err)
 	}
-	if elapsed := time.Since(start); elapsed > 900*time.Millisecond {
+	// Far below the 30 s the children would keep it waiting, so a slow CI
+	// runner doesn't fail it.
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
 		t.Errorf("took %v; children were not killed with git", elapsed)
 	}
 }
