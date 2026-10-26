@@ -596,6 +596,25 @@ func TestProjectFormKeys(t *testing.T) {
 	}
 }
 
+func TestProjectFormPaste(t *testing.T) {
+	cfg := launcherConfig(t)
+	m := openProjectForm(t, cfg, "", nil, 96, 30)
+	f := m.form.form
+	m.Update(tea.PasteMsg{Content: "jobs\r\n"}) // a copied line: its newline is dropped
+	m.Update(key("tab"))
+	m.Update(tea.PasteMsg{Content: "go run ."})
+	if name, cmd := *f.fields[0].str, *f.fields[1].str; name != "jobs" || cmd != "go run ." {
+		t.Fatalf("name %q, cmd %q", name, cmd)
+	}
+	for f.focused().key != "env" {
+		m.Update(key("tab"))
+	}
+	m.Update(tea.PasteMsg{Content: "A=1\nB=2"}) // a text field keeps the lines
+	if got := *f.focused().str; got != "A=1\nB=2" {
+		t.Fatalf("env = %q", got)
+	}
+}
+
 func TestProjectFormSaveKey(t *testing.T) {
 	cfg := launcherConfig(t)
 	var saved []*config.Config

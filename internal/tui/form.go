@@ -223,7 +223,8 @@ func (f *form) submit() tea.Cmd {
 func (f *form) update(msg tea.Msg) tea.Cmd {
 	k, ok := msg.(tea.KeyPressMsg)
 	if !ok {
-		return nil
+		// A paste: from the terminal, or from the clipboard after ctrl+v.
+		return f.updateField(msg)
 	}
 	key := k.String()
 	fd := f.focused()
@@ -288,8 +289,18 @@ func (f *form) update(msg tea.Msg) tea.Cmd {
 			return nil
 		}
 	}
+	return f.updateField(msg)
+}
+
+// updateField passes msg to the focused input or text field.
+func (f *form) updateField(msg tea.Msg) tea.Cmd {
+	fd := f.focused()
 	if fd == nil {
 		return nil
+	}
+	if p, ok := msg.(tea.PasteMsg); ok && fd.kind == inputField {
+		// A copied line often ends in a newline, which would become a space.
+		msg = tea.PasteMsg{Content: strings.TrimRight(p.Content, "\r\n")}
 	}
 	var cmd tea.Cmd
 	switch fd.kind {
