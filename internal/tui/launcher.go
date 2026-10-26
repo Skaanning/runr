@@ -164,6 +164,12 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch {
+	case m.form != nil && m.picker != nil: // the directory browser
+		switch msg.(type) {
+		case tea.KeyPressMsg, tea.PasteMsg:
+			return m, m.updatePicker(msg)
+		}
+		return m, m.updateForm(msg)
 	case m.form != nil:
 		return m, m.updateForm(msg)
 	case m.confirm != nil:
@@ -382,10 +388,19 @@ func (m *launcherModel) updatePicker(msg tea.Msg) tea.Cmd {
 	key, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		var cmd tea.Cmd
+		query := m.picker.input.Value()
 		m.picker.input, cmd = m.picker.input.Update(msg)
+		if m.picker.input.Value() != query { // a paste
+			m.picker.filter()
+		}
 		return cmd
 	}
 	m.notice = ""
+	if m.picker.keys != nil {
+		if done, cmd := m.picker.keys(key.String()); done {
+			return cmd
+		}
+	}
 	switch key.String() {
 	case "ctrl+c":
 		return tea.Quit
@@ -527,6 +542,10 @@ func (m *launcherModel) updateForm(msg tea.Msg) tea.Cmd {
 		case "esc":
 			m.form = nil
 			return nil
+		case "ctrl+o":
+			if fd := m.form.form.focused(); fd != nil && fd.key == "dir" {
+				return m.browseDirs(fd)
+			}
 		}
 	}
 	cmd := m.form.update(msg)
@@ -537,6 +556,20 @@ func (m *launcherModel) updateForm(msg tea.Msg) tea.Cmd {
 		}
 		m.submitForm()
 	}
+	return cmd
+}
+
+// browseDirs opens the directory browser over the project form, starting
+// at the directory in fd. ctrl+o in it puts the directory shown into fd.
+func (m *launcherModel) browseDirs(fd *formField) tea.Cmd {
+	var cmd tea.Cmd
+	m.picker, cmd = newDirBrowser(m.st, browseStart(*fd.str), func(dir string) tea.Cmd {
+		m.picker = nil
+		fd.setValue(config.DisplayPath(dir))
+		fd.touched = true
+		m.form.form.validate()
+		return m.form.handle(nil) // checks the directory
+	})
 	return cmd
 }
 
@@ -750,6 +783,10 @@ func (m *launcherModel) render() string {
 func (m *launcherModel) statusBar() string {
 	b := statusBar{mode: "SELECT", color: m.st.pal.accent, clock: m.now().Format("15:04")}
 	switch {
+	case m.form != nil && m.picker != nil:
+		b.mode, b.color = m.picker.modeName(), m.st.pal.ansi[ansiBlue]
+		b.project = m.form.context()
+		return m.st.statusBar(b, m.width)
 	case m.form != nil:
 		b.mode = strings.ToUpper(m.form.title)
 		b.info, b.project = m.form.statusInfo(m.st), m.form.context()
@@ -939,9 +976,11 @@ func (m *launcherModel) help() string {
 		return ansi.Truncate(" "+m.st.warn.Render(m.notice), m.width, "…")
 	}
 	if m.picker != nil {
-		return ansi.Truncate(" "+m.st.hintList([][2]string{
-			{"type", "to filter"}, {"↑↓", "select"}, {"enter", m.picker.action}, {"esc", "cancel"},
-		}), m.width, "…")
+		keys := m.picker.hints
+		if keys == nil {
+			keys = [][2]string{{"type", "to filter"}, {"↑↓", "select"}, {"enter", m.picker.action}, {"esc", "cancel"}}
+		}
+		return ansi.Truncate(" "+m.st.hintList(keys), m.width, "…")
 	}
 	move := "↑↓"
 	if m.groupCount() > 1 {

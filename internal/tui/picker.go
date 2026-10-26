@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 
@@ -34,10 +35,12 @@ type picker struct {
 	// context is a styled line above the filter, e.g. the project and its
 	// branch; chip is text shown at its right, e.g. "also switches: web".
 	context, chip string
-	note          string                   // shown under the filter, if set
-	empty         string                   // shown when there are no items
-	noun          string                   // what the items are, for the count: "branch"
-	pick          func(pickerItem) tea.Cmd // called with the chosen item
+	// contextFor, if set, renders the context line for a width instead.
+	contextFor func(width int) string
+	note       string                   // shown under the filter, if set
+	empty      string                   // shown when there are no items
+	noun       string                   // what the items are, for the count: "branch"
+	pick       func(pickerItem) tea.Cmd // called with the chosen item
 	// footer, if set, returns a styled line about the item under the cursor,
 	// e.g. the command enter runs.
 	footer func(pickerItem) string
@@ -45,6 +48,11 @@ type picker struct {
 	// changes; cancel, if set, when the picker is closed with esc.
 	preview func(pickerItem)
 	cancel  func()
+	// keys, if set, handles a key before the picker does, and reports
+	// whether it did; hints, if set, replace the help line's key hints.
+	keys       func(key string) (bool, tea.Cmd)
+	hints      [][2]string
+	labelWidth int // widest label shown; 0 for 24
 
 	st       *styles
 	input    textinput.Model
@@ -144,6 +152,9 @@ func (p *picker) view(width, height int) []string {
 	filter = spreadOr(filter, p.st.faint.Render(countText), width)
 
 	var context, note, footer []string
+	if p.contextFor != nil {
+		p.context = p.contextFor(width)
+	}
 	if p.context != "" {
 		line := p.context
 		if p.chip != "" {
@@ -239,7 +250,7 @@ func (p *picker) listRows(width int) (rows []string, first, last int) {
 		markWidth = max(markWidth, ansi.StringWidth(it.mark))
 		trackWidth = max(trackWidth, ansi.StringWidth(it.track))
 	}
-	nameWidth = min(nameWidth, 24)
+	nameWidth = min(nameWidth, cmp.Or(p.labelWidth, 24))
 
 	section := ""
 	for k, i := range p.filtered {

@@ -290,6 +290,15 @@ type projectForm struct {
 	wanted  string    // directory and env file of the latest check asked for
 	gen     int       // generation of that check; older results are dropped
 	checked *dirCheck // the latest result, or nil before the first one
+
+	// The directory's completion: the parent directory listed last, as
+	// typed, and its directories.
+	dirField   *formField
+	listAsked  bool
+	listWanted string // the parent of the latest listing asked for
+	listGen    int    // generation of that listing; older results are dropped
+	listed     *string
+	listing    []subdir
 }
 
 // checkKey identifies what the directory check depends on.
@@ -326,14 +335,20 @@ func (pf *projectForm) handle(msg tea.Msg) tea.Cmd {
 			pf.checked = &msg.check
 		}
 		return nil
+	case dirListMsg:
+		if msg.owner == pf && msg.gen == pf.listGen {
+			pf.listed, pf.listing = &msg.parent, msg.dirs
+		}
+		return nil
 	}
+	cmd := pf.listParent()
 	if key := pf.checkKey(); key != pf.wanted {
 		pf.wanted = key
 		pf.gen++
 		gen := pf.gen
-		return tea.Tick(dirCheckDelay, func(time.Time) tea.Msg { return dirCheckMsg{owner: pf, gen: gen} })
+		return tea.Batch(cmd, tea.Tick(dirCheckDelay, func(time.Time) tea.Msg { return dirCheckMsg{owner: pf, gen: gen} }))
 	}
-	return nil
+	return cmd
 }
 
 // checkDir checks that a project directory exists, reads its git state and
@@ -536,6 +551,9 @@ func newProjectForm(st *styles, cfg *config.Config, name string, git GitReader) 
 	cmdField.check = check("cmd")
 	dirField := newInputField("dir", "Directory", &v.dir)
 	dirField.check, dirField.info = check("dir"), pf.dirInfo
+	dirField.keys, dirField.ghost = pf.completeDir, pf.dirGhost
+	dirField.hints = [][2]string{{"→", "complete"}, {"ctrl+o", "browse"}}
+	pf.dirField = dirField
 	basics := &formSection{title: "Basics", fields: []*formField{nameField, cmdField, dirField}}
 
 	startup := &formSection{title: "Startup"}
@@ -577,7 +595,7 @@ func newProjectForm(st *styles, cfg *config.Config, name string, git GitReader) 
 	color := newInputField("color", "Color", &v.color)
 	color.input.Placeholder = "auto"
 	color.check, color.adorn, color.note, color.width = check("color"), pf.swatch, "↑↓ cycle", 16
-	color.keys, color.hint = pf.cycleColor(color), [2]string{"↑↓", "color"}
+	color.keys, color.hints = pf.cycleColor(color), [][2]string{{"↑↓", "color"}}
 	pf.label = newInputField("display_name", "Display name", &v.label)
 	look := &formSection{title: "Look", right: true, fields: []*formField{color, pf.label}}
 	preview := &formSection{title: "Preview", right: true, view: pf.preview}

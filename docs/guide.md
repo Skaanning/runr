@@ -234,6 +234,12 @@ under their field once you've edited or left it, and are counted in the status b
 can't be saved until they are fixed. The directory and env file are checked as you type
 (`✓ exists · git: main`), and a preview shows the project's row as the running view will.
 
+In the directory field, the first folder matching what you've typed shows faint after the
+cursor; `→` at the end of the line accepts it (hidden folders show once you type a `.`).
+`ctrl+o` opens a folder browser at the directory typed (or the nearest folder above it that
+exists): type to filter, `enter` opens a folder, `backspace` goes up, `ctrl+o` uses the folder
+shown and `esc` goes back to the form. Git repositories are marked `git`.
+
 ## The running view
 
 ![The running view: four processes, combined logs and a crash toast](images/running.png)

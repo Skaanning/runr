@@ -3,6 +3,7 @@ package tui
 import (
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
@@ -55,9 +56,12 @@ type formField struct {
 	note  string        // faint, after an input, e.g. "↑↓ cycle"
 	width int           // of an input's value, if narrower than the column
 	// keys, if set, handles a key before the field does, and reports
-	// whether it did; hint is its key hint for the help line.
-	keys func(key string) bool
-	hint [2]string
+	// whether it did; hints are its key hints for the help line.
+	keys  func(key string) bool
+	hints [][2]string
+	// ghost, if set, returns a completion of an input's value, shown faint
+	// after it while the cursor is at its end.
+	ghost func() string
 	// display, if set, renders a text field's value while it isn't focused.
 	display func(width int) []string
 
@@ -330,8 +334,8 @@ func (f *form) keyHints() [][2]string {
 			action = "cancel"
 		}
 		keys = append(keys, [2]string{"←→", "choose"}, [2]string{"enter", action})
-	case fd.hint[0] != "":
-		keys = append(keys, fd.hint)
+	case len(fd.hints) > 0:
+		keys = append(keys, fd.hints...)
 	case fd.kind == choiceField:
 		keys = append(keys, [2]string{"←→", "move"}, [2]string{"space", "toggle"})
 	case fd.kind == textField:
@@ -456,7 +460,13 @@ func (f *form) fieldRows(fd *formField, focused bool, width int) []string {
 			w = min(w, fd.width)
 		}
 		fd.input.SetWidth(max(w-1, 1)) // a cell for the cursor
-		value := pad(ansi.Truncate(fd.input.View(), max(w, 1), "…"), w)
+		// The input scrolls its value to fit; past its width is only padding.
+		value := pad(ansi.Truncate(fd.input.View(), max(w, 1), ""), w)
+		if focused && fd.ghost != nil && fd.input.Position() == len([]rune(fd.input.Value())) {
+			if g := fd.ghost(); g != "" {
+				value = pad(f.ghostView(fd.input.Value(), g, max(w, 1)), w)
+			}
+		}
 		rows = append(rows, bar+st.faint.Render("›")+" "+adorn+value+note)
 	case textField:
 		if focused || fd.display == nil {
@@ -497,6 +507,23 @@ func (f *form) fieldRows(fd *formField, focused bool, width int) []string {
 		}
 	}
 	return rows
+}
+
+// ghostView renders an input's value with the cursor at its end, on the
+// first character of a completion shown faint after it: as much of the
+// value's end as fits next to the completion, keeping at least half the
+// width for it.
+func (f *form) ghostView(value, ghost string, width int) string {
+	ghostWidth := ansi.StringWidth(ghost)
+	valueWidth := ansi.StringWidth(value)
+	room := max(width-ghostWidth, min(valueWidth, width/2))
+	if valueWidth > room {
+		value = ansi.TruncateLeft(value, valueWidth-room, "")
+	}
+	r, size := utf8.DecodeRuneInString(ghost)
+	cursor := lipgloss.NewStyle().Foreground(f.st.pal.accent).Reverse(true).Render(string(r))
+	rest := ansi.Truncate(ghost[size:], max(width-ansi.StringWidth(value)-ansi.StringWidth(string(r)), 0), "")
+	return f.st.plain.Render(value) + cursor + f.st.faint.Render(rest)
 }
 
 // choiceRows renders a choice field's options, "[x] ● db  [ ] ● api", wrapped

@@ -111,9 +111,11 @@ func TestProjectValuesNormalizesDir(t *testing.T) {
 	if d := c.Projects["x"].Dir; !filepath.IsAbs(d) || !strings.HasSuffix(d, filepath.FromSlash("relative/dir")) {
 		t.Fatalf("dir = %q", d)
 	}
-	v.dir = "~/code"
-	if c, _ := v.candidate(cfg); c.Projects["x"].Dir != "~/code" {
-		t.Fatalf("dir = %q", c.Projects["x"].Dir)
+	for _, dir := range []string{"~/code", "~/code/"} {
+		v.dir = dir
+		if c, _ := v.candidate(cfg); c.Projects["x"].Dir != "~/code" {
+			t.Fatalf("%q: dir = %q", dir, c.Projects["x"].Dir)
+		}
 	}
 }
 

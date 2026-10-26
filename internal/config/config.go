@@ -310,10 +310,10 @@ func DisplayPath(path string) string {
 }
 
 // NormalizeDir makes dir absolute, keeping a leading ~ so the config stays
-// portable between machines.
+// portable between machines. Trailing separators are dropped.
 func NormalizeDir(dir string) (string, error) {
 	if dir == "" || strings.HasPrefix(dir, "~") {
-		return dir, nil
+		return strings.TrimRight(dir, `/\`), nil
 	}
 	return filepath.Abs(dir)
 }
