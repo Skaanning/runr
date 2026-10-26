@@ -803,3 +803,20 @@ func TestPickerCtrlCQuits(t *testing.T) {
 		t.Fatal("picker opened while stopping")
 	}
 }
+
+func TestRunningPasteSearchesAndFilters(t *testing.T) {
+	m, sess := newTestModel(t, 80, 8)
+	m.Update(eventsMsg{events: []supervisor.Event{emit(sess, "db", "line 1"), emit(sess, "db", "line 2 Error")}})
+	m.Update(key("/"))
+	m.Update(tea.PasteMsg{Content: "Error"})
+	if !strings.Contains(m.render(), "line 2 "+m.st.match+"Error\x1b[0m") {
+		t.Fatal("a pasted search isn't highlighted")
+	}
+
+	m, _ = newPickerModel(t)
+	m.Update(key("+"))
+	m.Update(tea.PasteMsg{Content: "cron"})
+	if it, ok := m.picker.selected(); !ok || it.name != "cron" || len(m.picker.filtered) != 1 {
+		t.Fatalf("after pasting a filter: %d items, on %q", len(m.picker.filtered), it.name)
+	}
+}

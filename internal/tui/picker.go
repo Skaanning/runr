@@ -91,21 +91,23 @@ func (p *picker) titleText() string {
 	return title
 }
 
-// update handles a key other than enter and esc.
-func (p *picker) update(msg tea.KeyPressMsg) tea.Cmd {
+// update handles a key other than enter and esc, or a paste into the filter.
+func (p *picker) update(msg tea.Msg) tea.Cmd {
 	before, _ := p.selected()
 	defer func() {
 		if after, ok := p.selected(); ok && after.name != before.name && p.preview != nil {
 			p.preview(after)
 		}
 	}()
-	switch msg.String() {
-	case "up":
-		p.cursor = max(p.cursor-1, 0)
-		return nil
-	case "down":
-		p.cursor = max(min(p.cursor+1, len(p.filtered)-1), 0)
-		return nil
+	if k, ok := msg.(tea.KeyPressMsg); ok {
+		switch k.String() {
+		case "up":
+			p.cursor = max(p.cursor-1, 0)
+			return nil
+		case "down":
+			p.cursor = max(min(p.cursor+1, len(p.filtered)-1), 0)
+			return nil
+		}
 	}
 	var cmd tea.Cmd
 	query := p.input.Value()

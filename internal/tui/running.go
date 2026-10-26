@@ -411,9 +411,9 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 		var cmd tea.Cmd
 		switch {
 		case m.picker != nil:
-			m.picker.input, cmd = m.picker.input.Update(msg)
+			cmd = m.picker.update(msg) // a paste
 		case m.editing:
-			m.input, cmd = m.input.Update(msg)
+			cmd = m.updateSearchInput(msg)
 		}
 		return cmd
 	}
@@ -722,6 +722,12 @@ func (m *runningModel) handleSearchKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	}
+	return m.updateSearchInput(msg)
+}
+
+// updateSearchInput passes a key or a paste to the search input, and
+// searches for its new value.
+func (m *runningModel) updateSearchInput(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	if q := m.input.Value(); q != m.search.query {

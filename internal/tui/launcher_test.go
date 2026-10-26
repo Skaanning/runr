@@ -319,6 +319,20 @@ func TestLauncherThemePicker(t *testing.T) {
 	}
 }
 
+func TestLauncherPickerPaste(t *testing.T) {
+	var saved []*config.Config
+	var fail error
+	m := newThemeLauncher(t, "", &saved, &fail)
+	m.Update(key("t"))
+	m.Update(tea.PasteMsg{Content: "nord"})
+	if it, ok := m.picker.selected(); !ok || it.name != "nord" || len(m.picker.filtered) != 1 {
+		t.Fatalf("after pasting a filter: %d items, on %q", len(m.picker.filtered), it.name)
+	}
+	if m.st.theme.about != themes["nord"].about {
+		t.Error("the theme under the cursor isn't previewed")
+	}
+}
+
 func TestLauncherThemePickerCancel(t *testing.T) {
 	var saved []*config.Config
 	var fail error

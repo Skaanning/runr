@@ -387,13 +387,7 @@ func (m *launcherModel) sharing(project, root string) []string {
 func (m *launcherModel) updatePicker(msg tea.Msg) tea.Cmd {
 	key, ok := msg.(tea.KeyPressMsg)
 	if !ok {
-		var cmd tea.Cmd
-		query := m.picker.input.Value()
-		m.picker.input, cmd = m.picker.input.Update(msg)
-		if m.picker.input.Value() != query { // a paste
-			m.picker.filter()
-		}
-		return cmd
+		return m.picker.update(msg) // a paste
 	}
 	m.notice = ""
 	if m.picker.keys != nil {
