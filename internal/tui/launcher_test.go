@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -56,9 +57,9 @@ func TestLauncherList(t *testing.T) {
 		"   ╰──────────────────────────────────────╯  ╰──────────────────────────────────────╯",
 		"",
 		"   Projects",
-		"   [ ] ● api  " + pad(ansi.Truncate(dir, 32, "…"), 32) + "  go run ./cmd/server · needs db",
-		"   [ ] ● db   " + pad(ansi.Truncate(dir, 32, "…"), 32) + "  go run .",
-		"   [ ] ● web  " + ansi.Truncate(dir+"/gone", 32, "…") + "  dir does not exist",
+		"   [ ] ● api  " + pad(dir, len(dir)+5) + "  go run ./cmd/server · needs db",
+		"   [ ] ● db   " + pad(dir, len(dir)+5) + "  go run .",
+		"   [ ] ● web  " + dir + "/gone  dir does not exist",
 		"",
 		"",
 	}
@@ -67,6 +68,55 @@ func TestLauncherList(t *testing.T) {
 	}
 	if help := launcherScreen(m)[14]; help != "  ↑↓←→  move  space  select  enter  start  n  new  e  edit  g  group  d  delete  t  theme  q  quit" {
 		t.Fatalf("help = %q", help)
+	}
+}
+
+func TestShortenPath(t *testing.T) {
+	sep := string(filepath.Separator)
+	path := strings.Join([]string{"~", "work", "clients", "acme", "api"}, sep)
+	for _, tt := range []struct {
+		width int
+		want  string
+	}{
+		{40, path},
+		{len(path), path},
+		{len(path) - 1, "~/…/clients/acme/api"},
+		{16, "~/…/acme/api"},
+		{11, "~/…/api"},
+		{6, "…/api"},
+		{3, "…pi"},
+		{0, ""},
+	} {
+		want := strings.ReplaceAll(tt.want, "/", sep)
+		if got := shortenPath(path, tt.width); got != want || ansi.StringWidth(got) > tt.width {
+			t.Errorf("width %d: %q, want %q", tt.width, got, want)
+		}
+	}
+	if got := shortenPath("/home/someone/projects/api", 20); got != "/…/projects/api" {
+		t.Errorf("absolute: %q", got)
+	}
+}
+
+func TestLauncherProjectColumns(t *testing.T) {
+	m := newTestLauncher(t, launcherConfig(t))
+	// The prefix "   [ ] ● " and three gaps take 15 cells, the command 20.
+	for _, tt := range []struct {
+		width, name, dir, git int
+		want                  [3]int
+	}{
+		{200, 10, 80, 50, [3]int{10, maxDirWidth, maxLauncherGitWidth}}, // capped
+		{100, 10, 30, 20, [3]int{10, 30, 20}},                           // fits
+		{100, 10, 50, 20, [3]int{10, 35, 20}},                           // the directory shrinks first
+		{80, 10, 50, 30, [3]int{10, minDirWidth, 19}},                   // then the branch
+		{50, 10, 50, 30, [3]int{10, minDirWidth, minGitWidth}},          // down to their minimums
+		{100, 10, 80, 0, [3]int{10, maxDirWidth - 3, 0}},                // no git column, no gap for it
+		{60, 30, 10, 5, [3]int{24, 10, 5}},                              // short values never grow
+	} {
+		m.width = tt.width
+		n, d, g := m.projectColumns(tt.name, tt.dir, tt.git)
+		if got := [3]int{n, d, g}; got != tt.want {
+			t.Errorf("width %d, %d/%d/%d: %v, want %v", tt.width, tt.name, tt.dir, tt.git, got, tt.want)
+		}
 	}
 }
 

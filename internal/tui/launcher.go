@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -13,6 +14,13 @@ import (
 
 	"github.com/Skaanning/runr/internal/config"
 	"github.com/Skaanning/runr/internal/gitinfo"
+)
+
+const (
+	maxDirWidth         = 60 // widest directory column; longer paths lose directories
+	minDirWidth         = 16 // the directory column shrinks to this on narrow screens
+	maxLauncherGitWidth = 40 // widest git column; longer branches are truncated
+	minCmdWidth         = 20 // room left for the command before columns shrink
 )
 
 // launcherItem is a group or project in the launcher list.
@@ -823,7 +831,7 @@ func (m *launcherModel) rows() (rows []string, first, last int) {
 			gitCol = max(gitCol, gitWidth(g))
 		}
 	}
-	nameWidth, dirWidth, gitCol = min(nameWidth, 24), min(dirWidth, 32), min(gitCol, maxGitWidth)
+	nameWidth, dirWidth, gitCol = m.projectColumns(nameWidth, dirWidth, gitCol)
 	for i, it := range m.items[groups:] {
 		if groups+i == m.cursor {
 			first, last = len(rows), len(rows)
@@ -834,6 +842,58 @@ func (m *launcherModel) rows() (rows []string, first, last int) {
 		rows = append(rows, m.projectRow(it.name, groups+i == m.cursor, nameWidth, dirWidth, gitCol))
 	}
 	return rows, first, last
+}
+
+// projectColumns returns the widths of the name, directory and git columns,
+// given their widest values: capped, and narrowed further when the screen is
+// too narrow to leave the command minCmdWidth cells, the directory first.
+func (m *launcherModel) projectColumns(nameWidth, dirWidth, gitCol int) (int, int, int) {
+	nameWidth, dirWidth, gitCol = min(nameWidth, 24), min(dirWidth, maxDirWidth), min(gitCol, maxLauncherGitWidth)
+	room := m.width - listIndent - ansi.StringWidth("[ ] ● ") - nameWidth - 2 - 2 - minCmdWidth
+	if gitCol > 0 {
+		room -= 2
+	}
+	over := dirWidth + gitCol - room
+	if over > 0 {
+		cut := min(over, dirWidth-min(dirWidth, minDirWidth))
+		dirWidth, over = dirWidth-cut, over-cut
+	}
+	if over > 0 {
+		gitCol -= min(over, gitCol-min(gitCol, minGitWidth))
+	}
+	return nameWidth, dirWidth, gitCol
+}
+
+// shortenPath fits a path into width cells by replacing the directories after
+// its first element with "…", "~/…/client/api", dropping as few as it can. A
+// path whose last element alone is too wide keeps the end of it.
+func shortenPath(path string, width int) string {
+	if ansi.StringWidth(path) <= width {
+		return path
+	}
+	var seps []int
+	for i, r := range path {
+		if r == '/' || r == filepath.Separator {
+			seps = append(seps, i)
+		}
+	}
+	if len(seps) > 1 {
+		head := path[:seps[0]+1]
+		for _, i := range seps[1:] {
+			if s := head + "…" + path[i:]; ansi.StringWidth(s) <= width {
+				return s
+			}
+		}
+	}
+	if len(seps) > 0 {
+		if s := "…" + path[seps[len(seps)-1]:]; ansi.StringWidth(s) <= width {
+			return s
+		}
+	}
+	if width < 1 {
+		return ""
+	}
+	return "…" + ansi.TruncateLeft(path, ansi.StringWidth(path)-width+1, "")
 }
 
 // projectRow renders a project: checkbox, color dot and name, directory, git
@@ -848,7 +908,7 @@ func (m *launcherModel) projectRow(name string, current bool, nameWidth, dirWidt
 		nameStyle.Foreground(color).Render(pad(ansi.Truncate(name, nameWidth, "…"), nameWidth)) + "  "
 
 	p := m.cfg.Projects[name]
-	dir := pad(ansi.Truncate(config.DisplayPath(p.Dir), dirWidth, "…"), dirWidth)
+	dir := pad(shortenPath(config.DisplayPath(p.Dir), dirWidth), dirWidth)
 	if m.missing[name] {
 		dir = m.st.err.Render(dir)
 	} else {
