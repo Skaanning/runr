@@ -132,14 +132,28 @@ func TestLauncherCards(t *testing.T) {
 		t.Fatalf("row = %q", got)
 	}
 
-	// Narrow terminals get one narrower card per row; long member lists are
-	// cut off.
+	// Long member lists wrap; the other cards of the row grow with them.
 	cfg.Groups["g0"] = []string{"p00", "p00", "p00", "p00", "p00"}
+	m.Update(tea.ColorProfileMsg{Profile: colorprofile.TrueColor})
+	rows = launcherScreen(m)[3:7]
+	want = []string{
+		"   ╭─ g0 ───────────────────────────── 5 ─╮  ╭─ g1 ───────────────────────────── 1 ─╮",
+		"   │ [ ] ● p00  ● p00  ● p00  ● p00       │  │ [ ] ● p00                            │",
+		"   │     ● p00                            │  │                                      │",
+		"   ╰──────────────────────────────────────╯  ╰──────────────────────────────────────╯",
+	}
+	if got := strings.Join(rows, "\n"); got != strings.Join(want, "\n") {
+		t.Fatalf("wrapped card:\n%s\nwant:\n%s", got, strings.Join(want, "\n"))
+	}
+
+	// Narrow terminals get one narrower card per row.
 	m.Update(tea.WindowSizeMsg{Width: 30, Height: 16})
-	rows = launcherScreen(m)[3:6]
+	rows = launcherScreen(m)[3:8]
 	want = []string{
 		"   ╭─ g0 ─────────────── 5 ─╮",
-		"   │ [ ] ● p00  ● p00  ● p… │",
+		"   │ [ ] ● p00  ● p00       │",
+		"   │     ● p00  ● p00       │",
+		"   │     ● p00              │",
 		"   ╰────────────────────────╯",
 	}
 	if got := strings.Join(rows, "\n"); got != strings.Join(want, "\n") {

@@ -805,10 +805,10 @@ func (m *launcherModel) rows() (rows []string, first, last int) {
 	groups := m.groupCount()
 	if groups > 0 {
 		rows = append(rows, indent+m.st.heading.Render("Groups"))
-		cards, cursorRow := m.cardRows()
-		if cursorRow >= 0 {
-			first, last = len(rows)+cursorRow, len(rows)+cursorRow+2
-			if cursorRow == 0 {
+		cards, cardFirst, cardLast := m.cardRows()
+		if cardFirst >= 0 {
+			first, last = len(rows)+cardFirst, len(rows)+cardLast
+			if cardFirst == 0 {
 				first = 0
 			}
 		}

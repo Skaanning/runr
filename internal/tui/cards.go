@@ -117,19 +117,28 @@ func (m *launcherModel) move(key string) {
 }
 
 // cardRows renders the groups as cards, wrapped into rows, and returns the
-// row of the card under the cursor (-1 if it's not on a card).
-func (m *launcherModel) cardRows() (rows []string, cursorRow int) {
+// first and last row of the card under the cursor (-1 if it's not on a card).
+// The cards of a row are as tall as the tallest of them.
+func (m *launcherModel) cardRows() (rows []string, first, last int) {
 	groups, per, width := m.groupCount(), m.cardsPerRow(), m.cardWidth()
-	cursorRow = -1
+	first, last = -1, -1
 	for start := 0; start < groups; start += per {
-		var cards [][3]string
+		var contents [][]string
+		height := 0
 		for i := start; i < min(start+per, groups); i++ {
-			if i == m.cursor {
-				cursorRow = len(rows)
-			}
-			cards = append(cards, m.card(m.items[i], i == m.cursor, width))
+			lines := m.cardLines(m.items[i], width)
+			contents = append(contents, lines)
+			height = max(height, len(lines))
 		}
-		for line := range 3 {
+		var cards [][]string
+		for k, lines := range contents {
+			i := start + k
+			if i == m.cursor {
+				first, last = len(rows), len(rows)+height+1
+			}
+			cards = append(cards, m.card(m.items[i], i == m.cursor, width, lines, height))
+		}
+		for line := range height + 2 {
 			parts := make([]string, len(cards))
 			for k, c := range cards {
 				parts[k] = c[line]
@@ -137,7 +146,7 @@ func (m *launcherModel) cardRows() (rows []string, cursorRow int) {
 			rows = append(rows, strings.Repeat(" ", listIndent)+strings.Join(parts, strings.Repeat(" ", cardGap)))
 		}
 	}
-	return rows, cursorRow
+	return rows, first, last
 }
 
 // cardBorder are the characters of a card's border.
@@ -149,10 +158,10 @@ var (
 )
 
 // card renders a group as a box of the given width: its name and member
-// count in the top border, the checkbox and a colored dot per member inside.
-// The card under the cursor has an accent border (without colors, a thick
-// one).
-func (m *launcherModel) card(it launcherItem, current bool, width int) [3]string {
+// count in the top border, and its content lines (from cardLines) inside,
+// with blank lines below them up to height. The card under the cursor has
+// an accent border (without colors, a thick one).
+func (m *launcherModel) card(it launcherItem, current bool, width int, lines []string, height int) []string {
 	b, border, title := roundBorder, m.st.faint, m.st.plain
 	if current {
 		border, title = m.st.accent, m.st.bold
@@ -160,28 +169,48 @@ func (m *launcherModel) card(it launcherItem, current bool, width int) [3]string
 			b = thickBorder
 		}
 	}
-	members := m.members(it)
 
-	right := fmt.Sprintf(" %d %s%s", len(members), b.h, b.tr)
+	right := fmt.Sprintf(" %d %s%s", len(m.members(it)), b.h, b.tr)
 	name := ansi.Truncate(it.name, max(width-ansi.StringWidth(right)-5, 1), "…")
 	fill := width - 3 - ansi.StringWidth(name) - 1 - ansi.StringWidth(right)
-	top := border.Render(b.tl+b.h+" ") + title.Render(name) + border.Render(" "+strings.Repeat(b.h, max(fill, 0))+right)
+	rows := []string{border.Render(b.tl+b.h+" ") + title.Render(name) + border.Render(" "+strings.Repeat(b.h, max(fill, 0))+right)}
 
-	inner := " " + m.checkbox(members) + " "
-	if len(members) == 0 {
-		inner += m.st.faint.Render("(empty)")
-	}
-	for i, p := range members {
-		if i > 0 {
-			inner += "  "
+	for i := range height {
+		inner := ""
+		if i < len(lines) {
+			inner = lines[i]
 		}
-		inner += lipgloss.NewStyle().Foreground(m.st.color(m.cfg.ColorOf(p))).Render("●") + " " + p
+		inner = pad(ansi.Truncate(inner, width-3, "…"), width-2)
+		rows = append(rows, border.Render(b.v)+inner+border.Render(b.v))
 	}
-	inner = pad(ansi.Truncate(inner, width-3, "…"), width-2)
-	mid := border.Render(b.v) + inner + border.Render(b.v)
+	return append(rows, border.Render(b.bl+strings.Repeat(b.h, width-2)+b.br))
+}
 
-	bottom := border.Render(b.bl + strings.Repeat(b.h, width-2) + b.br)
-	return [3]string{top, mid, bottom}
+// cardLines returns the inside of a group's card of the given width: the
+// checkbox and a colored dot and name per member, wrapped into lines, the
+// later ones indented under the first member.
+func (m *launcherModel) cardLines(it launcherItem, width int) []string {
+	members := m.members(it)
+	room := width - 3 // inside the borders, a cell kept free on the right
+	line := " " + m.checkbox(members) + " "
+	indent := strings.Repeat(" ", ansi.StringWidth(line))
+	if len(members) == 0 {
+		return []string{line + m.st.faint.Render("(empty)")}
+	}
+	var lines []string
+	for i, p := range members {
+		item := lipgloss.NewStyle().Foreground(m.st.color(m.cfg.ColorOf(p))).Render("●") + " " + p
+		switch {
+		case i == 0:
+		case ansi.StringWidth(line)+2+ansi.StringWidth(item) <= room:
+			line += "  "
+		default:
+			lines = append(lines, line)
+			line = indent
+		}
+		line += item
+	}
+	return append(lines, line)
 }
 
 // checkbox renders whether all, some or none of the projects are selected,
