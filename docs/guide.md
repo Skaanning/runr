@@ -227,7 +227,7 @@ branch. On terminals shorter than 20 rows the `runr` mark makes room for the lis
 
 ![The new-project form, filled in](images/new-project.png)
 
-In forms: `tab`/`enter` (or `↑↓`) next field, `shift+tab` back, `←→` and `space` pick
+In forms: `tab`/`enter` next field, `shift+tab` back, `←→` and `space` pick
 dependencies or group members, `↑↓` on the color cycles through the named colors, `enter` in
 the environment starts a new line. `ctrl+s` saves from any field, `esc` cancels. Errors show
 under their field once you've edited or left it, and are counted in the status bar; the form

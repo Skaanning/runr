@@ -254,19 +254,6 @@ func (f *form) update(msg tea.Msg) tea.Cmd {
 		case fd.kind != textField: // a text field takes enter as a new line
 			return f.move(1, false)
 		}
-	case "up", "down":
-		d := 1
-		if key == "up" {
-			d = -1
-		}
-		switch {
-		case fd == nil && d < 0:
-			return f.focusOn(len(f.fields) - 1)
-		case fd == nil:
-			return nil
-		case fd.kind != textField:
-			return f.move(d, false)
-		}
 	case "left", "right":
 		switch {
 		case fd == nil:

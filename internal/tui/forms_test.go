@@ -552,10 +552,12 @@ func TestProjectFormKeys(t *testing.T) {
 	m.Update(key("space"))
 	m.Update(key("space"))
 	m.Update(key("shift+tab")) // directory
-	m.Update(key("up"))        // command
-	if fd := f.focused(); fd.key != "cmd" {
-		t.Fatalf("focused %q after shift+tab, up", fd.key)
+	m.Update(key("up"))        // ↑↓ don't move between fields
+	m.Update(key("down"))
+	if fd := f.focused(); fd.key != "dir" {
+		t.Fatalf("focused %q after shift+tab, up, down", fd.key)
 	}
+	m.Update(key("shift+tab")) // command
 	v := m.form.form.fields[0].str
 	if *v != "jobs" {
 		t.Fatalf("name = %q", *v)
