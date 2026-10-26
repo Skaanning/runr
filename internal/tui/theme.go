@@ -103,6 +103,7 @@ type styles struct {
 
 	plain, bold, faint lipgloss.Style
 	ok, warn, err      lipgloss.Style // green, yellow, red
+	command            lipgloss.Style // a project's command in the launcher
 	rule               lipgloss.Style
 	accent             lipgloss.Style
 	heading            lipgloss.Style // section headings in the launcher
@@ -188,6 +189,7 @@ func (s *styles) build() {
 	s.ok = lipgloss.NewStyle().Foreground(p.ansi[ansiGreen])
 	s.warn = lipgloss.NewStyle().Foreground(p.ansi[ansiYellow])
 	s.err = lipgloss.NewStyle().Foreground(p.ansi[ansiRed])
+	s.command = lipgloss.NewStyle().Foreground(p.ansi[ansiGreen])
 	s.rule = lipgloss.NewStyle().Faint(true)
 	if p.rule != nil && tints {
 		s.rule = lipgloss.NewStyle().Foreground(p.rule)

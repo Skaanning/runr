@@ -66,6 +66,9 @@ func TestLauncherList(t *testing.T) {
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("list:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
+	if !strings.Contains(m.render(), m.st.command.Render("go run .")) {
+		t.Error("the command isn't in its color")
+	}
 	if help := launcherScreen(m)[14]; help != "  ↑↓←→  move  space  select  enter  start  n  new  e  edit  g  group  d  delete  t  theme  q  quit" {
 		t.Fatalf("help = %q", help)
 	}

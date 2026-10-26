@@ -963,9 +963,9 @@ func (m *launcherModel) projectRow(name string, current bool, nameWidth, dirWidt
 	case m.missing[name]:
 		return row + m.st.faint.Render("dir does not exist")
 	case len(p.DependsOn) > 0:
-		return row + p.Cmd + m.st.faint.Render(" · needs "+strings.Join(p.DependsOn, ", "))
+		return row + m.st.command.Render(p.Cmd) + m.st.faint.Render(" · needs "+strings.Join(p.DependsOn, ", "))
 	}
-	return row + p.Cmd
+	return row + m.st.command.Render(p.Cmd)
 }
 
 func (m *launcherModel) help() string {
