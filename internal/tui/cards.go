@@ -136,7 +136,7 @@ func (m *launcherModel) cardRows() (rows []string, first, last int) {
 			if i == m.cursor {
 				first, last = len(rows), len(rows)+height+1
 			}
-			cards = append(cards, m.card(m.items[i], i == m.cursor, width, lines, height))
+			cards = append(cards, m.card(m.items[i], m.jumpLabelAt(i), i == m.cursor, width, lines, height))
 		}
 		for line := range height + 2 {
 			parts := make([]string, len(cards))
@@ -160,8 +160,9 @@ var (
 // card renders a group as a box of the given width: its name and member
 // count in the top border, and its content lines (from cardLines) inside,
 // with blank lines below them up to height. The card under the cursor has
-// an accent border (without colors, a thick one).
-func (m *launcherModel) card(it launcherItem, current bool, width int, lines []string, height int) []string {
+// an accent border (without colors, a thick one). A jump mode letter (label)
+// goes before the name.
+func (m *launcherModel) card(it launcherItem, label string, current bool, width int, lines []string, height int) []string {
 	b, border, title := roundBorder, m.st.faint, m.st.plain
 	if current {
 		border, title = m.st.accent, m.st.bold
@@ -171,9 +172,13 @@ func (m *launcherModel) card(it launcherItem, current bool, width int, lines []s
 	}
 
 	right := fmt.Sprintf(" %d %s%s", len(m.members(it)), b.h, b.tr)
-	name := ansi.Truncate(it.name, max(width-ansi.StringWidth(right)-5, 1), "…")
-	fill := width - 3 - ansi.StringWidth(name) - 1 - ansi.StringWidth(right)
-	rows := []string{border.Render(b.tl+b.h+" ") + title.Render(name) + border.Render(" "+strings.Repeat(b.h, max(fill, 0))+right)}
+	prefix, prefixWidth := "", 0
+	if label != "" {
+		prefix, prefixWidth = m.st.accent.Bold(true).Render(label)+" ", ansi.StringWidth(label)+1
+	}
+	name := ansi.Truncate(it.name, max(width-ansi.StringWidth(right)-5-prefixWidth, 1), "…")
+	fill := width - 3 - prefixWidth - ansi.StringWidth(name) - 1 - ansi.StringWidth(right)
+	rows := []string{border.Render(b.tl+b.h+" ") + prefix + title.Render(name) + border.Render(" "+strings.Repeat(b.h, max(fill, 0))+right)}
 
 	for i := range height {
 		inner := ""

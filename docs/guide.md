@@ -213,6 +213,7 @@ branch. On terminals shorter than 20 rows the `runr` mark makes room for the lis
 | `←` `→` | Move between the group cards in a row |
 | `space` | Select / unselect; on a group, selects all its projects (or unselects them if all are selected) |
 | `enter` | Start the selection, or the item under the cursor if nothing is selected |
+| `/` | Jump: every group and project shows a letter (`a`–`z`, then `A`–`Z`). A group's letter starts that group; a project's letter selects or unselects it and stays in jump mode, so you can pick several and press `enter` to start them. `esc` or `/` leaves |
 | `n` | New project |
 | `e` | Edit the project (or group) under the cursor; changing the name renames it |
 | `g` | On a group: edit it. On a project: create a group, preselecting the selected projects |

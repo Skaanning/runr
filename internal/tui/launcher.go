@@ -51,6 +51,7 @@ type launcherModel struct {
 	ask      *question       // open question in the help line (pull?), or nil
 	output   []string        // output of a failed git action, shown until the next key
 	skipped  bool            // output is about skipped repositories only (P), not failures
+	jump     bool            // jump mode (/): every item shows its letter, see jumpLabel
 
 	git       *gitTracker // nil: git is not installed
 	gitStale  bool        // the config or a repository changed; refresh the git state
@@ -197,6 +198,11 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+	case m.jump:
+		if msg, ok := msg.(tea.KeyPressMsg); ok {
+			return m, m.updateJump(msg.String())
+		}
+		return m, nil
 	}
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
@@ -213,21 +219,9 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "space":
 			m.toggle()
 		case "enter":
-			if m.gitAction != "" {
-				m.notice = m.gitAction + " is still running"
-				return m, nil
-			}
-			if m.cleaning {
-				m.notice = "the leftover processes are still being stopped"
-				return m, nil
-			}
-			names := m.selection()
-			if len(names) == 0 && m.cursor < len(m.items) {
-				names = []string{m.items[m.cursor].name} // nothing selected: start the item under the cursor
-			}
-			if len(names) > 0 {
-				return m, func() tea.Msg { return startMsg{names} }
-			}
+			return m, m.startSelection()
+		case "/":
+			m.jump = len(m.items) > 0
 		case "n":
 			return m, m.openForm(newProjectForm(m.st, m.cfg, "", m.gitReader()))
 		case "e":
@@ -264,6 +258,98 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// startSelection starts the selection, or the item under the cursor when
+// nothing is selected.
+func (m *launcherModel) startSelection() tea.Cmd {
+	names := m.selection()
+	if len(names) == 0 && m.cursor < len(m.items) {
+		names = []string{m.items[m.cursor].name}
+	}
+	return m.start(names)
+}
+
+// start asks the app to start names, unless a git action or the cleanup of
+// leftover processes is still running; then a notice says so.
+func (m *launcherModel) start(names []string) tea.Cmd {
+	switch {
+	case len(names) == 0:
+		return nil
+	case m.gitAction != "":
+		m.notice = m.gitAction + " is still running"
+		return nil
+	case m.cleaning:
+		m.notice = "the leftover processes are still being stopped"
+		return nil
+	}
+	return func() tea.Msg { return startMsg{names} }
+}
+
+// updateJump handles a key in jump mode: a group's letter starts the group
+// (the selection is left out), a project's letter selects or unselects the
+// project and moves the cursor to it, staying in jump mode. enter starts
+// what it starts outside jump mode.
+func (m *launcherModel) updateJump(key string) tea.Cmd {
+	m.notice = ""
+	switch key {
+	case "ctrl+c":
+		return tea.Quit
+	case "esc", "/":
+		m.jump = false
+		return nil
+	case "enter":
+		m.jump = false
+		return m.startSelection()
+	}
+	i := jumpIndex(key)
+	if i < 0 || i >= len(m.items) {
+		return nil
+	}
+	if it := m.items[i]; it.group {
+		m.jump = false
+		return m.start([]string{it.name})
+	}
+	m.cursor = i
+	m.toggle()
+	return nil
+}
+
+// jumpLabel returns the letter of the item at index i in jump mode: a–z,
+// then A–Z, and "" for the items after those.
+func jumpLabel(i int) string {
+	switch {
+	case i < 0:
+		return ""
+	case i < 26:
+		return string(rune('a' + i))
+	case i < 52:
+		return string(rune('A' + i - 26))
+	}
+	return ""
+}
+
+// jumpIndex returns the index of the item whose letter is key, or -1.
+func jumpIndex(key string) int {
+	if len(key) != 1 {
+		return -1
+	}
+	switch c := key[0]; {
+	case c >= 'a' && c <= 'z':
+		return int(c - 'a')
+	case c >= 'A' && c <= 'Z':
+		return int(c-'A') + 26
+	}
+	return -1
+}
+
+// jumpLabelAt returns the letter shown for the item at index i: its
+// jumpLabel in jump mode, "" otherwise.
+func (m *launcherModel) jumpLabelAt(i int) string {
+	if !m.jump {
+		return ""
+	}
+	return jumpLabel(i)
 }
 
 // openThemes opens the theme picker, on the current theme. The launcher is
@@ -357,7 +443,7 @@ func (m *launcherModel) gitTarget(what string) (string, gitinfo.Repo, bool) {
 
 // busy reports whether something else has the screen.
 func (m *launcherModel) busy() bool {
-	return m.form != nil || m.confirm != nil || m.picker != nil || m.ask != nil || m.output != nil
+	return m.form != nil || m.confirm != nil || m.picker != nil || m.ask != nil || m.output != nil || m.jump
 }
 
 // showBranches opens the branch picker. Every registered project in the
@@ -795,6 +881,8 @@ func (m *launcherModel) statusBar() string {
 		b.mode, b.color = m.picker.modeName(), m.st.pal.ansi[ansiBlue]
 	case m.ask != nil:
 		b.mode, b.color = strings.ToUpper(m.ask.action), m.st.pal.ansi[ansiBlue]
+	case m.jump:
+		b.mode, b.color = "JUMP", m.st.pal.ansi[ansiBlue]
 	}
 	b.info = m.st.faint.Render(m.registrySize())
 	if n := len(m.selected); n > 0 {
@@ -870,7 +958,7 @@ func (m *launcherModel) rows() (rows []string, first, last int) {
 				first = heading
 			}
 		}
-		rows = append(rows, m.projectRow(it.name, groups+i == m.cursor, nameWidth, dirWidth, gitCol))
+		rows = append(rows, m.projectRow(it.name, m.jumpLabelAt(groups+i), groups+i == m.cursor, nameWidth, dirWidth, gitCol))
 	}
 	return rows, first, last
 }
@@ -928,11 +1016,15 @@ func shortenPath(path string, width int) string {
 }
 
 // projectRow renders a project: checkbox, color dot and name, directory, git
-// label, command and dependencies.
-func (m *launcherModel) projectRow(name string, current bool, nameWidth, dirWidth, gitCol int) string {
+// label, command and dependencies. A jump mode letter (label) takes the
+// place of the cursor marker.
+func (m *launcherModel) projectRow(name, label string, current bool, nameWidth, dirWidth, gitCol int) string {
 	marker, nameStyle := strings.Repeat(" ", listIndent), lipgloss.NewStyle()
 	if current {
 		marker, nameStyle = " ▸ ", m.st.bold
+	}
+	if label != "" {
+		marker = " " + m.st.accent.Bold(true).Render(label) + " "
 	}
 	color := m.st.color(m.cfg.ColorOf(name))
 	row := marker + m.checkbox([]string{name}) + " " + lipgloss.NewStyle().Foreground(color).Render("●") + " " +
@@ -976,6 +1068,10 @@ func (m *launcherModel) help() string {
 		}
 		return ansi.Truncate(" "+m.st.hintList(keys), m.width, "…")
 	}
+	if m.jump {
+		keys := [][2]string{{"letter", "start group · select project"}, {"enter", "start selected"}, {"esc", "done"}}
+		return ansi.Truncate(" "+m.st.hintList(keys), m.width, "…")
+	}
 	move := "↑↓"
 	if m.groupCount() > 1 {
 		move = "↑↓←→"
@@ -995,7 +1091,7 @@ func (m *launcherModel) help() string {
 	if it, ok := m.current(); ok && !it.group {
 		keys = append(keys, [2]string{"c", "copy cmd"})
 	}
-	keys = append(keys, [2]string{"t", "theme"}, [2]string{"q", "quit"})
+	keys = append(keys, [2]string{"t", "theme"}, [2]string{"/", "jump"}, [2]string{"q", "quit"})
 	switch {
 	case m.form != nil:
 		return m.formHints()

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -72,7 +73,7 @@ func TestLauncherList(t *testing.T) {
 	if !strings.Contains(m.render(), m.st.command.Render("go run .")) {
 		t.Error("the command isn't in its color")
 	}
-	if help := launcherScreen(m)[14]; help != "  ↑↓←→  move  space  select  enter  start  n  new  e  edit  g  group  d  delete  t  theme  q  quit" {
+	if help := launcherScreen(m)[14]; help != "  ↑↓←→  move  space  select  enter  start  n  new  e  edit  g  group  d  delete  t  theme  /  jump  q  quit" {
 		t.Fatalf("help = %q", help)
 	}
 }
@@ -177,6 +178,143 @@ func TestLauncherEnter(t *testing.T) {
 	_, cmd = m.Update(key("enter"))
 	if msg := cmd().(startMsg); !slices.Equal(msg.names, []string{"api", "web"}) {
 		t.Fatalf("names = %q", msg.names)
+	}
+}
+
+// launcherRow returns the first screen row containing s, or "".
+func launcherRow(m *launcherModel, s string) string {
+	for _, r := range launcherScreen(m) {
+		if strings.Contains(r, s) {
+			return r
+		}
+	}
+	return ""
+}
+
+func TestLauncherJumpLabels(t *testing.T) {
+	m := newTestLauncher(t, launcherConfig(t))
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 15})
+	if strings.Contains(launcherRow(m, "backend"), "a backend") {
+		t.Fatal("letters shown before /")
+	}
+	m.Update(key("/"))
+	if !m.jump {
+		t.Fatal("/ did not start jump mode")
+	}
+	for _, want := range []string{"╭─ a backend ──", "╭─ b empty ──"} {
+		if launcherRow(m, want) == "" {
+			t.Errorf("no card title %q in:\n%s", want, strings.Join(launcherScreen(m), "\n"))
+		}
+	}
+	// Project rows, found by how they end (the cards name the members too).
+	for end, want := range map[string]string{"needs db": " c [ ] ● api", "go run .": " d [ ] ● db", "does not exist": " e [ ] ● web"} {
+		got := ""
+		for _, r := range launcherScreen(m) {
+			if strings.HasSuffix(r, end) {
+				got = r
+			}
+		}
+		if !strings.HasPrefix(got, want) {
+			t.Errorf("row ending in %q = %q, want prefix %q", end, got, want)
+		}
+	}
+	// The card keeps its width: the letter takes room from the border.
+	if got, plain := ansi.StringWidth(launcherRow(m, "a backend")), 3+2*cardWidth+cardGap; got != plain {
+		t.Errorf("card row width = %d, want %d", got, plain)
+	}
+	screen := launcherScreen(m)
+	if bar := screen[len(screen)-2]; !strings.Contains(bar, "JUMP") {
+		t.Errorf("status bar = %q", bar)
+	}
+	if help := screen[len(screen)-1]; help != "  letter  start group · select project  enter  start selected  esc  done" {
+		t.Errorf("help = %q", help)
+	}
+	m.Update(key("esc"))
+	if m.jump || strings.Contains(launcherRow(m, "backend"), "a backend") {
+		t.Error("esc did not leave jump mode")
+	}
+}
+
+func TestLauncherJumpKeys(t *testing.T) {
+	m := newTestLauncher(t, launcherConfig(t))
+	m.Update(key("/"))
+	_, cmd := m.Update(key("a")) // backend
+	if cmd == nil {
+		t.Fatal("a group's letter started nothing")
+	}
+	if msg := cmd().(startMsg); !slices.Equal(msg.names, []string{"backend"}) {
+		t.Fatalf("names = %q", msg.names)
+	}
+	if m.jump {
+		t.Error("still in jump mode after starting a group")
+	}
+
+	m.Update(key("/"))
+	m.Update(key("space")) // ignored in jump mode
+	m.Update(key("e"))     // web
+	m.Update(key("c"))     // api
+	if !m.jump || m.cursor != 2 {
+		t.Fatalf("jump = %v, cursor = %d after selecting projects", m.jump, m.cursor)
+	}
+	if got := m.selection(); !slices.Equal(got, []string{"api", "web"}) {
+		t.Fatalf("selection = %q", got)
+	}
+	m.Update(key("e")) // web again: unselected
+	m.Update(key("d")) // db: with api, the whole backend group
+	m.Update(key("z")) // no item
+	if got := m.selection(); !slices.Equal(got, []string{"backend"}) {
+		t.Fatalf("selection = %q", got)
+	}
+	_, cmd = m.Update(key("enter"))
+	if msg := cmd().(startMsg); !slices.Equal(msg.names, []string{"backend"}) {
+		t.Fatalf("names = %q", msg.names)
+	}
+	if m.jump {
+		t.Error("still in jump mode after enter")
+	}
+
+	m.Update(key("/"))
+	if _, cmd := m.Update(key("/")); cmd != nil || m.jump {
+		t.Error("a second / did not just leave jump mode")
+	}
+	m.Update(key("/"))
+	if _, cmd := m.Update(key("ctrl+c")); cmd == nil || cmd() != tea.Quit() {
+		t.Error("ctrl+c did not quit in jump mode")
+	}
+}
+
+func TestLauncherJumpBusy(t *testing.T) {
+	m := newTestLauncher(t, launcherConfig(t))
+	m.gitAction = "git pull"
+	m.Update(key("/"))
+	if _, cmd := m.Update(key("a")); cmd != nil || m.notice != "git pull is still running" {
+		t.Errorf("cmd = %v, notice = %q", cmd, m.notice)
+	}
+
+	empty := newTestLauncher(t, &config.Config{})
+	empty.Update(key("/"))
+	if empty.jump {
+		t.Error("jump mode without any items")
+	}
+}
+
+func TestLauncherJumpUppercase(t *testing.T) {
+	dir := t.TempDir()
+	cfg := &config.Config{Projects: map[string]*config.Project{}}
+	for i := range 60 {
+		cfg.Projects[fmt.Sprintf("p%02d", i)] = &config.Project{Dir: dir, Cmd: "true"}
+	}
+	m := newTestLauncher(t, cfg)
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 80})
+	m.Update(key("/"))
+	for name, want := range map[string]string{"p00": " a [ ]", "p25": " z [ ]", "p26": " A [ ]", "p51": " Z [ ]", "p52": "   [ ]"} {
+		if got := launcherRow(m, name); !strings.HasPrefix(got, want) {
+			t.Errorf("row of %s = %q, want prefix %q", name, got, want)
+		}
+	}
+	m.Update(key("A"))
+	if !m.selected["p26"] || m.cursor != 26 {
+		t.Errorf("A: selected = %v, cursor = %d", m.selected, m.cursor)
 	}
 }
 
