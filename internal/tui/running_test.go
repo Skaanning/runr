@@ -21,7 +21,7 @@ type fakeSession struct {
 	stopDone chan struct{}
 	stopAll  int
 	killAll  int
-	calls    []string            // Start/Stop/Restart calls, e.g. "stop api"
+	calls    []string            // Start/Stop/Restart/SetArgs calls, e.g. "stop api", "args api --x"
 	notes    map[string][]string // lines passed to Note, by project
 	err      error               // returned by Start/Stop/Restart
 	pids     map[string][]int    // returned by Pids
@@ -47,6 +47,10 @@ func (f *fakeSession) Start(names ...string) error {
 	return f.err
 }
 func (f *fakeSession) Stop(name string) error { f.calls = append(f.calls, "stop "+name); return f.err }
+func (f *fakeSession) SetArgs(name, args string) error {
+	f.calls = append(f.calls, strings.TrimSpace("args "+name+" "+args))
+	return f.err
+}
 func (f *fakeSession) Restart(name string) error {
 	f.calls = append(f.calls, "restart "+name)
 	return f.err

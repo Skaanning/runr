@@ -24,10 +24,12 @@ func (s *Supervisor) spawn(m *managed) {
 	m.info.StartedAt = time.Now()
 	m.info.Exit = proc.ExitStatus{}
 	m.info.Pid = 0
+	m.info.Args = s.args[m.name]
+	command := m.project.CommandWith(m.info.Args)
 
 	// Logged before spawning so it precedes the process's first output.
-	s.system(m, "starting: %s", m.project.Cmd)
-	spec, err := s.spec(m.project)
+	s.system(m, "starting: %s", command)
+	spec, err := s.spec(m.project, command)
 	if err == nil {
 		m.proc, err = proc.Start(spec, s.lineHandler(m))
 	}
@@ -42,7 +44,7 @@ func (s *Supervisor) spawn(m *managed) {
 
 	m.info.Pid = m.proc.Pid()
 	if s.tracker != nil {
-		s.tracker.Spawned(m.name, m.info.Pid, m.project.Cmd)
+		s.tracker.Spawned(m.name, m.info.Pid, command)
 	}
 	gen, p := m.gen, m.proc
 	if ps := knownPorts(m); len(ps) > 0 {
@@ -191,9 +193,9 @@ func (s *Supervisor) exited(m *managed, gen int, status proc.ExitStatus) {
 	s.advanceShutdown()
 }
 
-// spec builds the process spec for a project: resolved dir and the layered
-// environment (base, runr defaults, env_file, env).
-func (s *Supervisor) spec(p *config.Project) (proc.Spec, error) {
+// spec builds the process spec for a project running command: resolved dir
+// and the layered environment (base, runr defaults, env_file, env).
+func (s *Supervisor) spec(p *config.Project, command string) (proc.Spec, error) {
 	dir, err := p.ResolvedDir()
 	if err != nil {
 		return proc.Spec{}, err
@@ -216,7 +218,7 @@ func (s *Supervisor) spec(p *config.Project) (proc.Spec, error) {
 		}
 	}
 	return proc.Spec{
-		Command: p.Cmd,
+		Command: command,
 		Dir:     dir,
 		Env:     proc.BuildEnv(s.baseEnv, proc.DefaultEnv, fileVars, p.Env),
 		// Processes left behind by the command get as long to stop as the

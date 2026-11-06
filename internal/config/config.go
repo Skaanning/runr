@@ -107,6 +107,15 @@ func (p *Project) OneShot() bool {
 	return p.Ready == ReadyExit
 }
 
+// CommandWith returns the project's command with extra arguments (shell
+// syntax, as typed) appended, or just the command if args is blank.
+func (p *Project) CommandWith(args string) string {
+	if args = strings.TrimSpace(args); args == "" {
+		return p.Cmd
+	}
+	return p.Cmd + " " + args
+}
+
 // ReadyConditions returns the readiness fields that are set, in the order
 // ready_log, ready_port, ready_url, ready. A valid project has at most one;
 // with none it is ready as soon as it is started.

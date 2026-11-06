@@ -86,7 +86,7 @@ func runLauncher(cmd *cobra.Command) error {
 	rec := track(sessDir, &opts)
 
 	var sup *supervisor.Supervisor
-	start := func(names []string) (tui.Session, error) {
+	start := func(names []string, args map[string]string) (tui.Session, error) {
 		if _, err := prepareUp(s.cfg, names, io.Discard); err != nil {
 			return nil, err
 		}
@@ -96,6 +96,13 @@ func runLauncher(cmd *cobra.Command) error {
 		}
 		opts.LogDir = dir
 		sup = supervisor.New(s.cfg, opts)
+		for name, a := range args {
+			if err := sup.SetArgs(name, a); err != nil {
+				sup.Close()
+				sup = nil
+				return nil, err
+			}
+		}
 		if err := sup.Start(names...); err != nil {
 			sup.Close()
 			sup = nil

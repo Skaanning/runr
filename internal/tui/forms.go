@@ -38,6 +38,9 @@ type editForm struct {
 	// update, returning what to do next.
 	start  func() tea.Cmd
 	handle func(tea.Msg) tea.Cmd
+	// submit, if set, is what saving the form does, instead of saving the
+	// config from result.
+	submit func() tea.Cmd
 	// context, if set, returns the styled right side of the status bar.
 	context func() string
 	state   any // the form's own state, e.g. a *projectForm

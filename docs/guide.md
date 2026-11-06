@@ -213,6 +213,7 @@ branch. On terminals shorter than 20 rows the `runr` mark makes room for the lis
 | `←` `→` | Move between the group cards in a row |
 | `space` | Select / unselect; on a group, selects all its projects (or unselects them if all are selected) |
 | `enter` | Start the selection, or the item under the cursor if nothing is selected |
+| `R` | Start with extra arguments: like `enter`, but first a form with a field per project that will start, dependencies included. What you type is added to the end of the project's command, e.g. `--port 3001` makes `go run .` run as `go run . --port 3001`. The fields remember what you typed last. `shift+enter` does the same in terminals that report it (kitty, ghostty, WezTerm, foot, recent Windows Terminal) |
 | `/` | Jump: every group and project shows a letter (`a`–`z`, then `A`–`Z`). A group's letter starts that group; a project's letter selects or unselects it and stays in jump mode, so you can pick several and press `enter` to start them. `esc` or `/` leaves |
 | `n` | New project |
 | `e` | Edit the project (or group) under the cursor; changing the name renames it |
@@ -280,6 +281,7 @@ so for 5 seconds.
 | `↑` `↓` | Select a process |
 | `tab` | Toggle between the combined view and the selected process's output |
 | `r` | Restart the selected process |
+| `R` | Restart the selected process with extra arguments, added to the end of its command; the input starts with its current ones, and an empty one removes them. They are kept for later restarts and shown in the title of the project's own log |
 | `s` | Stop the selected process, or start it (with its dependencies) if it isn't running |
 | `enter` | Start the selected project if it's one of those not running |
 | `+` | Start a group, or another project when the sidebar doesn't list them all (type to filter, `enter` to start, `esc` to close) |
@@ -297,7 +299,7 @@ so for 5 seconds.
 | `g` / `G` (`home` / `end`) | Jump to the top / bottom |
 | `f` | Toggle follow (auto-scroll); scrolling to the bottom resumes it |
 | `w` | Save the output on screen (all of it, or the selected process's) to a file in the current directory (see [Saving logs](#saving-logs)) |
-| `c` | Copy the command line that starts the selected project the way runr does: `cd` to its directory, runr's default variables, its `env_file` and `env`, then the command, e.g. `cd ~/code/api && env FORCE_COLOR=1 … PORT=8080 /bin/sh -c 'go run .'` (`cmd.exe` syntax on Windows). It goes to the clipboard through the terminal (OSC 52; in tmux, `set-clipboard on`) and is shown on the bottom line |
+| `c` | Copy the command line that starts the selected project the way runr does (with its extra arguments, if it has any): `cd` to its directory, runr's default variables, its `env_file` and `env`, then the command, e.g. `cd ~/code/api && env FORCE_COLOR=1 … PORT=8080 /bin/sh -c 'go run .'` (`cmd.exe` syntax on Windows). It goes to the clipboard through the terminal (OSC 52; in tmux, `set-clipboard on`) and is shown on the bottom line |
 | `q`, `Ctrl+C` | Stop everything and quit; a second `Ctrl+C` kills everything immediately |
 
 Search is plain text (no regex) and smart-case: an all-lowercase query ignores case, any

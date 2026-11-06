@@ -27,6 +27,7 @@ type Session interface {
 	Start(names ...string) error
 	Stop(name string) error
 	Restart(name string) error
+	SetArgs(name, args string) error // extra arguments from the next start on
 	StopAll() <-chan struct{}
 	KillAll()
 	Note(name string, lines ...string) error
@@ -101,6 +102,7 @@ type runningModel struct {
 	search     search // applies to both views
 	prevSearch search // restored when editing is cancelled
 	editing    bool   // the search input is open
+	argsFor    string // project whose extra arguments the input edits (R), or ""
 	input      textinput.Model
 	matchInfo  string // position of the current match, e.g. "3/17"
 
@@ -414,6 +416,8 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 			cmd = m.picker.update(msg) // a paste
 		case m.editing:
 			cmd = m.updateSearchInput(msg)
+		case m.argsFor != "":
+			m.input, cmd = m.input.Update(msg)
 		}
 		return cmd
 	}
@@ -485,6 +489,8 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		return m.handlePickerKey(msg)
 	case m.editing:
 		return m.handleSearchKey(msg)
+	case m.argsFor != "":
+		return m.handleArgsKey(msg)
 	}
 	switch msg.String() {
 	case "ctrl+c":
@@ -562,11 +568,13 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "c":
 		if e := m.selectedEntry(); e != nil {
 			var cmd tea.Cmd
-			m.notice, cmd = copyCommand(m.cfg, e.info.Name)
+			m.notice, cmd = copyCommand(m.cfg, e.info.Name, e.info.Args)
 			return cmd
 		}
 	case "r":
 		m.restart()
+	case "R":
+		return m.openArgs()
 	case "s":
 		m.stopOrStart()
 	case "pgup":
@@ -723,6 +731,52 @@ func (m *runningModel) handleSearchKey(msg tea.KeyPressMsg) tea.Cmd {
 		return nil
 	}
 	return m.updateSearchInput(msg)
+}
+
+// openArgs opens the input for the selected project's extra arguments,
+// with the ones of its latest start.
+func (m *runningModel) openArgs() tea.Cmd {
+	name := m.selectedName()
+	if name == "" || m.stopping {
+		return nil
+	}
+	m.argsFor = name
+	m.input.Reset()
+	if e := m.byName[name]; e != nil {
+		m.input.SetValue(e.info.Args)
+		m.input.CursorEnd()
+	}
+	return m.input.Focus()
+}
+
+// handleArgsKey handles keys while the extra arguments input is open: enter
+// sets them and restarts the project (or starts it), esc cancels.
+func (m *runningModel) handleArgsKey(msg tea.KeyPressMsg) tea.Cmd {
+	switch msg.String() {
+	case "ctrl+c":
+		m.argsFor = ""
+		m.input.Blur()
+		return m.interrupt()
+	case "esc":
+		m.argsFor = ""
+		m.input.Blur()
+		return nil
+	case "enter":
+		name := m.argsFor
+		m.argsFor = ""
+		m.input.Blur()
+		if err := m.sess.SetArgs(name, m.input.Value()); err != nil {
+			m.report(err)
+			return nil
+		}
+		if m.selectedName() == name {
+			m.restart()
+		}
+		return nil
+	}
+	var cmd tea.Cmd
+	m.input, cmd = m.input.Update(msg)
+	return cmd
 }
 
 // updateSearchInput passes a key or a paste to the search input, and
@@ -1275,7 +1329,7 @@ func (m *runningModel) logPane() (title, note string, border lipgloss.Style) {
 	v := m.view()
 	border = m.st.faint
 	switch {
-	case m.picker != nil || m.editing || m.search.active():
+	case m.picker != nil || m.editing || m.argsFor != "" || m.search.active():
 		border = m.st.accent
 	case !v.following():
 		border = m.st.warn
@@ -1287,6 +1341,9 @@ func (m *runningModel) logPane() (title, note string, border lipgloss.Style) {
 	title = m.st.bold.Render("logs") + m.st.faint.Render(" · combined")
 	if m.single != nil {
 		title = m.st.bold.Render("logs") + m.st.faint.Render(" · ") + m.styleOf(m.singleFor).Render(m.labelOf(m.singleFor))
+		if e := m.byName[m.singleFor]; e != nil && e.info.Args != "" {
+			title += m.st.faint.Render(" " + e.info.Args)
+		}
 	}
 	switch {
 	case m.forced:
@@ -1465,6 +1522,12 @@ func (m *runningModel) help() string {
 		return ansi.Truncate(" "+m.st.hintList([][2]string{
 			{"type", "to filter"}, {"↑↓", "select"}, {"enter", m.picker.action}, {"esc", "cancel"},
 		}), m.width, "…")
+	}
+	if m.argsFor != "" {
+		hints := m.st.hintList([][2]string{{"enter", "restart"}, {"esc", "cancel"}})
+		label := m.st.bold.Render(m.labelOf(m.argsFor) + " args ")
+		m.input.SetWidth(max(m.width-ansi.StringWidth(label)-ansi.StringWidth(hints)-5, 10))
+		return ansi.Truncate(" "+label+m.input.View()+"  "+hints, m.width, "…")
 	}
 	if m.editing {
 		hints := m.st.hintList([][2]string{{"enter", "search"}, {"esc", "cancel"}})

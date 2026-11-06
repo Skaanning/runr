@@ -29,8 +29,12 @@ type launcherItem struct {
 	group bool
 }
 
-// startMsg asks the app to start the given groups and projects.
-type startMsg struct{ names []string }
+// startMsg asks the app to start the given groups and projects, with extra
+// arguments by project (blank: none).
+type startMsg struct {
+	names []string
+	args  map[string]string
+}
 
 // launcherModel lists groups and projects, lets the user pick what to start,
 // and edits the registry through forms.
@@ -40,18 +44,19 @@ type launcherModel struct {
 	save     SaveFunc       // nil: changes are only kept in memory
 	items    []launcherItem // groups first, then projects, each sorted
 	selected map[string]bool
-	missing  map[string]bool // projects whose dir does not exist
-	cursor   int             // index into items
-	cardCol  int             // column of the card the cursor left the cards from, downwards
-	top      int             // first row shown, see rows
-	notice   string          // shown instead of the help line until the next key
-	form     *editForm       // open project or group form, or nil
-	confirm  *confirmation   // open delete confirmation, or nil
-	picker   *picker         // open branch or theme picker, or nil
-	ask      *question       // open question in the help line (pull?), or nil
-	output   []string        // output of a failed git action, shown until the next key
-	skipped  bool            // output is about skipped repositories only (P), not failures
-	jump     bool            // jump mode (/): every item shows its letter, see jumpLabel
+	missing  map[string]bool   // projects whose dir does not exist
+	cursor   int               // index into items
+	cardCol  int               // column of the card the cursor left the cards from, downwards
+	top      int               // first row shown, see rows
+	notice   string            // shown instead of the help line until the next key
+	form     *editForm         // open project or group form, or nil
+	confirm  *confirmation     // open delete confirmation, or nil
+	picker   *picker           // open branch or theme picker, or nil
+	ask      *question         // open question in the help line (pull?), or nil
+	output   []string          // output of a failed git action, shown until the next key
+	skipped  bool              // output is about skipped repositories only (P), not failures
+	jump     bool              // jump mode (/): every item shows its letter, see jumpLabel
+	lastArgs map[string]string // extra arguments typed last, by project (R)
 
 	git       *gitTracker // nil: git is not installed
 	gitStale  bool        // the config or a repository changed; refresh the git state
@@ -220,6 +225,8 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toggle()
 		case "enter":
 			return m, m.startSelection()
+		case "R", "shift+enter":
+			return m, m.openArgsForm()
 		case "/":
 			m.jump = len(m.items) > 0
 		case "n":
@@ -252,7 +259,7 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "c":
 			if it, ok := m.current(); ok && !it.group {
 				var cmd tea.Cmd
-				m.notice, cmd = copyCommand(m.cfg, it.name)
+				m.notice, cmd = copyCommand(m.cfg, it.name, "")
 				return m, cmd
 			}
 		}
@@ -263,16 +270,50 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // startSelection starts the selection, or the item under the cursor when
 // nothing is selected.
 func (m *launcherModel) startSelection() tea.Cmd {
+	return m.start(m.toStart(), nil)
+}
+
+// toStart returns what enter starts: the selection, or the item under the
+// cursor when nothing is selected.
+func (m *launcherModel) toStart() []string {
 	names := m.selection()
 	if len(names) == 0 && m.cursor < len(m.items) {
 		names = []string{m.items[m.cursor].name}
 	}
-	return m.start(names)
+	return names
 }
 
-// start asks the app to start names, unless a git action or the cleanup of
-// leftover processes is still running; then a notice says so.
-func (m *launcherModel) start(names []string) tea.Cmd {
+// openArgsForm opens the form asking for extra arguments for what enter
+// would start, pre-filled with the ones typed last.
+func (m *launcherModel) openArgsForm() tea.Cmd {
+	names := m.toStart()
+	if len(names) == 0 {
+		return nil
+	}
+	f, err := newArgsForm(m.st, m.cfg, names, m.lastArgs, func(args map[string]string) tea.Cmd {
+		if m.lastArgs == nil {
+			m.lastArgs = map[string]string{}
+		}
+		for p, a := range args {
+			if a == "" {
+				delete(m.lastArgs, p)
+			} else {
+				m.lastArgs[p] = a
+			}
+		}
+		return m.start(names, args)
+	})
+	if err != nil {
+		m.notice = oneLine(err.Error())
+		return nil
+	}
+	return m.openForm(f)
+}
+
+// start asks the app to start names with extra arguments by project (nil
+// for none), unless a git action or the cleanup of leftover processes is
+// still running; then a notice says so.
+func (m *launcherModel) start(names []string, args map[string]string) tea.Cmd {
 	switch {
 	case len(names) == 0:
 		return nil
@@ -283,7 +324,7 @@ func (m *launcherModel) start(names []string) tea.Cmd {
 		m.notice = "the leftover processes are still being stopped"
 		return nil
 	}
-	return func() tea.Msg { return startMsg{names} }
+	return func() tea.Msg { return startMsg{names, args} }
 }
 
 // updateJump handles a key in jump mode: a group's letter starts the group
@@ -308,7 +349,7 @@ func (m *launcherModel) updateJump(key string) tea.Cmd {
 	}
 	if it := m.items[i]; it.group {
 		m.jump = false
-		return m.start([]string{it.name})
+		return m.start([]string{it.name}, nil)
 	}
 	m.cursor = i
 	m.toggle()
@@ -634,6 +675,10 @@ func (m *launcherModel) updateForm(msg tea.Msg) tea.Cmd {
 			m.form = nil
 			return cmd
 		}
+		if submit := m.form.submit; submit != nil {
+			m.form = nil
+			return tea.Batch(cmd, submit())
+		}
 		m.submitForm()
 	}
 	return cmd
@@ -819,7 +864,7 @@ func (m *launcherModel) render() string {
 		for len(fr) < body-2 {
 			fr = append(fr, "")
 		}
-		rows = framed(m.st, m.st.heading.Render(m.form.title), m.st.faint.Render("ctrl+s save"), fr, m.width)
+		rows = framed(m.st, m.st.heading.Render(m.form.title), m.st.faint.Render("ctrl+s "+m.form.form.actionName()), fr, m.width)
 		m.top = 0
 	}
 	if m.confirm != nil {
@@ -1090,6 +1135,9 @@ func (m *launcherModel) help() string {
 	}
 	if it, ok := m.current(); ok && !it.group {
 		keys = append(keys, [2]string{"c", "copy cmd"})
+	}
+	if len(m.items) > 0 {
+		keys = append(keys, [2]string{"R", "args"})
 	}
 	keys = append(keys, [2]string{"t", "theme"}, [2]string{"/", "jump"}, [2]string{"q", "quit"})
 	switch {

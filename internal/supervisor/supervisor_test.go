@@ -342,6 +342,52 @@ func TestStopWhenNotAliveIsNoop(t *testing.T) {
 	}
 }
 
+func TestSetArgs(t *testing.T) {
+	s, r := newTestSupervisor(t, map[string]string{"api": "echo run"})
+	if err := s.SetArgs("nope", "x"); err == nil {
+		t.Error("SetArgs accepted an unknown project")
+	}
+	if err := s.SetArgs("api", " with args "); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	if info := r.waitState(t, "api", Exited); info.Args != "with args" {
+		t.Errorf("Args = %q", info.Args)
+	}
+	waitLog(t, s, "api", "sys:starting: echo run with args")
+	waitLog(t, s, "api", "out:run with args")
+
+	// A restart keeps the args; a change applies from the next start.
+	if err := s.Restart("api"); err != nil {
+		t.Fatal(err)
+	}
+	waitRuns := func(line string, n int) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for countLines(logLines(s, "api"), line) < n {
+			if time.Now().After(deadline) {
+				t.Fatalf("no %q (%d); logs %q", line, n, logLines(s, "api"))
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	waitRuns("out:run with args", 2)
+	r.waitState(t, "api", Exited)
+
+	if err := s.SetArgs("api", "  "); err != nil { // blank: removed
+		t.Fatal(err)
+	}
+	if err := s.Restart("api"); err != nil {
+		t.Fatal(err)
+	}
+	waitRuns("out:run", 1)
+	if info := r.waitState(t, "api", Exited); info.Args != "" {
+		t.Errorf("Args after clearing = %q", info.Args)
+	}
+}
+
 func TestRestart(t *testing.T) {
 	s, r := newTestSupervisor(t, map[string]string{"api": "echo run; sleep 30"})
 	if err := s.Start("api"); err != nil {

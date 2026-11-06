@@ -8,10 +8,11 @@ import (
 )
 
 // commandLine returns a shell command line that starts the project the way
-// runr does: in its directory, with runr's default variables, its env_file
-// and its env, run by the system shell. The rest of runr's own environment
-// (PATH, HOME, …) is left to the shell it is pasted into.
-func commandLine(p *config.Project) (string, error) {
+// runr does, with extra arguments args: in its directory, with runr's
+// default variables, its env_file and its env, run by the system shell. The
+// rest of runr's own environment (PATH, HOME, …) is left to the shell it is
+// pasted into.
+func commandLine(p *config.Project, args string) (string, error) {
 	dir, err := p.ResolvedDir()
 	if err != nil {
 		return "", err
@@ -26,18 +27,19 @@ func commandLine(p *config.Project) (string, error) {
 			return "", err
 		}
 	}
-	return proc.CommandLine(dir, proc.BuildEnv(nil, proc.DefaultEnv, fileVars, p.Env), p.Cmd), nil
+	return proc.CommandLine(dir, proc.BuildEnv(nil, proc.DefaultEnv, fileVars, p.Env), p.CommandWith(args)), nil
 }
 
-// copyCommand copies the project's command line to the clipboard (OSC 52)
-// and returns the notice to show: the line itself, so it can also be read
-// off the screen where the terminal doesn't support OSC 52.
-func copyCommand(cfg *config.Config, name string) (string, tea.Cmd) {
+// copyCommand copies the project's command line, with extra arguments args,
+// to the clipboard (OSC 52) and returns the notice to show: the line itself,
+// so it can also be read off the screen where the terminal doesn't support
+// OSC 52.
+func copyCommand(cfg *config.Config, name, args string) (string, tea.Cmd) {
 	p := cfg.Projects[name]
 	if p == nil {
 		return "", nil
 	}
-	line, err := commandLine(p)
+	line, err := commandLine(p, args)
 	if err != nil {
 		return "can't copy the command of " + name + ": " + oneLine(err.Error()), nil
 	}

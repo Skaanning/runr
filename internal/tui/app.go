@@ -8,9 +8,9 @@ import (
 	"github.com/Skaanning/runr/internal/config"
 )
 
-// StartFunc validates and starts the given groups and projects, returning
-// the running session.
-type StartFunc func(names []string) (Session, error)
+// StartFunc validates and starts the given groups and projects, with extra
+// arguments by project (see Session.SetArgs), returning the running session.
+type StartFunc func(names []string, args map[string]string) (Session, error)
 
 // appModel shows the launcher until something is started, then the running
 // view in the same program.
@@ -33,7 +33,7 @@ func (a *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, cmd
 	}
 	if msg, ok := msg.(startMsg); ok {
-		sess, err := a.start(msg.names)
+		sess, err := a.start(msg.names, msg.args)
 		if err != nil {
 			// Multi-line errors (e.g. several missing dirs) fit on one line.
 			a.launcher.notice = oneLine(err.Error())

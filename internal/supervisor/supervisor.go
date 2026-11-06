@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -64,8 +65,9 @@ type Supervisor struct {
 
 	// Owned by the loop goroutine.
 	procs    map[string]*managed
-	order    []string // session order: the order projects were first added
-	closing  bool     // set by Close; no new processes are started
+	args     map[string]string // extra arguments by project, see SetArgs
+	order    []string          // session order: the order projects were first added
+	closing  bool              // set by Close; no new processes are started
 	shutdown *shutdown
 }
 
@@ -112,6 +114,7 @@ func New(cfg *config.Config, opts Options) *Supervisor {
 		closed:  make(chan struct{}),
 		events:  newEventQueue(),
 		procs:   map[string]*managed{},
+		args:    map[string]string{},
 		tracker: opts.Tracker,
 	}
 	if opts.LogDir != "" {
@@ -258,6 +261,24 @@ func (s *Supervisor) Start(names ...string) error {
 			if !m.info.State.Alive() && m.info.State != Waiting {
 				s.request(m)
 			}
+		}
+		return nil
+	})
+}
+
+// SetArgs sets extra arguments for a project, appended to its command from
+// its next start or restart on (see config.Project.CommandWith); blank
+// args remove them. Restarts keep them. The project doesn't have to be in
+// the session yet.
+func (s *Supervisor) SetArgs(name, args string) error {
+	return s.call(func() error {
+		if s.cfg.Projects[name] == nil {
+			return fmt.Errorf("unknown project %q", name)
+		}
+		if args = strings.TrimSpace(args); args == "" {
+			delete(s.args, name)
+		} else {
+			s.args[name] = args
 		}
 		return nil
 	})

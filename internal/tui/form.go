@@ -121,6 +121,20 @@ type form struct {
 	tried    bool         // a save was tried
 	done     bool         // closed, with saved or cancelled
 	saved    bool
+	// action names what the Save button and ctrl+s do, e.g. "start";
+	// "" is "save".
+	action string
+	// enterSubmits makes enter in the last input submit, instead of moving
+	// to the Save button.
+	enterSubmits bool
+}
+
+// actionName returns what saving the form does: "save", or its action.
+func (f *form) actionName() string {
+	if f.action == "" {
+		return "save"
+	}
+	return f.action
 }
 
 func newForm(st *styles, sections ...*formSection) *form {
@@ -253,6 +267,8 @@ func (f *form) update(msg tea.Msg) tea.Cmd {
 		case f.focus == f.cancelButton():
 			f.done = true
 			return nil
+		case f.enterSubmits && fd.kind == inputField && f.focus == len(f.fields)-1:
+			return f.submit()
 		case fd.kind != textField: // a text field takes enter as a new line
 			return f.move(1, false)
 		}
@@ -322,19 +338,21 @@ func (f *form) keyHints() [][2]string {
 	fd := f.focused()
 	switch {
 	case fd == nil:
-		action := "save"
+		action := f.actionName()
 		if f.focus == f.cancelButton() {
 			action = "cancel"
 		}
 		keys = append(keys, [2]string{"←→", "choose"}, [2]string{"enter", action})
 	case len(fd.hints) > 0:
 		keys = append(keys, fd.hints...)
+	case f.enterSubmits && fd.kind == inputField && f.focus == len(f.fields)-1:
+		keys = append(keys, [2]string{"enter", f.actionName()})
 	case fd.kind == choiceField:
 		keys = append(keys, [2]string{"←→", "move"}, [2]string{"space", "toggle"})
 	case fd.kind == textField:
 		keys = append(keys, [2]string{"enter", "new line"})
 	}
-	return append(keys, [2]string{"ctrl+s", "save"}, [2]string{"esc", "cancel"})
+	return append(keys, [2]string{"ctrl+s", f.actionName()}, [2]string{"esc", "cancel"})
 }
 
 // view renders at most height rows of width cells, scrolled so the focused
@@ -368,7 +386,7 @@ func (f *form) view(width, height int) []string {
 		first, last = rFirst, rLast
 	}
 	first, last = first+1, last+1 // the blank row on top
-	rows = append(rows, "", "  "+f.button("Save", f.saveButton())+"  "+f.button("Cancel", f.cancelButton()))
+	rows = append(rows, "", "  "+f.button(strings.ToUpper(f.actionName()[:1])+f.actionName()[1:], f.saveButton())+"  "+f.button("Cancel", f.cancelButton()))
 	if f.focused() == nil {
 		first, last = len(rows)-1, len(rows)-1
 	}

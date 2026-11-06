@@ -73,7 +73,7 @@ func TestLauncherList(t *testing.T) {
 	if !strings.Contains(m.render(), m.st.command.Render("go run .")) {
 		t.Error("the command isn't in its color")
 	}
-	if help := launcherScreen(m)[14]; help != "  ↑↓←→  move  space  select  enter  start  n  new  e  edit  g  group  d  delete  t  theme  /  jump  q  quit" {
+	if help := launcherScreen(m)[14]; help != "  ↑↓←→  move  space  select  enter  start  n  new  e  edit  g  group  d  delete  R  args  t  theme  /  jump  q  quit" {
 		t.Fatalf("help = %q", help)
 	}
 }
@@ -364,7 +364,7 @@ func TestAppStartsRunningView(t *testing.T) {
 	sess := newFakeSession("db", "api")
 	var started [][]string
 	fail := true
-	app := &appModel{cfg: cfg, launcher: newLauncherModel(cfg, nil, newStyles(terminalTheme)), start: func(names []string) (Session, error) {
+	app := &appModel{cfg: cfg, launcher: newLauncherModel(cfg, nil, newStyles(terminalTheme)), start: func(names []string, _ map[string]string) (Session, error) {
 		started = append(started, names)
 		if fail {
 			return nil, errors.New("cannot start:\n  project web: dir missing")
