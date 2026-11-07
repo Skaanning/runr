@@ -3,9 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
-	"maps"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 
@@ -33,11 +31,11 @@ type (
 		err    error
 	}
 	fetchedAllMsg struct { // F finished
-		owner   any
+		owner   *gitActions
 		results []fetchResult
 	}
 	pulledAllMsg struct { // P finished; one pulledMsg per repository
-		owner   any
+		owner   *gitActions
 		results []pulledMsg
 		members [][]string // the projects of each result's repository
 	}
@@ -70,7 +68,7 @@ func (t *gitTracker) reposOf(names []string) []repoTarget {
 
 // fetchAll fetches the repositories in the background, maxFetches at a
 // time.
-func fetchAll(owner any, reader GitReader, targets []repoTarget) tea.Cmd {
+func fetchAll(owner *gitActions, reader GitReader, targets []repoTarget) tea.Cmd {
 	return func() tea.Msg {
 		results := make([]fetchResult, len(targets))
 		sem := make(chan struct{}, maxFetches)
@@ -115,7 +113,7 @@ func fetchLines(r fetchResult) []string {
 // pullAll checks and pulls the repositories one at a time in the
 // background, like a single pull each (see runPull); those that fail the
 // check are skipped.
-func pullAll(owner any, reader GitReader, targets []repoTarget) tea.Cmd {
+func pullAll(owner *gitActions, reader GitReader, targets []repoTarget) tea.Cmd {
 	return func() tea.Msg {
 		msg := pulledAllMsg{owner: owner}
 		for _, tg := range targets {
@@ -189,192 +187,107 @@ func pullAllQuestion(targets []repoTarget, label func(string) string, yes func()
 	}
 }
 
-// sessionRepos returns the repositories of the session's projects. If there
-// are none, or a git action is running, it sets a notice saying why.
-func (m *runningModel) sessionRepos() ([]repoTarget, bool) {
+// repos returns the repositories of the named projects. If there are none
+// (none says so), or a git action is running, it sets a notice saying why.
+func (a *gitActions) repos(names []string, none string) ([]repoTarget, bool) {
 	switch {
-	case m.stopping:
+	case a.host.tracker() == nil:
+		a.host.setNotice("git is not installed")
 		return nil, false
-	case m.git == nil:
-		m.notice = "git is not installed"
-		return nil, false
-	case m.gitAction != "":
-		m.notice = m.gitAction + " is still running"
+	case a.action != "":
+		a.host.setNotice(a.action + " is still running")
 		return nil, false
 	}
-	names := make([]string, len(m.entries))
-	for i, e := range m.entries {
-		names[i] = e.info.Name
-	}
-	targets := m.git.reposOf(names)
+	targets := a.host.tracker().reposOf(names)
 	if len(targets) == 0 {
-		m.notice = "no project in this session is in a git repository"
+		a.host.setNotice(none)
 	}
 	return targets, len(targets) > 0
 }
 
-// fetchAllRepos fetches every repository of the session (F).
-func (m *runningModel) fetchAllRepos() tea.Cmd {
-	targets, ok := m.sessionRepos()
+// fetchAllRepos fetches the repositories of the named projects (F); none
+// is the notice if none of them is in one.
+func (a *gitActions) fetchAllRepos(names []string, none string) tea.Cmd {
+	targets, ok := a.repos(names, none)
 	if !ok {
 		return nil
 	}
-	m.gitAction = "git fetch"
-	m.notice = "fetching " + count(len(targets), "repo") + "…"
-	return fetchAll(m, m.git.reader, targets)
-}
-
-// fetchedAll reports fetches in the footer, and failures in the logs of
-// their repositories' projects, then refreshes the git state so the ↑ ↓
-// markers are current.
-func (m *runningModel) fetchedAll(msg fetchedAllMsg) tea.Cmd {
-	m.gitAction = ""
-	m.notice = fetchSummary(msg.results)
-	failed := false
-	for _, r := range msg.results {
-		if r.err != nil {
-			failed = true
-			for _, name := range r.target.members {
-				_ = m.sess.Note(name, fetchLines(r)...)
-			}
-		}
-	}
-	if failed {
-		m.notice += " (output in the logs)"
-	}
-	return m.git.refresh(m.gitDirs())
-}
-
-// confirmPullAll asks whether to pull every repository of the session (P).
-func (m *runningModel) confirmPullAll() {
-	targets, ok := m.sessionRepos()
-	if !ok {
-		return
-	}
-	m.confirm = pullAllQuestion(targets, m.labelOf, func() tea.Cmd {
-		if m.gitAction != "" {
-			m.notice = m.gitAction + " is still running"
-			return nil
-		}
-		m.gitAction = "git pull"
-		m.notice = "pulling " + count(len(targets), "repo") + "…"
-		return pullAll(m, m.git.reader, targets)
-	})
-}
-
-// pulledAll reports pulls in the footer and each repository's outcome in
-// the logs of its projects: git's output in the first one's, a line in the
-// others'. Nothing is restarted.
-func (m *runningModel) pulledAll(msg pulledAllMsg) tea.Cmd {
-	m.gitAction = ""
-	m.notice = pullSummary(msg.results)
-	for i, r := range msg.results {
-		lines := pullAllLines(r)
-		first := msg.members[i][0]
-		_ = m.sess.Note(first, lines...)
-		for _, other := range msg.members[i][1:] {
-			_ = m.sess.Note(other, fmt.Sprintf("%s (git pull run for %s, same repository)", lines[len(lines)-1], m.labelOf(first)))
-		}
-	}
-	return m.git.refresh(m.gitDirs())
-}
-
-// launcherRepos returns the repositories of the named projects. If there
-// are none, or a git action is running, it sets a notice saying why.
-func (m *launcherModel) launcherRepos(names []string, none string) ([]repoTarget, bool) {
-	switch {
-	case m.git == nil:
-		m.notice = "git is not installed"
-		return nil, false
-	case m.gitAction != "":
-		m.notice = m.gitAction + " is still running"
-		return nil, false
-	}
-	targets := m.git.reposOf(names)
-	if len(targets) == 0 {
-		m.notice = none
-	}
-	return targets, len(targets) > 0
-}
-
-// fetchAllRepos fetches the repository of every registered project (F).
-func (m *launcherModel) fetchAllRepos() tea.Cmd {
-	targets, ok := m.launcherRepos(slices.Sorted(maps.Keys(m.cfg.Projects)), "no project is in a git repository")
-	if !ok {
-		return nil
-	}
-	m.gitAction = "git fetch"
-	m.notice = "fetching " + count(len(targets), "repo") + "…"
-	return fetchAll(m, m.git.reader, targets)
+	a.action = "git fetch"
+	a.host.setNotice("fetching " + count(len(targets), "repo") + "…")
+	return fetchAll(a, a.host.tracker().reader, targets)
 }
 
 // fetchedAll reports fetches in the help line, and git's output for the
-// failed ones in place of the list.
-func (m *launcherModel) fetchedAll(msg fetchedAllMsg) {
-	m.gitAction, m.gitStale, m.skipped = "", true, false
-	m.notice = fetchSummary(msg.results)
-	var lines []string
+// failed ones in the logs of their repositories' projects (or in place of
+// the list), then refreshes the git state so the ↑ ↓ markers are current.
+func (a *gitActions) fetchedAll(msg fetchedAllMsg) tea.Cmd {
+	h := a.host
+	a.action = ""
+	notice := fetchSummary(msg.results)
+	var out []string
+	logged := false
 	for _, r := range msg.results {
-		if r.err != nil {
-			lines = append(lines, strings.Join(r.target.members, ", ")+":")
-			lines = append(lines, fetchLines(r)...)
+		if r.err == nil {
+			continue
 		}
+		lines := fetchLines(r)
+		for _, name := range r.target.members {
+			logged = h.note(name, lines...) || logged
+		}
+		out = append(out, strings.Join(r.target.members, ", ")+":")
+		out = append(out, lines...)
 	}
-	if lines != nil {
-		m.output = lines
+	if logged {
+		notice += " (output in the logs)"
 	}
+	h.setNotice(notice)
+	if out != nil {
+		h.showOutput(out, false)
+	}
+	return h.refresh()
 }
 
-// confirmPullAll asks whether to pull the repositories of the selection, or
-// of the group or project under the cursor (P).
-func (m *launcherModel) confirmPullAll() {
-	names := m.selection()
-	what := "the selection"
-	if len(names) == 0 {
-		it, ok := m.current()
-		if !ok {
-			return
-		}
-		names, what = []string{it.name}, it.name
-	}
-	var projects []string
-	for _, n := range names {
-		if members, ok := m.cfg.Groups[n]; ok {
-			projects = append(projects, members...)
-		} else {
-			projects = append(projects, n)
-		}
-	}
-	targets, ok := m.launcherRepos(projects, "nothing in "+what+" is in a git repository")
+// confirmPullAll asks whether to pull the repositories of the named
+// projects (P); none is the notice if none of them is in one.
+func (a *gitActions) confirmPullAll(names []string, none string) {
+	targets, ok := a.repos(names, none)
 	if !ok {
 		return
 	}
-	m.ask = pullAllQuestion(targets, func(s string) string { return s }, func() tea.Cmd {
-		if m.gitAction != "" {
-			m.notice = m.gitAction + " is still running"
+	a.host.askQuestion(pullAllQuestion(targets, a.host.label, func() tea.Cmd {
+		if !a.begin("git pull") {
 			return nil
 		}
-		m.gitAction = "git pull"
-		m.notice = "pulling " + count(len(targets), "repo") + "…"
-		return pullAll(m, m.git.reader, targets)
-	})
+		a.host.setNotice("pulling " + count(len(targets), "repo") + "…")
+		return pullAll(a, a.host.tracker().reader, targets)
+	}))
 }
 
-// pulledAll reports pulls in the help line, and the repositories that were
-// skipped or failed, with why, in place of the list.
-func (m *launcherModel) pulledAll(msg pulledAllMsg) {
-	m.gitAction, m.gitStale = "", true
-	m.notice = pullSummary(msg.results)
-	var lines []string
-	m.skipped = true
+// pulledAll reports pulls in the help line and each repository's outcome
+// in the logs of its projects: git's output in the first one's, a line in
+// the others'. The screens without logs show the repositories that were
+// skipped or failed, with why, in place of the list. Nothing is restarted.
+func (a *gitActions) pulledAll(msg pulledAllMsg) tea.Cmd {
+	h := a.host
+	a.action = ""
+	h.setNotice(pullSummary(msg.results))
+	var out []string
+	skippedOnly := true
 	for i, r := range msg.results {
+		lines := pullAllLines(r)
+		first := msg.members[i][0]
+		h.note(first, lines...)
+		for _, other := range msg.members[i][1:] {
+			h.note(other, sameRepo(lines[len(lines)-1], "git pull", h.label(first)))
+		}
 		if o := pullOutcome(r); o == "skipped" || o == "failed" {
-			lines = append(lines, strings.Join(msg.members[i], ", ")+":")
-			lines = append(lines, pullAllLines(r)...)
-			m.skipped = m.skipped && o == "skipped"
+			out = append(out, strings.Join(msg.members[i], ", ")+":")
+			out = append(out, lines...)
+			skippedOnly = skippedOnly && o == "skipped"
 		}
 	}
-	if lines != nil {
-		m.output = lines
+	if out != nil {
+		h.showOutput(out, skippedOnly)
 	}
+	return h.refresh()
 }

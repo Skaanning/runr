@@ -21,16 +21,16 @@ func TestFetchAll(t *testing.T) {
 	f.fetchedTo = map[string]gitinfo.Status{"/r/app": {Branch: "main", Commit: "0123456789", Upstream: "origin/main", Behind: 3}}
 
 	_, cmd := m.Update(key("F"))
-	if m.notice != "fetching 2 repos…" || m.gitAction != "git fetch" {
-		t.Errorf("notice %q, action %q", m.notice, m.gitAction)
+	if m.notice != "fetching 2 repos…" || m.gitOps.action != "git fetch" {
+		t.Errorf("notice %q, action %q", m.notice, m.gitOps.action)
 	}
 	follow(t, m, cmd)
 	slices.Sort(f.fetches)
 	if !slices.Equal(f.fetches, []string{"/r/app", "/r/infra"}) {
 		t.Errorf("fetched %q", f.fetches)
 	}
-	if m.notice != "fetched 2 repos" || m.gitAction != "" || len(sess.notes) != 0 {
-		t.Errorf("notice %q, action %q, notes %q", m.notice, m.gitAction, sess.notes)
+	if m.notice != "fetched 2 repos" || m.gitOps.action != "" || len(sess.notes) != 0 {
+		t.Errorf("notice %q, action %q, notes %q", m.notice, m.gitOps.action, sess.notes)
 	}
 	// The git state is read again, so the markers are current (follow
 	// doesn't run that refresh; run one here).
@@ -61,13 +61,13 @@ func TestFetchAll(t *testing.T) {
 
 func TestFetchAllBusy(t *testing.T) {
 	m, _, f := newGitModel(t)
-	m.gitAction = "git pull"
+	m.gitOps.action = "git pull"
 	press(t, m, "F")
 	press(t, m, "P")
 	if m.notice != "git pull is still running" || len(f.fetches) != 0 || m.confirm != nil {
 		t.Errorf("notice %q, fetches %q, question %v", m.notice, f.fetches, m.confirm != nil)
 	}
-	m.gitAction, m.git = "", nil
+	m.gitOps.action, m.git = "", nil
 	press(t, m, "F")
 	if m.notice != "git is not installed" {
 		t.Errorf("without git: %q", m.notice)
@@ -91,8 +91,8 @@ func TestPullAll(t *testing.T) {
 	if !slices.Equal(f.pulls, []string{"/r/app"}) {
 		t.Errorf("pulled %q", f.pulls)
 	}
-	if m.notice != "pulled 1 · skipped 1" || m.gitAction != "" {
-		t.Errorf("notice %q, action %q", m.notice, m.gitAction)
+	if m.notice != "pulled 1 · skipped 1" || m.gitOps.action != "" {
+		t.Errorf("notice %q, action %q", m.notice, m.gitOps.action)
 	}
 	wantAPI := []string{"$ git pull --ff-only --no-rebase", "Updating 0123456..9d7ae2a", "Fast-forward", "pulled main 0123456 → 9d7ae2a"}
 	if !slices.Equal(sess.notes["api"], wantAPI) {
@@ -138,7 +138,7 @@ func TestLauncherFetchAll(t *testing.T) {
 	if !slices.Equal(f.fetches, []string{"/r/app", "/r/infra"}) {
 		t.Errorf("fetched %q", f.fetches) // every registered project's repository
 	}
-	if m.notice != "fetched 1 repo · 1 failed" || m.gitAction != "" {
+	if m.notice != "fetched 1 repo · 1 failed" || m.gitOps.action != "" {
 		t.Errorf("notice %q", m.notice)
 	}
 	want := []string{"db:", "$ git fetch", "git fetch failed: git fetch: fatal: 'origin' does not appear to be a git repository"}

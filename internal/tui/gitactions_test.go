@@ -82,16 +82,16 @@ func TestSwitchBranch(t *testing.T) {
 	)
 	f.switchOut = "branch 'fix/typo' set up to track 'origin/fix/typo'.\nSwitched to a new branch 'fix/typo'\n"
 	_, cmd := m.Update(key("enter"))
-	if m.gitAction != "git switch" || m.notice != "switching api to fix/typo…" {
-		t.Errorf("while switching: action %q, notice %q", m.gitAction, m.notice)
+	if m.gitOps.action != "git switch" || m.notice != "switching api to fix/typo…" {
+		t.Errorf("while switching: action %q, notice %q", m.gitOps.action, m.notice)
 	}
 	follow(t, m, cmd)
 
 	if !slices.Equal(f.switches, []string{"/r/app origin/fix/typo"}) {
 		t.Errorf("switches = %v", f.switches)
 	}
-	if m.notice != "switched api to fix/typo (also Worker)" || m.gitAction != "" {
-		t.Errorf("notice %q, action %q", m.notice, m.gitAction)
+	if m.notice != "switched api to fix/typo (also Worker)" || m.gitOps.action != "" {
+		t.Errorf("notice %q, action %q", m.notice, m.gitOps.action)
 	}
 	wantLog := []string{
 		"$ git switch --track origin/fix/typo",
@@ -140,8 +140,8 @@ func TestSwitchBranchCheckedAgainBeforeSwitching(t *testing.T) {
 	if len(f.switches) != 0 || len(sess.notes) != 0 {
 		t.Errorf("switched: %v, notes %v", f.switches, sess.notes)
 	}
-	if m.notice != "can't switch branches: there are uncommitted changes to tracked files" || m.gitAction != "" {
-		t.Errorf("notice %q, action %q", m.notice, m.gitAction)
+	if m.notice != "can't switch branches: there are uncommitted changes to tracked files" || m.gitOps.action != "" {
+		t.Errorf("notice %q, action %q", m.notice, m.gitOps.action)
 	}
 }
 
@@ -172,12 +172,12 @@ func TestSwitchBranchGuards(t *testing.T) {
 		t.Errorf("notice = %q", m.notice)
 	}
 
-	m.gitAction = "git switch"
+	m.gitOps.action = "git switch"
 	press(t, m, "b")
 	if m.notice != "git switch is still running" || m.picker != nil {
 		t.Errorf("busy: notice %q", m.notice)
 	}
-	m.gitAction = ""
+	m.gitOps.action = ""
 
 	m.git.state["api"] = projectGit{err: errors.New("git rev-parse: fatal: detected dubious ownership")}
 	press(t, m, "b")
@@ -226,16 +226,16 @@ func TestPull(t *testing.T) {
 	f.pullOut = "Updating 0123456..fedcba9\nFast-forward\n f | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n"
 	f.pulledTo = map[string]gitinfo.Status{"/r/app": {Branch: "main", Commit: "fedcba9876", Upstream: "origin/main"}}
 	_, cmd := m.Update(key("enter"))
-	if m.confirm != nil || m.gitAction != "git pull" || m.notice != "pulling api…" {
-		t.Errorf("while pulling: confirm %v, action %q, notice %q", m.confirm != nil, m.gitAction, m.notice)
+	if m.confirm != nil || m.gitOps.action != "git pull" || m.notice != "pulling api…" {
+		t.Errorf("while pulling: confirm %v, action %q, notice %q", m.confirm != nil, m.gitOps.action, m.notice)
 	}
 	follow(t, m, cmd)
 
 	if !slices.Equal(f.pulls, []string{"/r/app"}) {
 		t.Errorf("pulls = %v", f.pulls)
 	}
-	if m.notice != "pulled api: main 0123456 → fedcba9 (also Worker)" || m.gitAction != "" {
-		t.Errorf("notice %q, action %q", m.notice, m.gitAction)
+	if m.notice != "pulled api: main 0123456 → fedcba9 (also Worker)" || m.gitOps.action != "" {
+		t.Errorf("notice %q, action %q", m.notice, m.gitOps.action)
 	}
 	wantLog := []string{
 		"$ git pull --ff-only --no-rebase",
@@ -305,8 +305,8 @@ func TestPullCheckedAgainBeforePulling(t *testing.T) {
 	if len(f.pulls) != 0 || len(sess.notes) != 0 {
 		t.Errorf("pulled: %v, notes %v", f.pulls, sess.notes)
 	}
-	if m.notice != "can't pull: there are uncommitted changes to tracked files" || m.gitAction != "" {
-		t.Errorf("notice %q, action %q", m.notice, m.gitAction)
+	if m.notice != "can't pull: there are uncommitted changes to tracked files" || m.gitOps.action != "" {
+		t.Errorf("notice %q, action %q", m.notice, m.gitOps.action)
 	}
 }
 
@@ -348,12 +348,12 @@ func TestPullConfirmationKeys(t *testing.T) {
 		t.Error("pulled after cancelling")
 	}
 
-	m.gitAction = "git switch"
+	m.gitOps.action = "git switch"
 	press(t, m, "p")
 	if m.confirm != nil || m.notice != "git switch is still running" {
 		t.Errorf("busy: confirmation %v, notice %q", m.confirm != nil, m.notice)
 	}
-	m.gitAction = ""
+	m.gitOps.action = ""
 
 	press(t, m, "p")
 	m.Update(key("ctrl+c")) // its command waits for everything to stop
@@ -449,8 +449,8 @@ func TestLauncherSwitchBranch(t *testing.T) {
 		launcherPress(t, m, k)
 	}
 	_, cmd := m.Update(key("enter"))
-	if m.picker != nil || m.gitAction != "git switch" || m.notice != "switching api to fix/typo…" {
-		t.Errorf("while switching: picker %v, action %q, notice %q", m.picker != nil, m.gitAction, m.notice)
+	if m.picker != nil || m.gitOps.action != "git switch" || m.notice != "switching api to fix/typo…" {
+		t.Errorf("while switching: picker %v, action %q, notice %q", m.picker != nil, m.gitOps.action, m.notice)
 	}
 	if start := launcherPress(t, m, "enter"); start != nil || m.notice != "git switch is still running" {
 		t.Errorf("start while switching: cmd %v, notice %q", start != nil, m.notice)
@@ -460,8 +460,8 @@ func TestLauncherSwitchBranch(t *testing.T) {
 	if !slices.Equal(f.switches, []string{"/r/app origin/fix/typo"}) {
 		t.Errorf("switches = %v", f.switches)
 	}
-	if m.notice != "switched api to fix/typo (also worker)" || m.gitAction != "" {
-		t.Errorf("notice %q, action %q", m.notice, m.gitAction)
+	if m.notice != "switched api to fix/typo (also worker)" || m.gitOps.action != "" {
+		t.Errorf("notice %q, action %q", m.notice, m.gitOps.action)
 	}
 	if !m.git.busy {
 		t.Error("git state not refreshed after the switch")
@@ -529,8 +529,8 @@ func TestLauncherPull(t *testing.T) {
 	f.pullOut = "Updating 0123456..fedcba9\nFast-forward\n"
 	f.pulledTo = map[string]gitinfo.Status{"/r/app": {Branch: "main", Commit: "fedcba9876", Upstream: "origin/main"}}
 	_, cmd := m.Update(key("enter"))
-	if m.ask != nil || m.gitAction != "git pull" || m.notice != "pulling api…" {
-		t.Errorf("while pulling: question %v, action %q, notice %q", m.ask != nil, m.gitAction, m.notice)
+	if m.ask != nil || m.gitOps.action != "git pull" || m.notice != "pulling api…" {
+		t.Errorf("while pulling: question %v, action %q, notice %q", m.ask != nil, m.gitOps.action, m.notice)
 	}
 	if start := launcherPress(t, m, "enter"); start != nil || m.notice != "git pull is still running" {
 		t.Errorf("start while pulling: cmd %v, notice %q", start != nil, m.notice)
@@ -539,8 +539,8 @@ func TestLauncherPull(t *testing.T) {
 	if !slices.Equal(f.pulls, []string{"/r/app"}) {
 		t.Errorf("pulls = %v", f.pulls)
 	}
-	if m.notice != "pulled api: main 0123456 → fedcba9 (also worker)" || m.gitAction != "" {
-		t.Errorf("notice %q, action %q", m.notice, m.gitAction)
+	if m.notice != "pulled api: main 0123456 → fedcba9 (also worker)" || m.gitOps.action != "" {
+		t.Errorf("notice %q, action %q", m.notice, m.gitOps.action)
 	}
 	if !m.git.busy {
 		t.Error("git state not refreshed after the pull")
@@ -615,24 +615,48 @@ func TestBranchMessagesStayWithTheirModel(t *testing.T) {
 	l, _ := newGitLauncher(t)
 	r, _, _ := newGitModel(t)
 	branches := []gitinfo.Branch{{Name: "main", Current: true}}
-	r.Update(branchesMsg{owner: l, project: "api", repo: gitinfo.Repo{Root: "/r/app"}, branches: branches})
-	l.Update(branchesMsg{owner: r, project: "api", repo: gitinfo.Repo{Root: "/r/app"}, branches: branches})
+	r.Update(branchesMsg{owner: l.gitOps, project: "api", repo: gitinfo.Repo{Root: "/r/app"}, branches: branches})
+	l.Update(branchesMsg{owner: r.gitOps, project: "api", repo: gitinfo.Repo{Root: "/r/app"}, branches: branches})
 	if r.picker != nil || l.picker != nil {
 		t.Errorf("picker opened by another model's reply: running %v, launcher %v", r.picker != nil, l.picker != nil)
 	}
-	r.gitAction = "git switch"
-	r.Update(switchedMsg{owner: l, project: "api", ran: true})
-	if r.gitAction == "" {
+	r.gitOps.action = "git switch"
+	r.Update(switchedMsg{owner: l.gitOps, project: "api", ran: true})
+	if r.gitOps.action == "" {
 		t.Error("running view handled the launcher's switch result")
 	}
-	r.Update(pullCheckMsg{owner: l, project: "api", status: gitinfo.Status{Branch: "main", Upstream: "origin/main"}})
-	l.Update(pullCheckMsg{owner: r, project: "api", status: gitinfo.Status{Branch: "main", Upstream: "origin/main"}})
+	r.Update(pullCheckMsg{owner: l.gitOps, project: "api", status: gitinfo.Status{Branch: "main", Upstream: "origin/main"}})
+	l.Update(pullCheckMsg{owner: r.gitOps, project: "api", status: gitinfo.Status{Branch: "main", Upstream: "origin/main"}})
 	if r.confirm != nil || l.ask != nil {
 		t.Errorf("question opened by another model's reply: running %v, launcher %v", r.confirm != nil, l.ask != nil)
 	}
-	r.Update(pulledMsg{owner: l, project: "api", ran: true})
-	if r.gitAction == "" {
+	r.Update(pulledMsg{owner: l.gitOps, project: "api", ran: true})
+	if r.gitOps.action == "" {
 		t.Error("running view handled the launcher's pull result")
+	}
+}
+
+// TestGitRepliesWaitForTheScreen checks that in the running view, a branch
+// list or pull check that arrives while a question or the arguments input
+// is open doesn't open over it (as in the launcher).
+func TestGitRepliesWaitForTheScreen(t *testing.T) {
+	m, _, _ := newGitModel(t)
+	open := &question{prompt: "something else?", action: "ok", yes: func() tea.Cmd { return nil }}
+	branches := branchesMsg{owner: m.gitOps, project: "api", repo: gitinfo.Repo{Root: "/r/app"}, branches: []gitinfo.Branch{{Name: "main", Current: true}}}
+	check := pullCheckMsg{owner: m.gitOps, project: "api", repo: gitinfo.Repo{Root: "/r/app"}, status: gitinfo.Status{Branch: "main", Upstream: "origin/main"}}
+
+	m.confirm = open
+	m.Update(branches)
+	m.Update(check)
+	if m.picker != nil || m.confirm != open {
+		t.Errorf("with a question open: picker %v, question replaced %v", m.picker != nil, m.confirm != open)
+	}
+
+	m.confirm, m.argsFor = nil, "api"
+	m.Update(branches)
+	m.Update(check)
+	if m.picker != nil || m.confirm != nil {
+		t.Errorf("with the arguments input open: picker %v, question %v", m.picker != nil, m.confirm != nil)
 	}
 }
 

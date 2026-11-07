@@ -13,7 +13,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Skaanning/runr/internal/config"
-	"github.com/Skaanning/runr/internal/gitinfo"
 	runrstate "github.com/Skaanning/runr/internal/state" // "state" is a test helper in this package
 )
 
@@ -62,10 +61,10 @@ type launcherModel struct {
 	lastArgs map[string]string      // extra arguments typed last, by project (R)
 	last     *runrstate.LastSession // the last session, which l starts; nil if none
 
-	git       *gitTracker // nil: git is not installed
-	gitStale  bool        // the config or a repository changed; refresh the git state
-	gitAction string      // git action running in the background, e.g. "git switch"
-	cleaning  bool        // leftover processes are being stopped
+	git      *gitTracker // nil: git is not installed
+	gitOps   *gitActions
+	gitStale bool // the config or a repository changed; refresh the git state
+	cleaning bool // leftover processes are being stopped
 
 	width, height int
 	now           func() time.Time // for the clock
@@ -73,6 +72,7 @@ type launcherModel struct {
 
 func newLauncherModel(cfg *config.Config, save SaveFunc, st *styles) *launcherModel {
 	m := &launcherModel{cfg: cfg, st: st, save: save, selected: map[string]bool{}, now: time.Now}
+	m.gitOps = newGitActions(launcherGit{m}, st, cfg)
 	m.reload()
 	return m
 }
@@ -123,6 +123,9 @@ func (m *launcherModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if cmd, ok := m.gitOps.update(msg); ok {
+		return m, cmd
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -137,36 +140,6 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case interruptMsg:
 		return m, tea.Quit
-	case branchesMsg:
-		if msg.owner == m {
-			return m, m.showBranches(msg)
-		}
-		return m, nil
-	case switchedMsg:
-		if msg.owner == m {
-			m.switched(msg)
-		}
-		return m, nil
-	case pullCheckMsg:
-		if msg.owner == m {
-			m.confirmPull(msg)
-		}
-		return m, nil
-	case pulledMsg:
-		if msg.owner == m {
-			m.pulled(msg)
-		}
-		return m, nil
-	case fetchedAllMsg:
-		if msg.owner == m {
-			m.fetchedAll(msg)
-		}
-		return m, nil
-	case pulledAllMsg:
-		if msg.owner == m {
-			m.pulledAll(msg)
-		}
-		return m, nil
 	case leftoversMsg:
 		if msg.owner == m {
 			m.notice, m.cleaning = msg.report, false
@@ -366,8 +339,8 @@ func (m *launcherModel) start(names []string, args map[string]string) tea.Cmd {
 	switch {
 	case len(names) == 0:
 		return nil
-	case m.gitAction != "":
-		m.notice = m.gitAction + " is still running"
+	case m.gitOps.action != "":
+		m.notice = m.gitOps.action + " is still running"
 		return nil
 	case m.cleaning:
 		m.notice = "the leftover processes are still being stopped"
@@ -494,70 +467,9 @@ func (m *launcherModel) restoreTheme() {
 	m.st.setTheme(themeNamed(m.cfg.Settings.Theme()))
 }
 
-// openBranches checks the repository of the project under the cursor and
-// reads its branches in the background; the picker opens when they arrive.
-func (m *launcherModel) openBranches() tea.Cmd {
-	name, repo, ok := m.gitTarget("switch its branch")
-	if !ok {
-		return nil
-	}
-	return readBranches(m, m.git.reader, name, repo)
-}
-
-// openPull checks the repository of the project under the cursor in the
-// background; the question whether to pull opens when it is done.
-func (m *launcherModel) openPull() tea.Cmd {
-	name, repo, ok := m.gitTarget("pull")
-	if !ok {
-		return nil
-	}
-	return checkPull(m, m.git.reader, name, repo)
-}
-
-// gitTarget returns the project under the cursor and its repository for a
-// git action (what, e.g. "pull"). If there is none, or another action is
-// running, it sets a notice saying why.
-func (m *launcherModel) gitTarget(what string) (string, gitinfo.Repo, bool) {
-	it, ok := m.current()
-	if !ok {
-		return "", gitinfo.Repo{}, false
-	}
-	if it.group {
-		m.notice = "move to a project to " + what
-		return "", gitinfo.Repo{}, false
-	}
-	repo, notice := m.git.target(it.name, it.name, m.gitAction)
-	m.notice = notice
-	return it.name, repo, notice == ""
-}
-
 // busy reports whether something else has the screen.
 func (m *launcherModel) busy() bool {
 	return m.form != nil || m.confirm != nil || m.picker != nil || m.ask != nil || m.output != nil || m.jump
-}
-
-// showBranches opens the branch picker. Every registered project in the
-// repository switches along.
-func (m *launcherModel) showBranches(msg branchesMsg) tea.Cmd {
-	if msg.err != nil {
-		m.notice = "can't switch branches: " + msg.err.Error()
-		return nil
-	}
-	if m.busy() {
-		return nil // something else took over the screen meanwhile
-	}
-	label := m.st.bold.Foreground(m.st.color(m.cfg.ColorOf(msg.project))).Render(msg.project)
-	context := branchContext(m.st, label, m.cfg.Projects[msg.project].Dir, m.git, msg.project)
-	var cmd tea.Cmd
-	m.picker, cmd = branchPicker(m.st, msg, msg.project, context, m.sharing(msg.project, msg.repo.Root), func(b gitinfo.Branch) tea.Cmd {
-		return m.switchBranch(msg.project, msg.repo, b)
-	})
-	return cmd
-}
-
-// sharing returns the other registered projects in the repository at root.
-func (m *launcherModel) sharing(project, root string) []string {
-	return m.git.inRepo(project, root, slices.Sorted(maps.Keys(m.cfg.Projects)))
 }
 
 func (m *launcherModel) updatePicker(msg tea.Msg) tea.Cmd {
@@ -589,97 +501,6 @@ func (m *launcherModel) updatePicker(msg tea.Msg) tea.Cmd {
 		return m.picker.update(key)
 	}
 	return nil
-}
-
-// switchBranch switches the repository of project to b in the background,
-// after checking it again.
-func (m *launcherModel) switchBranch(project string, repo gitinfo.Repo, b gitinfo.Branch) tea.Cmd {
-	if b.Current {
-		m.notice = "already on " + b.Name
-		return nil
-	}
-	if m.gitAction != "" {
-		m.notice = m.gitAction + " is still running"
-		return nil
-	}
-	m.gitAction = "git switch"
-	m.notice = fmt.Sprintf("switching %s to %s…", project, b.LocalName())
-	return runSwitch(m, m.git.reader, project, repo, b)
-}
-
-// switched reports the outcome of a branch switch: a summary in the help
-// line, and git's output in place of the list if it failed.
-func (m *launcherModel) switched(msg switchedMsg) {
-	m.gitAction = ""
-	if !msg.ran {
-		m.notice = "can't switch branches: " + msg.err.Error()
-		return
-	}
-	m.gitStale = true
-	if msg.err != nil {
-		m.output, m.skipped = switchLines(msg), false
-		m.notice = msg.err.Error()
-		return
-	}
-	m.notice = fmt.Sprintf("switched %s to %s", msg.project, msg.branch.LocalName())
-	if others := m.sharing(msg.project, msg.repo.Root); len(others) > 0 {
-		m.notice += " (also " + strings.Join(others, ", ") + ")"
-	}
-}
-
-// confirmPull asks whether to pull, naming the other registered projects in
-// the repository.
-func (m *launcherModel) confirmPull(msg pullCheckMsg) {
-	if msg.err != nil {
-		m.notice = "can't pull: " + msg.err.Error()
-		return
-	}
-	if m.busy() {
-		return
-	}
-	m.notice = ""
-	m.ask = pullQuestion(msg, msg.project, m.sharing(msg.project, msg.repo.Root), func() tea.Cmd {
-		return m.pull(msg.project, msg.repo)
-	})
-}
-
-// pull pulls the repository of project in the background, after checking
-// it again.
-func (m *launcherModel) pull(project string, repo gitinfo.Repo) tea.Cmd {
-	if m.gitAction != "" {
-		m.notice = m.gitAction + " is still running"
-		return nil
-	}
-	m.gitAction = "git pull"
-	m.notice = fmt.Sprintf("pulling %s…", project)
-	return runPull(m, m.git.reader, project, repo)
-}
-
-// pulled reports the outcome of a pull: a summary in the help line, and
-// git's output in place of the list if it failed.
-func (m *launcherModel) pulled(msg pulledMsg) {
-	m.gitAction = ""
-	if !msg.ran {
-		m.notice = "can't pull: " + msg.err.Error()
-		return
-	}
-	m.gitStale = true
-	if msg.err != nil {
-		m.output, m.skipped = pullLines(msg), false
-		m.notice = msg.err.Error()
-		return
-	}
-	switch change := pullChange(msg); {
-	case change == "":
-		m.notice = msg.project + " is already up to date"
-	case msg.after.Commit == "":
-		m.notice = fmt.Sprintf("pulled %s into %s", change, msg.project)
-	default:
-		m.notice = fmt.Sprintf("pulled %s: %s", msg.project, change)
-		if others := m.sharing(msg.project, msg.repo.Root); len(others) > 0 {
-			m.notice += " (also " + strings.Join(others, ", ") + ")"
-		}
-	}
 }
 
 // current returns the item under the cursor.

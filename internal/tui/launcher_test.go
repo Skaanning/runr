@@ -285,7 +285,7 @@ func TestLauncherJumpKeys(t *testing.T) {
 
 func TestLauncherJumpBusy(t *testing.T) {
 	m := newTestLauncher(t, launcherConfig(t))
-	m.gitAction = "git pull"
+	m.gitOps.action = "git pull"
 	m.Update(key("/"))
 	if _, cmd := m.Update(key("a")); cmd != nil || m.notice != "git pull is still running" {
 		t.Errorf("cmd = %v, notice = %q", cmd, m.notice)

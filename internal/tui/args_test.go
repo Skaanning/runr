@@ -62,7 +62,7 @@ func TestLauncherArgsForm(t *testing.T) {
 		t.Error("esc did not cancel")
 	}
 
-	m.gitAction = "git pull" // the start is refused; the arguments are kept
+	m.gitOps.action = "git pull" // the start is refused; the arguments are kept
 	m.Update(key("R"))
 	if _, cmd := m.Update(key("ctrl+s")); cmd != nil || m.notice != "git pull is still running" {
 		t.Errorf("cmd = %v, notice = %q", cmd, m.notice)

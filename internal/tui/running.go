@@ -112,10 +112,10 @@ type runningModel struct {
 	picker  *picker   // open picker (start another, branches), or nil
 	confirm *question // open question in the help line, or nil
 
-	git       *gitTracker // nil: git is not installed
-	gitAction string      // git action running in the background, e.g. "git switch"
-	ports     *portTracker
-	saveDir   string // where w saves logs; "" for the current directory
+	git     *gitTracker // nil: git is not installed
+	gitOps  *gitActions
+	ports   *portTracker
+	saveDir string // where w saves logs; "" for the current directory
 
 	width, height int
 	now           func() time.Time // for the clock, uptimes and spinners
@@ -130,6 +130,7 @@ type runningModel struct {
 func newRunningModel(sess Session, cfg *config.Config, names []string, st *styles) *runningModel {
 	m := &runningModel{sess: sess, cfg: cfg, st: st, titles: names, byName: map[string]*sidebarEntry{}, now: time.Now}
 	m.ports = newPortTracker(sess.Pids)
+	m.gitOps = newGitActions(runningGit{m}, st, cfg)
 	m.showAll = cfg.Settings.ShowAll()
 	for _, info := range sess.Processes() {
 		m.entry(info.Name).info = info
@@ -316,6 +317,9 @@ func (m *runningModel) tick() tea.Cmd {
 }
 
 func (m *runningModel) update(msg tea.Msg) tea.Cmd {
+	if cmd, ok := m.gitOps.update(msg); ok {
+		return cmd
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
@@ -360,14 +364,6 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 			cmd = tea.Batch(cmd, func() tea.Msg { sess.RememberPorts(seen); return nil })
 		}
 		return cmd
-	case fetchedAllMsg:
-		if msg.owner == m {
-			return m.fetchedAll(msg)
-		}
-	case pulledAllMsg:
-		if msg.owner == m {
-			return m.pulledAll(msg)
-		}
 	case leftoversMsg:
 		if msg.owner == m {
 			m.notice = msg.report
@@ -390,22 +386,6 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 	case portTickMsg:
 		if !m.stopping {
 			return m.ports.update(msg, true)
-		}
-	case branchesMsg:
-		if msg.owner == m {
-			return m.showBranches(msg)
-		}
-	case switchedMsg:
-		if msg.owner == m {
-			return m.switched(msg)
-		}
-	case pullCheckMsg:
-		if msg.owner == m {
-			m.confirmPull(msg)
-		}
-	case pulledMsg:
-		if msg.owner == m {
-			return m.pulled(msg)
 		}
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
