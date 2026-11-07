@@ -25,7 +25,7 @@ type LogLine struct {
 	Stream  Stream
 	Text    string
 	Time    time.Time
-	Error   bool // the program's line matches settings.error_pattern
+	Error   bool // a program line matching settings.error_pattern, or runr's "crashed" / "failed to start"
 }
 
 // Logs stores the most recent output lines of every project in per-project

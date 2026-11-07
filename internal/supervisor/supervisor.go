@@ -81,6 +81,10 @@ type managed struct {
 
 	seenPorts map[int]bool // ports it listened on earlier in the session
 
+	// The run's error lines (ProcessInfo.Errors is their sum): the
+	// program's, as counted by its lineHandler, and runr's failure lines.
+	outputErrors, failures int
+
 	proc           *proc.Process
 	gen            int // incremented on every start; stale messages are ignored
 	stopRequested  bool
@@ -472,6 +476,16 @@ func (s *Supervisor) system(m *managed, format string, args ...any) {
 func (s *Supervisor) warn(m *managed, text string) {
 	s.system(m, "%s", text)
 	s.events.push(WarningEvent{Project: m.name, Text: text})
+}
+
+// failure appends a runr-generated line saying the run failed ("crashed",
+// "failed to start"). It is an error line of the run, counted in Errors; the
+// StateEvent that follows reports the count.
+func (s *Supervisor) failure(m *managed, format string, args ...any) {
+	line := s.logs.AppendLine(LogLine{Project: m.name, Stream: SystemError, Text: fmt.Sprintf(format, args...), Error: true})
+	s.events.push(LineEvent{Line: line})
+	m.failures++
+	m.info.Errors = m.outputErrors + m.failures
 }
 
 // systemError appends a runr-generated line about a failure.

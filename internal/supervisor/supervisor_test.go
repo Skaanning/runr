@@ -695,3 +695,22 @@ func TestErrorPatternSetting(t *testing.T) {
 	time.Sleep(20 * time.Millisecond) // a second count would have arrived by now
 	r.waitInfo(t, "api", func(i ProcessInfo) bool { return i.Errors == 1 })
 }
+
+func TestCrashIsAnError(t *testing.T) {
+	cfg := config.New()
+	dir := t.TempDir()
+	cfg.Projects["api"] = &config.Project{Dir: dir, Cmd: "echo error one; exit 3"}
+	cfg.Projects["gone"] = &config.Project{Dir: dir + "/missing", Cmd: "true"}
+	s, r := newTestSupervisorWithConfig(t, cfg)
+	if err := s.Start("api", "gone"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitInfo(t, "api", func(i ProcessInfo) bool { return i.State == Crashed && i.Errors == 2 })
+	r.waitInfo(t, "gone", func(i ProcessInfo) bool { return i.State == Crashed && i.Errors == 1 })
+	for name, want := range map[string]string{"api": "crashed (exit code 3)", "gone": "failed to start: "} {
+		lines := s.Logs().Lines(name)
+		if l := lines[len(lines)-1]; !l.Error || l.Stream != SystemError || !strings.HasPrefix(l.Text, want) {
+			t.Errorf("%s: last line %+v", name, l)
+		}
+	}
+}

@@ -313,7 +313,7 @@ uppercase letter makes it case-sensitive.
 
 runr marks the lines of output that look like errors: those containing `error`, `panic`,
 `fatal`, `exception` or `traceback` as a word, in any case (`no errors` and `terror` don't
-count). A red `▌` sits left of each of them, and the process's second line in the sidebar
+count), and its own line when a process crashes or fails to start. A red `▌` sits left of each of them, and the process's second line in the sidebar
 says how many its current run printed, e.g. `3 errors`; the count starts again at every
 restart.
 
@@ -323,8 +323,9 @@ gets a yellow `▌`, scrolling stops, and the bottom line shows where you are, e
 `error 2/7`; `esc` clears it and `G` scrolls back to the newest output.
 
 To match something else, set `error_pattern` in `[settings]`, e.g.
-`error_pattern = '\b(ERROR|FATAL)\b'` for upper-case log levels only. runr's own lines
-(`starting: …`, `crashed …`) are never counted.
+`error_pattern = '\b(ERROR|FATAL)\b'` for upper-case log levels only. Of runr's own
+lines, `crashed (…)` and `failed to start: …` always count, whatever the pattern; the others
+(`starting: …`, `blocked: …`) never do.
 
 ![Searching the combined logs for POST](images/search.png)
 

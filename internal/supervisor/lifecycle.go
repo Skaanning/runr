@@ -24,7 +24,7 @@ func (s *Supervisor) spawn(m *managed) {
 	m.info.StartedAt = time.Now()
 	m.info.Exit = proc.ExitStatus{}
 	m.info.Pid = 0
-	m.info.Errors = 0
+	m.info.Errors, m.outputErrors, m.failures = 0, 0, 0
 	m.info.Args = s.args[m.name]
 	command := m.project.CommandWith(m.info.Args)
 
@@ -37,7 +37,7 @@ func (s *Supervisor) spawn(m *managed) {
 	if err != nil {
 		m.proc = nil
 		m.info.Exit = proc.ExitStatus{Code: -1, Err: err}
-		s.systemError(m, "failed to start: %v", err)
+		s.failure(m, "failed to start: %v", err)
 		s.setState(m, Crashed)
 		s.schedule()
 		return
@@ -109,12 +109,13 @@ func (s *Supervisor) lineHandler(m *managed) func(proc.Line) {
 	}
 }
 
-// countErrors updates the count of error lines of run gen of m.
+// countErrors updates the count of the program's error lines in run gen of m.
 func (s *Supervisor) countErrors(m *managed, gen, n int) {
-	if gen != m.gen || n == m.info.Errors {
+	if gen != m.gen || n == m.outputErrors {
 		return
 	}
-	m.info.Errors = n
+	m.outputErrors = n
+	m.info.Errors = m.outputErrors + m.failures
 	s.events.push(StateEvent{Info: m.info})
 }
 
@@ -207,7 +208,7 @@ func (s *Supervisor) exited(m *managed, gen int, status proc.ExitStatus) {
 		s.system(m, "exited (%s)", status)
 		s.setState(m, Exited)
 	default:
-		s.systemError(m, "crashed (%s)", status)
+		s.failure(m, "crashed (%s)", status)
 		s.setState(m, Crashed)
 	}
 
