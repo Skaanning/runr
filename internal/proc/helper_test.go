@@ -109,10 +109,17 @@ func runHelper(mode string) {
 		child.ExtraFiles[0].Close()
 		_, _ = io.Copy(io.Discard, ready) // EOF once the child closes its end
 	default:
+		if h := moreHelpers[mode]; h != nil {
+			h()
+			return
+		}
 		fmt.Fprintln(os.Stderr, "unknown helper mode", mode)
 		os.Exit(2)
 	}
 }
+
+// moreHelpers are helper modes defined for some platforms only.
+var moreHelpers = map[string]func(){}
 
 // signalReady prints "ready" and, when asked to, closes the ready pipe.
 func signalReady() {

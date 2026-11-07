@@ -107,6 +107,7 @@ type Project struct {
 	ReadyURL    string            `toml:"ready_url,omitempty"`
 	Color       string            `toml:"color,omitempty"`
 	DisplayName string            `toml:"display_name,omitempty"`
+	PTY         bool              `toml:"pty,omitempty"` // run on a pseudo-terminal instead of pipes
 }
 
 // ReadyExit is the value of Project.Ready for one-shot tasks: the project is

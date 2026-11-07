@@ -30,6 +30,10 @@ func (s *Supervisor) spawn(m *managed) {
 
 	// Logged before spawning so it precedes the process's first output.
 	s.system(m, "starting: %s", command)
+	if m.project.PTY && !proc.PTYSupported && !s.noPTY[m.name] {
+		s.noPTY[m.name] = true
+		s.warn(m, "pty = true isn't supported on this system yet; running with pipes")
+	}
 	spec, err := s.spec(m.project, command)
 	if err == nil {
 		m.proc, err = proc.Start(spec, s.lineHandler(m))
@@ -244,10 +248,17 @@ func (s *Supervisor) spec(p *config.Project, command string) (proc.Spec, error) 
 			return proc.Spec{}, err
 		}
 	}
+	var termEnv map[string]string
+	if p.PTY && proc.PTYSupported {
+		termEnv = map[string]string{"TERM": "xterm-256color"}
+	}
 	return proc.Spec{
 		Command: command,
 		Dir:     dir,
-		Env:     proc.BuildEnv(s.baseEnv, proc.DefaultEnv, fileVars, p.Env),
+		Env:     proc.BuildEnv(s.baseEnv, proc.DefaultEnv, termEnv, fileVars, p.Env),
+		PTY:     p.PTY,
+		Cols:    s.cols,
+		Rows:    s.rows,
 		// Processes left behind by the command get as long to stop as the
 		// command itself does.
 		LeftoverTimeout: s.timeout,

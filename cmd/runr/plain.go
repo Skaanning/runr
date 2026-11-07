@@ -30,6 +30,9 @@ func runPlain(out io.Writer, cfg *config.Config, opts supervisor.Options, names 
 	pr := newPlainPrinter(out, cfg, projects, colors)
 	sess := newRecordingSession(cfg, opts)
 	sup := sess.Supervisor
+	if cols := pr.textWidth(); cols > 0 {
+		_ = sup.Resize(cols, 0) // for pty = true; otherwise the default 120
+	}
 	if err := sess.begin(names, args); err != nil {
 		sup.Close()
 		return err
@@ -158,6 +161,20 @@ func (p *plainPrinter) event(e supervisor.Event) {
 		text = plaintext.StripANSI(text)
 	}
 	fmt.Fprintf(p.w, "%s │ %s\n", label, text)
+}
+
+// textWidth is the room for a program's text after the label on a
+// terminal, 0 if the output isn't one.
+func (p *plainPrinter) textWidth() int {
+	f, ok := p.w.(*os.File)
+	if !ok || !term.IsTerminal(f.Fd()) {
+		return 0
+	}
+	w, _, err := term.GetSize(f.Fd())
+	if err != nil {
+		return 0
+	}
+	return max(w-p.width-3, 20) // "label │ "
 }
 
 func (p *plainPrinter) notice(msg string) {

@@ -74,8 +74,12 @@ func (f *editForm) statusInfo(st *styles) string {
 		st.err.Render(" · "+strings.ToLower(first.title)+": "+first.err.Error())
 }
 
-// oneShotOption is the one option of the form's one-shot field.
-const oneShotOption = "yes"
+// oneShotOption is the one option of the form's one-shot field, ptyOption
+// that of its terminal field.
+const (
+	oneShotOption = "yes"
+	ptyOption     = "run on a pseudo-terminal"
+)
 
 // projectValues holds the project form's fields.
 type projectValues struct {
@@ -88,7 +92,8 @@ type projectValues struct {
 	readyLog  string
 	readyPort string
 	readyURL  string
-	env       string // KEY=VALUE lines
+	pty       []string // ptyOption when pty = true
+	env       string   // KEY=VALUE lines
 	envFile   string
 	color     string
 	label     string // display name
@@ -108,6 +113,10 @@ func newProjectValues(cfg *config.Config, name string) *projectValues {
 	if p.OneShot() {
 		oneShot = []string{oneShotOption}
 	}
+	var pty []string
+	if p.PTY {
+		pty = []string{ptyOption}
+	}
 	readyPort := ""
 	if p.ReadyPort != 0 {
 		readyPort = strconv.Itoa(p.ReadyPort)
@@ -115,7 +124,7 @@ func newProjectValues(cfg *config.Config, name string) *projectValues {
 	return &projectValues{
 		original: name, name: name, cmd: p.Cmd, dir: p.Dir, deps: slices.Clone(p.DependsOn),
 		oneShot: oneShot, readyLog: p.ReadyLog, readyPort: readyPort, readyURL: p.ReadyURL, env: strings.Join(env, "\n"), envFile: p.EnvFile,
-		color: p.Color, label: p.DisplayName,
+		color: p.Color, label: p.DisplayName, pty: pty,
 	}
 }
 
@@ -187,6 +196,7 @@ func (v *projectValues) candidate(cfg *config.Config) (*config.Config, error) {
 		ReadyURL:    strings.TrimSpace(v.readyURL),
 		Color:       strings.TrimSpace(v.color),
 		DisplayName: strings.TrimSpace(v.label),
+		PTY:         len(v.pty) > 0,
 	}
 	return c, nil
 }
@@ -586,6 +596,12 @@ func newProjectForm(st *styles, cfg *config.Config, name string, git GitReader) 
 	readyURL.input.Placeholder = "http://…; ready on 2xx or 3xx"
 	readyURL.check = check("ready_url")
 	startup.fields = append(startup.fields, readyLog, readyPort, readyURL)
+	pty := newChoiceField("pty", "Terminal", []formOption{{value: ptyOption}}, &v.pty)
+	pty.desc = "colors and line buffering as in a terminal; no input"
+	if !proc.PTYSupported {
+		pty.desc = "not on this system yet: runs with pipes"
+	}
+	startup.fields = append(startup.fields, pty)
 
 	env := newTextField("env", "Variables", &v.env)
 	env.desc = "KEY=VALUE, one per line"

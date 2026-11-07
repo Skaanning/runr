@@ -33,6 +33,7 @@ type Session interface {
 	Note(name string, lines ...string) error
 	Pids() map[string][]int // process trees of the live processes, by project
 	RememberPorts(ports map[string][]int)
+	Resize(cols, rows int) error // of the pseudo-terminals (pty = true); 0 keeps one
 }
 
 const (
@@ -120,6 +121,7 @@ type runningModel struct {
 	now           func() time.Time // for the clock, uptimes and spinners
 	tickEvery     time.Duration    // interval of the scheduled uiTickMsg, 0 if none
 	tickGen       int              // generation of the scheduled uiTickMsg
+	termCols      int              // width last given to sess.Resize
 
 	stopping bool
 	forced   bool
@@ -1191,6 +1193,11 @@ func (m *runningModel) bodyHeight() int {
 // layout updates sizes and scroll positions after a change.
 func (m *runningModel) layout() {
 	h := m.bodyHeight()
+	// Programs on a pseudo-terminal (pty = true) get the logs pane's width.
+	if w := m.logWidth(); w > 0 && w != m.termCols {
+		m.termCols = w
+		_ = m.sess.Resize(w, 0)
+	}
 	m.combined.setSize(m.logWidth(), h)
 	if m.single != nil {
 		m.single.setSize(m.logWidth(), h)

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,7 @@ type fakeSession struct {
 	err      error               // returned by Start/Stop/Restart
 	pids     map[string][]int    // returned by Pids
 	seen     map[string][]int    // passed to RememberPorts
+	sizes    [][2]int            // passed to Resize
 }
 
 func newFakeSession(names ...string) *fakeSession {
@@ -55,9 +57,13 @@ func (f *fakeSession) Restart(name string) error {
 	f.calls = append(f.calls, "restart "+name)
 	return f.err
 }
-func (f *fakeSession) Events() <-chan supervisor.Event      { return f.events }
-func (f *fakeSession) StopAll() <-chan struct{}             { f.stopAll++; return f.stopDone }
-func (f *fakeSession) KillAll()                             { f.killAll++ }
+func (f *fakeSession) Events() <-chan supervisor.Event { return f.events }
+func (f *fakeSession) StopAll() <-chan struct{}        { f.stopAll++; return f.stopDone }
+func (f *fakeSession) KillAll()                        { f.killAll++ }
+func (f *fakeSession) Resize(cols, rows int) error {
+	f.sizes = append(f.sizes, [2]int{cols, rows})
+	return nil
+}
 func (f *fakeSession) Pids() map[string][]int               { return f.pids }
 func (f *fakeSession) RememberPorts(ports map[string][]int) { f.seen = ports }
 func (f *fakeSession) Note(name string, lines ...string) error {
@@ -822,5 +828,16 @@ func TestRunningPasteSearchesAndFilters(t *testing.T) {
 	m.Update(tea.PasteMsg{Content: "cron"})
 	if it, ok := m.picker.selected(); !ok || it.name != "cron" || len(m.picker.filtered) != 1 {
 		t.Fatalf("after pasting a filter: %d items, on %q", len(m.picker.filtered), it.name)
+	}
+}
+
+func TestRunningResizesTerminals(t *testing.T) {
+	m, sess := newTestModel(t, 100, 20)
+	want := [][2]int{{m.logWidth(), 0}}
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 30}) // same width: no call
+	m.Update(tea.WindowSizeMsg{Width: 120, Height: 30})
+	want = append(want, [2]int{m.logWidth(), 0})
+	if !slices.Equal(sess.sizes, want) {
+		t.Errorf("sizes = %v, want %v", sess.sizes, want)
 	}
 }

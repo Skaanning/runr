@@ -288,6 +288,23 @@ func TestLs(t *testing.T) {
 	if !strings.Contains(lines[1], "go run .") || !strings.HasSuffix(strings.TrimSpace(lines[1]), "db") {
 		t.Errorf("api row: %q", lines[1])
 	}
+	if strings.Contains(out, "PTY") {
+		t.Errorf("a PTY column without pty projects:\n%s", out)
+	}
+
+	// With a pty project, a PTY column; --pty=false clears it.
+	mustRun(t, "edit", "web", "--pty")
+	if !loadConfig(t).Projects["web"].PTY {
+		t.Fatal("--pty not saved")
+	}
+	withPTY := strings.Split(mustRun(t, "ls"), "\n")
+	if !strings.HasSuffix(withPTY[0], "  PTY") || !strings.HasSuffix(withPTY[5], "/  yes") || !strings.HasSuffix(withPTY[3], "accepting") {
+		t.Errorf("ls with pty:\n%s", strings.Join(withPTY, "\n"))
+	}
+	mustRun(t, "edit", "web", "--pty=false")
+	if loadConfig(t).Projects["web"].PTY {
+		t.Error("--pty=false not saved")
+	}
 	for i, want := range map[int]string{2: "port 6379", 3: "log: accepting", 4: "on exit (one-shot)", 5: "url http://localhost:5173/"} {
 		if !strings.HasSuffix(lines[i], want) {
 			t.Errorf("line %d = %q, want suffix %q", i, lines[i], want)

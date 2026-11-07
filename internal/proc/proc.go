@@ -18,6 +18,13 @@ type Spec struct {
 	Dir     string   // working directory
 	Env     []string // complete environment as KEY=VALUE pairs (see BuildEnv)
 
+	// PTY runs the command on a pseudo-terminal of Cols × Rows (0: 120 × 50)
+	// instead of pipes, so it behaves as in a terminal (colors, line
+	// buffering). Its output is one stream (Stdout); it gets no input. Only
+	// where PTYSupported; elsewhere pipes are used.
+	PTY        bool
+	Cols, Rows int
+
 	// LeftoverTimeout is how long processes the command leaves running in
 	// its process group after it exits get to stop after SIGTERM before they
 	// are killed. On Windows they are killed right away, unless Terminate
@@ -81,12 +88,27 @@ func (s ExitStatus) String() string {
 	}
 }
 
+// Default size of a pseudo-terminal (Spec.PTY).
+const (
+	DefaultCols = 120
+	DefaultRows = 50
+)
+
 // Process is a running command and the process group it leads.
 type Process struct {
 	cmd    *exec.Cmd
 	done   chan struct{}
 	status ExitStatus
 	handle platformHandle
+
+	termMu sync.Mutex
+	term   *os.File // the pseudo-terminal's master end while it is open; nil without one
+}
+
+// output is a file runr reads a process's output from.
+type output struct {
+	f      *os.File
+	stream Stream
 }
 
 // Start runs spec.Command through the system shell in its own process group.
@@ -98,27 +120,45 @@ func Start(spec Spec, onLine func(Line)) (*Process, error) {
 	cmd.Dir = spec.Dir
 	cmd.Env = spec.Env
 
-	outR, outW, err := os.Pipe()
-	if err != nil {
-		return nil, err
+	pty := spec.PTY && PTYSupported
+	var outs []output
+	var childEnds []*os.File
+	if pty {
+		master, slave, err := openPTY(cmd, spec.Cols, spec.Rows)
+		if err != nil {
+			return nil, fmt.Errorf("opening a pseudo-terminal: %w", err)
+		}
+		outs, childEnds = []output{{master, Stdout}}, []*os.File{slave}
+	} else {
+		outR, outW, err := os.Pipe()
+		if err != nil {
+			return nil, err
+		}
+		errR, errW, err := os.Pipe()
+		if err != nil {
+			outR.Close()
+			outW.Close()
+			return nil, err
+		}
+		cmd.Stdout = outW
+		cmd.Stderr = errW
+		outs, childEnds = []output{{outR, Stdout}, {errR, Stderr}}, []*os.File{outW, errW}
 	}
-	errR, errW, err := os.Pipe()
-	if err != nil {
-		outR.Close()
-		outW.Close()
-		return nil, err
+	closeOutputs := func() {
+		for _, o := range outs {
+			o.f.Close()
+		}
 	}
-	cmd.Stdout = outW
-	cmd.Stderr = errW
 
-	err = cmd.Start()
-	// The child has its own copies of the write ends; ours must be closed so
-	// that reads hit EOF once every process holding them has exited.
-	outW.Close()
-	errW.Close()
+	err := cmd.Start()
+	// The child has its own copies of its ends; ours must be closed so that
+	// reads end (EOF, or EIO on a pseudo-terminal) once every process holding
+	// them has exited.
+	for _, f := range childEnds {
+		f.Close()
+	}
 	if err != nil {
-		outR.Close()
-		errR.Close()
+		closeOutputs()
 		return nil, err
 	}
 
@@ -126,9 +166,11 @@ func Start(spec Spec, onLine func(Line)) (*Process, error) {
 	if p.handle, err = attach(cmd); err != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		outR.Close()
-		errR.Close()
+		closeOutputs()
 		return nil, err
+	}
+	if pty {
+		p.term = outs[0].f
 	}
 
 	var mu sync.Mutex
@@ -138,15 +180,17 @@ func Start(spec Spec, onLine func(Line)) (*Process, error) {
 		onLine(l)
 	}
 	var readers sync.WaitGroup
-	for _, r := range []struct {
-		f      *os.File
-		stream Stream
-	}{{outR, Stdout}, {errR, Stderr}} {
+	for _, o := range outs {
 		readers.Add(1)
 		go func() {
 			defer readers.Done()
-			defer r.f.Close()
-			readLines(r.f, r.stream, emit)
+			if !pty {
+				defer o.f.Close()
+				readLines(o.f, o.stream, emit)
+				return
+			}
+			defer p.closeTerm()
+			readLines(&terminalReader{f: o.f}, o.stream, emit)
 		}()
 	}
 	drained := make(chan struct{})
@@ -171,6 +215,59 @@ func Start(spec Spec, onLine func(Line)) (*Process, error) {
 		close(p.done)
 	}()
 	return p, nil
+}
+
+// Resize sets the size of the process's pseudo-terminal, which tells the
+// programs on it (SIGWINCH). It does nothing without one.
+func (p *Process) Resize(cols, rows int) error {
+	p.termMu.Lock()
+	defer p.termMu.Unlock()
+	if p.term == nil {
+		return nil
+	}
+	return setSize(p.term, cols, rows)
+}
+
+// closeTerm closes the pseudo-terminal once its output has been read.
+func (p *Process) closeTerm() {
+	p.termMu.Lock()
+	defer p.termMu.Unlock()
+	if p.term != nil {
+		p.term.Close()
+		p.term = nil
+	}
+}
+
+// terminalReader reads a pseudo-terminal's master end and answers the
+// programs' cursor position requests (ESC [ 6 n), which some send to find
+// out about the terminal and wait for, with a fixed position.
+type terminalReader struct {
+	f *os.File
+}
+
+var (
+	cursorRequest = []byte("\x1b[6n")
+	cursorReply   = []byte("\x1b[1;1R")
+)
+
+func (r *terminalReader) Read(b []byte) (int, error) {
+	n, err := r.f.Read(b)
+	if n > 0 && bytes.Contains(b[:n], cursorRequest) {
+		_, _ = r.f.Write(cursorReply)
+	}
+	return n, err
+}
+
+// termSize returns cols × rows with defaults for zero and limits that fit a
+// terminal's size fields.
+func termSize(cols, rows int) (uint16, uint16) {
+	if cols <= 0 {
+		cols = DefaultCols
+	}
+	if rows <= 0 {
+		rows = DefaultRows
+	}
+	return uint16(min(cols, 0xffff)), uint16(min(rows, 0xffff))
 }
 
 // Pid returns the process ID of the shell running the command.

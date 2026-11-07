@@ -67,8 +67,11 @@ type Supervisor struct {
 	// Owned by the loop goroutine.
 	procs    map[string]*managed
 	args     map[string]string // extra arguments by project, see SetArgs
-	order    []string          // session order: the order projects were first added
-	closing  bool              // set by Close; no new processes are started
+	cols     int               // pseudo-terminal size, see Resize
+	rows     int
+	noPTY    map[string]bool // projects warned that pty isn't supported here
+	order    []string        // session order: the order projects were first added
+	closing  bool            // set by Close; no new processes are started
 	shutdown *shutdown
 }
 
@@ -120,6 +123,9 @@ func New(cfg *config.Config, opts Options) *Supervisor {
 		events:  newEventQueue(),
 		procs:   map[string]*managed{},
 		args:    map[string]string{},
+		cols:    proc.DefaultCols,
+		rows:    proc.DefaultRows,
+		noPTY:   map[string]bool{},
 		tracker: opts.Tracker,
 	}
 	if re, err := regexp.Compile(cfg.Settings.ErrorPattern()); err == nil {
@@ -287,6 +293,26 @@ func (s *Supervisor) SetArgs(name, args string) error {
 			delete(s.args, name)
 		} else {
 			s.args[name] = args
+		}
+		return nil
+	})
+}
+
+// Resize sets the size of the pseudo-terminals of the projects with
+// pty = true: of those running now, and of those started later. Zero or
+// negative values keep the current one.
+func (s *Supervisor) Resize(cols, rows int) error {
+	return s.call(func() error {
+		if cols > 0 {
+			s.cols = cols
+		}
+		if rows > 0 {
+			s.rows = rows
+		}
+		for _, m := range s.procs {
+			if m.proc != nil && m.project.PTY {
+				_ = m.proc.Resize(s.cols, s.rows)
+			}
 		}
 		return nil
 	})

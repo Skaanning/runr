@@ -528,7 +528,7 @@ func TestProjectFormLayout(t *testing.T) {
 	}
 
 	// Narrow: one column, Environment after Startup.
-	m.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
+	m.Update(tea.WindowSizeMsg{Width: 60, Height: 46})
 	text := screenText(m)
 	if strings.Contains(launcherScreen(m)[2], "Environment") ||
 		strings.Index(text, "Startup") > strings.Index(text, "Environment") {
@@ -834,5 +834,31 @@ func TestGroupForm(t *testing.T) {
 	m.Update(key("ctrl+s"))
 	if saved == nil || !slices.Equal(saved.Groups["backend"], []string{"db", "api", "web"}) {
 		t.Fatalf("saved %v", saved)
+	}
+}
+
+func TestProjectFormPTY(t *testing.T) {
+	cfg := launcherConfig(t)
+	cfg.Projects["db"].PTY = true
+	v := newProjectValues(cfg, "db")
+	if !slices.Equal(v.pty, []string{ptyOption}) {
+		t.Fatalf("pty = %v", v.pty)
+	}
+	v.pty = nil
+	if c, err := v.candidate(cfg); err != nil || c.Projects["db"].PTY {
+		t.Fatalf("after unticking: %+v, %v", c.Projects["db"], err)
+	}
+
+	m := openProjectForm(t, launcherConfig(t), "api", nil, 96, 30)
+	f := m.form.form
+	for f.focused().key != "pty" {
+		m.Update(key("tab"))
+	}
+	m.Update(key("space"))
+	if !strings.Contains(screenText(m), "[x] run on a pseudo-terminal") {
+		t.Errorf("not ticked:\n%s", screenText(m))
+	}
+	if c, _, err := m.form.result(); err != nil || !c.Projects["api"].PTY {
+		t.Errorf("result: %+v, %v", c.Projects["api"], err)
 	}
 }

@@ -3,7 +3,9 @@ package main
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +28,7 @@ type projectFlags struct {
 	readyLog    string
 	readyPort   string // a string so that --ready-port= can clear it
 	readyURL    string
+	pty         bool
 }
 
 func (f *projectFlags) register(cmd *cobra.Command) {
@@ -40,6 +43,7 @@ func (f *projectFlags) register(cmd *cobra.Command) {
 	fs.StringVar(&f.readyLog, "ready-log", "", "regex; project is ready once an output line matches")
 	fs.StringVar(&f.readyPort, "ready-port", "", "project is ready once this TCP port on localhost accepts connections")
 	fs.StringVar(&f.readyURL, "ready-url", "", "project is ready once a GET of this URL answers 2xx or 3xx")
+	fs.BoolVar(&f.pty, "pty", false, "run on a pseudo-terminal, so it behaves as in a terminal (colors, line buffering); --pty=false turns it off")
 
 	_ = cmd.RegisterFlagCompletionFunc("depends-on", completeProjects)
 	_ = cmd.RegisterFlagCompletionFunc("ready", func(*cobra.Command, []string, string) ([]string, cobra.ShellCompDirective) {
@@ -108,6 +112,9 @@ func (f *projectFlags) apply(cmd *cobra.Command, p *config.Project) error {
 	}
 	if changed("ready-url") {
 		p.ReadyURL = f.readyURL
+	}
+	if changed("pty") {
+		p.PTY = f.pty
 	}
 	return nil
 }
@@ -306,13 +313,29 @@ func newLsCmd() *cobra.Command {
 				return nil
 			}
 
-			tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "PROJECT\tDIR\tCMD\tDEPENDS ON\tREADY")
+			// The PTY column only when a project has pty = true.
+			pty := slices.ContainsFunc(slices.Collect(maps.Values(s.cfg.Projects)), func(p *config.Project) bool { return p.PTY })
+			var table strings.Builder
+			tw := tabwriter.NewWriter(&table, 0, 0, 2, ' ', 0)
+			header := "PROJECT\tDIR\tCMD\tDEPENDS ON\tREADY"
+			if pty {
+				header += "\tPTY"
+			}
+			fmt.Fprintln(tw, header)
 			for _, name := range sortedNames(s.cfg.Projects) {
 				p := s.cfg.Projects[name]
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", name, config.DisplayPath(p.Dir), p.Cmd, strings.Join(p.DependsOn, ", "), readyText(p))
+				row := fmt.Sprintf("%s\t%s\t%s\t%s\t%s", name, config.DisplayPath(p.Dir), p.Cmd, strings.Join(p.DependsOn, ", "), readyText(p))
+				if pty && p.PTY {
+					row += "\tyes"
+				} else if pty {
+					row += "\t"
+				}
+				fmt.Fprintln(tw, row)
 			}
 			tw.Flush()
+			for line := range strings.Lines(table.String()) {
+				fmt.Fprintln(out, strings.TrimRight(line, " \n"))
+			}
 
 			if len(s.cfg.Groups) > 0 {
 				fmt.Fprintln(out)

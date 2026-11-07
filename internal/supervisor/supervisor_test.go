@@ -714,3 +714,32 @@ func TestCrashIsAnError(t *testing.T) {
 		}
 	}
 }
+
+func TestPTY(t *testing.T) {
+	cfg := config.New()
+	dir := t.TempDir()
+	cfg.Projects["term"] = &config.Project{Dir: dir, PTY: true, ReadyLog: `^on a tty$`,
+		Cmd: `[ -t 1 ] && echo on a tty; echo "TERM=$TERM"; stty size; trap 'stty size' WINCH; while :; do sleep 0.02; done`}
+	cfg.Projects["pipes"] = &config.Project{Dir: dir, Cmd: `[ -t 1 ] || echo no tty`}
+	s, r := newTestSupervisorWithConfig(t, cfg)
+	if err := s.Resize(100, 0); err != nil { // rows stay at the default
+		t.Fatal(err)
+	}
+	if err := s.Start("term", "pipes"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "term", Running) // ready_log matched the terminal's output
+	waitLog(t, s, "term", "out:TERM=xterm-256color")
+	waitLog(t, s, "term", "out:50 100")
+	waitLog(t, s, "pipes", "out:no tty")
+
+	if err := s.Resize(90, 30); err != nil {
+		t.Fatal(err)
+	}
+	waitLog(t, s, "term", "out:30 90")
+
+	if err := s.Stop("term"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "term", Stopped)
+}
