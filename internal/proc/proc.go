@@ -151,6 +151,7 @@ func Start(spec Spec, onLine func(Line)) (*Process, error) {
 		}
 		cmd.Stdout = outW
 		cmd.Stderr = errW
+		suspendUntilAttached(cmd)
 		err = cmd.Start()
 		// The child has its own copies of the write ends; ours must be
 		// closed so that reads hit EOF once every process holding them has

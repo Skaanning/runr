@@ -30,9 +30,7 @@ func newCommand(command string) *exec.Cmd {
 		CmdLine: `"` + shell + `" /d /s /c "` + command + `"`,
 		// A new process group lets us send CTRL_BREAK to just this command and
 		// keeps it from receiving the Ctrl+C typed into runr's console.
-		// Suspended until attach has put it in its Job Object, so that
-		// nothing it starts can escape the job.
-		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_SUSPENDED,
+		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP,
 	}
 	return cmd
 }
@@ -54,8 +52,14 @@ type jobState struct {
 	interrupt  io.Writer // the pseudo console's input, if it runs on one
 }
 
-// attach puts the command's process, started suspended, in a new Job Object
-// and then lets it run.
+// suspendUntilAttached makes cmd start suspended, so that attach can put it
+// in its Job Object before it runs and nothing it starts escapes the job.
+func suspendUntilAttached(cmd *exec.Cmd) {
+	cmd.SysProcAttr.CreationFlags |= windows.CREATE_SUSPENDED
+}
+
+// attach puts the command's process, started suspended (see
+// suspendUntilAttached), in a new Job Object and then lets it run.
 func attach(cmd *exec.Cmd) (platformHandle, error) {
 	s := &jobState{pid: uint32(cmd.Process.Pid), process: cmd.Process}
 	// Failing to set up the job is not fatal; kill then falls back to

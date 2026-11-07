@@ -19,6 +19,10 @@ func newCommand(command string) *exec.Cmd {
 	return cmd
 }
 
+// suspendUntilAttached does nothing: a process group can't be escaped by
+// starting early.
+func suspendUntilAttached(*exec.Cmd) {}
+
 type platformHandle struct {
 	pgid       int
 	terminated *atomic.Bool // SIGTERM already sent by terminate
