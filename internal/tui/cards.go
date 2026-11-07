@@ -43,8 +43,13 @@ func (m *launcherModel) wordmarkRows() []string {
 		for k, style := range m.st.wordmark {
 			b.WriteString(style.Render(string(letters[k*3 : k*3+3])))
 		}
-		if i == 1 {
+		switch {
+		case i == 1:
 			b.WriteString("   " + m.st.faint.Render(m.registrySize()))
+		case i == 2:
+			if names := m.lastNames(); len(names) > 0 {
+				b.WriteString("   " + m.st.hint("l", "last session: "+strings.Join(names, ", ")))
+			}
 		}
 		rows = append(rows, b.String())
 	}

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/Skaanning/runr/internal/proc"
+	"github.com/Skaanning/runr/internal/state"
 	"github.com/Skaanning/runr/internal/supervisor"
 )
 
@@ -21,6 +23,48 @@ func TestUpWithoutTerminalPrintsPlain(t *testing.T) {
 	if !strings.Contains(out, "hi   │ hello\n") {
 		t.Fatalf("output:\n%s", out)
 	}
+}
+
+func TestUpLast(t *testing.T) {
+	testEnv(t)
+	mustRun(t, "add", "hi", "--dir", t.TempDir(), "--", "echo hello")
+	_, _, err := run(t, "up", "--last")
+	wantErr(t, err, "no last session yet")
+
+	mustRun(t, "up", "hi") // recorded
+	dir, err := state.Dir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l, ok := state.LoadLast(dir); !ok || !slices.Equal(l.Names, []string{"hi"}) {
+		t.Fatalf("last session after up hi: %+v", l)
+	}
+
+	// As if hi had run with arguments next to a project since removed.
+	r := state.NewRecorder(dir)
+	r.Started("hi", "gone")
+	r.SetArgs("hi", "world")
+	out, stderr, err := run(t, "up", "--last")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "hello world\n") {
+		t.Errorf("output without the arguments:\n%s", out)
+	}
+	if !strings.Contains(stderr, "runr: skipped from the last session, not registered any more: gone\n") {
+		t.Errorf("stderr = %q", stderr)
+	}
+	// That run is the last session now, with the arguments.
+	if l, _ := state.LoadLast(dir); !slices.Equal(l.Names, []string{"hi"}) || l.Args["hi"] != "world" {
+		t.Errorf("last session after up --last: %+v", l)
+	}
+
+	_, _, err = run(t, "up", "--last", "hi")
+	wantErr(t, err, "--last starts the last session; leave out the names")
+
+	mustRun(t, "rm", "hi")
+	_, _, err = run(t, "up", "--last")
+	wantErr(t, err, "nothing from the last session is registered any more")
 }
 
 func TestUpReportsErrorsBeforeStarting(t *testing.T) {

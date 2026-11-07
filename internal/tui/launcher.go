@@ -14,6 +14,7 @@ import (
 
 	"github.com/Skaanning/runr/internal/config"
 	"github.com/Skaanning/runr/internal/gitinfo"
+	runrstate "github.com/Skaanning/runr/internal/state" // "state" is a test helper in this package
 )
 
 const (
@@ -30,10 +31,12 @@ type launcherItem struct {
 }
 
 // startMsg asks the app to start the given groups and projects, with extra
-// arguments by project (blank: none).
+// arguments by project (blank: none). notice, if set, is shown in the
+// running view.
 type startMsg struct {
-	names []string
-	args  map[string]string
+	names  []string
+	args   map[string]string
+	notice string
 }
 
 // launcherModel lists groups and projects, lets the user pick what to start,
@@ -44,19 +47,20 @@ type launcherModel struct {
 	save     SaveFunc       // nil: changes are only kept in memory
 	items    []launcherItem // groups first, then projects, each sorted
 	selected map[string]bool
-	missing  map[string]bool   // projects whose dir does not exist
-	cursor   int               // index into items
-	cardCol  int               // column of the card the cursor left the cards from, downwards
-	top      int               // first row shown, see rows
-	notice   string            // shown instead of the help line until the next key
-	form     *editForm         // open project or group form, or nil
-	confirm  *confirmation     // open delete confirmation, or nil
-	picker   *picker           // open branch or theme picker, or nil
-	ask      *question         // open question in the help line (pull?), or nil
-	output   []string          // output of a failed git action, shown until the next key
-	skipped  bool              // output is about skipped repositories only (P), not failures
-	jump     bool              // jump mode (/): every item shows its letter, see jumpLabel
-	lastArgs map[string]string // extra arguments typed last, by project (R)
+	missing  map[string]bool        // projects whose dir does not exist
+	cursor   int                    // index into items
+	cardCol  int                    // column of the card the cursor left the cards from, downwards
+	top      int                    // first row shown, see rows
+	notice   string                 // shown instead of the help line until the next key
+	form     *editForm              // open project or group form, or nil
+	confirm  *confirmation          // open delete confirmation, or nil
+	picker   *picker                // open branch or theme picker, or nil
+	ask      *question              // open question in the help line (pull?), or nil
+	output   []string               // output of a failed git action, shown until the next key
+	skipped  bool                   // output is about skipped repositories only (P), not failures
+	jump     bool                   // jump mode (/): every item shows its letter, see jumpLabel
+	lastArgs map[string]string      // extra arguments typed last, by project (R)
+	last     *runrstate.LastSession // the last session, which l starts; nil if none
 
 	git       *gitTracker // nil: git is not installed
 	gitStale  bool        // the config or a repository changed; refresh the git state
@@ -227,6 +231,8 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startSelection()
 		case "R", "shift+enter":
 			return m, m.openArgsForm()
+		case "l":
+			return m, m.startLast()
 		case "/":
 			m.jump = len(m.items) > 0
 		case "n":
@@ -283,6 +289,49 @@ func (m *launcherModel) toStart() []string {
 	return names
 }
 
+// setLast sets the last session: l starts it again, and the arguments form
+// starts with its arguments.
+func (m *launcherModel) setLast(last *runrstate.LastSession) {
+	m.last = last
+	if last != nil {
+		m.lastArgs = maps.Clone(last.Args)
+	}
+}
+
+// lastNames returns the groups and projects of the last session that are
+// still registered, or nil.
+func (m *launcherModel) lastNames() []string {
+	if m.last == nil {
+		return nil
+	}
+	names, _, _ := m.last.Registered(m.cfg)
+	return names
+}
+
+// startLast starts the last session again, with its extra arguments,
+// leaving out what isn't registered any more.
+func (m *launcherModel) startLast() tea.Cmd {
+	if m.last == nil {
+		m.notice = "no last session yet"
+		return nil
+	}
+	names, args, skipped := m.last.Registered(m.cfg)
+	if len(names) == 0 {
+		m.notice = "nothing from the last session is registered any more"
+		return nil
+	}
+	cmd := m.start(names, args)
+	if cmd == nil || len(skipped) == 0 {
+		return cmd
+	}
+	notice := "skipped from the last session, not registered any more: " + strings.Join(skipped, ", ")
+	return func() tea.Msg {
+		msg := cmd().(startMsg)
+		msg.notice = notice
+		return msg
+	}
+}
+
 // openArgsForm opens the form asking for extra arguments for what enter
 // would start, pre-filled with the ones typed last.
 func (m *launcherModel) openArgsForm() tea.Cmd {
@@ -324,7 +373,7 @@ func (m *launcherModel) start(names []string, args map[string]string) tea.Cmd {
 		m.notice = "the leftover processes are still being stopped"
 		return nil
 	}
-	return func() tea.Msg { return startMsg{names, args} }
+	return func() tea.Msg { return startMsg{names: names, args: args} }
 }
 
 // updateJump handles a key in jump mode: a group's letter starts the group

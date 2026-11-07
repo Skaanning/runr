@@ -7,15 +7,17 @@ import (
 	"testing"
 
 	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/state"
 )
 
-// testEnv points runr at a fresh config file, and session files (Linux) at
-// a fresh directory, for the duration of the test.
+// testEnv points runr at a fresh config file, and its state (session
+// files, the last session) at a fresh directory, for the duration of the
+// test.
 func testEnv(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.toml")
 	t.Setenv(config.EnvVar, path)
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
+	t.Setenv(state.EnvVar, t.TempDir())
 	return path
 }
 

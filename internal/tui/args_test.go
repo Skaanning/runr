@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	runrstate "github.com/Skaanning/runr/internal/state"
 	"github.com/Skaanning/runr/internal/supervisor"
 )
 
@@ -128,4 +129,48 @@ func (m *runningModel) handleKeyNotice(t *testing.T, k string) string {
 	t.Helper()
 	m.handleKey(key(k))
 	return m.notice
+}
+
+func TestLauncherLast(t *testing.T) {
+	m := newTestLauncher(t, launcherConfig(t))
+	m.Update(key("l"))
+	if m.notice != "no last session yet" {
+		t.Errorf("notice = %q", m.notice)
+	}
+
+	m.setLast(&runrstate.LastSession{Names: []string{"backend", "gone"}, Args: map[string]string{"api": "--x"}})
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 24}) // tall enough for the wordmark
+	if got := strings.Join(launcherScreen(m), "\n"); !strings.Contains(got, "╹┗╸┗━┛╹ ╹╹┗╸    l  last session: backend\n") {
+		t.Errorf("no last session under the wordmark:\n%s", got)
+	}
+	_, cmd := m.Update(key("l"))
+	msg := cmd().(startMsg)
+	if !slices.Equal(msg.names, []string{"backend"}) || msg.args["api"] != "--x" ||
+		msg.notice != "skipped from the last session, not registered any more: gone" {
+		t.Errorf("start = %+v", msg)
+	}
+
+	// The arguments form starts with the last session's arguments.
+	m.Update(key("R"))
+	if m.form == nil || m.form.form.fields[1].input.Value() != "--x" {
+		t.Error("R not pre-filled from the last session")
+	}
+	m.Update(key("esc"))
+
+	m.setLast(&runrstate.LastSession{Names: []string{"gone"}})
+	if _, cmd := m.Update(key("l")); cmd != nil || m.notice != "nothing from the last session is registered any more" {
+		t.Errorf("cmd = %v, notice = %q", cmd, m.notice)
+	}
+}
+
+func TestAppShowsStartNotice(t *testing.T) {
+	cfg := launcherConfig(t)
+	app := &appModel{cfg: cfg, launcher: newLauncherModel(cfg, nil, newStyles(terminalTheme)), start: func([]string, map[string]string) (Session, error) {
+		return newFakeSession("api"), nil
+	}}
+	app.Update(tea.WindowSizeMsg{Width: 80, Height: 10})
+	app.Update(startMsg{names: []string{"api"}, notice: "skipped x"})
+	if app.running == nil || app.running.notice != "skipped x" {
+		t.Fatal("the running view doesn't show the notice")
+	}
 }

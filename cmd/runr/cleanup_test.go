@@ -72,8 +72,7 @@ func killedSession(t *testing.T) int {
 // stateEnv keeps session files in a fresh directory.
 func stateEnv(t *testing.T) {
 	t.Helper()
-	testEnv(t)                    // XDG_STATE_HOME on Linux
-	t.Setenv("HOME", t.TempDir()) // macOS: ~/Library/Caches
+	testEnv(t)
 }
 
 func alive(pid int) bool {

@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"github.com/Skaanning/runr/internal/config"
+	runrstate "github.com/Skaanning/runr/internal/state" // "state" is a test helper in this package
 )
 
 // StartFunc validates and starts the given groups and projects, with extra
@@ -41,6 +42,7 @@ func (a *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		a.running = newRunningModel(sess, a.cfg, msg.names, a.launcher.st)
 		a.running.git = a.launcher.git // already has the git state
+		a.running.notice = msg.notice
 		a.running.Update(a.size)
 		return a, a.running.Init()
 	}
@@ -57,12 +59,14 @@ func (a *appModel) View() tea.View {
 
 // RunLauncher shows the launcher, and the running view once the user starts
 // something, until the user quits. Changes made in the launcher's forms are
-// written with save. git reads the projects' git state; nil hides it. If
-// left is set, the launcher first asks whether to kill those processes.
-// Signals received on sigs are handled like Ctrl+C.
-func RunLauncher(cfg *config.Config, start StartFunc, save SaveFunc, git GitReader, left *Leftovers, sigs <-chan os.Signal) error {
+// written with save. git reads the projects' git state; nil hides it. last,
+// if set, is the last session, which l starts again. If left is set, the
+// launcher first asks whether to kill those processes. Signals received on
+// sigs are handled like Ctrl+C.
+func RunLauncher(cfg *config.Config, start StartFunc, save SaveFunc, git GitReader, last *runrstate.LastSession, left *Leftovers, sigs <-chan os.Signal) error {
 	launcher := newLauncherModel(cfg, save, settingsStyles(cfg.Settings))
 	launcher.git = newGitTracker(git)
+	launcher.setLast(last)
 	if left != nil {
 		launcher.askLeftovers(left)
 	}

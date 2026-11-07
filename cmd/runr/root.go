@@ -95,20 +95,13 @@ func runLauncher(cmd *cobra.Command) error {
 			return nil, err
 		}
 		opts.LogDir = dir
-		sup = supervisor.New(s.cfg, opts)
-		for name, a := range args {
-			if err := sup.SetArgs(name, a); err != nil {
-				sup.Close()
-				sup = nil
-				return nil, err
-			}
-		}
-		if err := sup.Start(names...); err != nil {
-			sup.Close()
-			sup = nil
+		sess := newRecordingSession(s.cfg, opts)
+		if err := sess.begin(names, args); err != nil {
+			sess.Close()
 			return nil, err
 		}
-		return sup, nil
+		sup = sess.Supervisor
+		return sess, nil
 	}
 	// Forms edit a copy; once it validates and is written, the launcher
 	// copies it into s.cfg, which start reads.
@@ -116,7 +109,7 @@ func runLauncher(cmd *cobra.Command) error {
 		_, err := (&store{path: s.path, cfg: c}).save()
 		return err
 	}
-	err = tui.RunLauncher(s.cfg, start, save, gitReader(), left, sigs)
+	err = tui.RunLauncher(s.cfg, start, save, gitReader(), loadLast(), left, sigs)
 	if sup != nil {
 		finish(cmd.ErrOrStderr(), sup)
 	}

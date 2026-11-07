@@ -20,6 +20,7 @@ Everything about using runr. For a short introduction, see the [README](../READM
 |---|---|
 | `runr` | Open the launcher |
 | `runr up <name...> [--log-dir <dir>]` | Start groups and/or projects (plus their dependencies) and open the running view; `--log-dir` also saves each project's output to `<dir>/<project>.log` (see [Saving logs](#saving-logs)) |
+| `runr up --last` | Start what the last session started (including what you started later from the running view), with the same extra arguments. Projects or groups since removed are skipped with a warning |
 | `runr add <name> [flags] -- <cmd>` | Register a project |
 | `runr edit <name> [flags] [-- <cmd>]` | Change a project; only the given flags change |
 | `runr rm <name> [--force]` | Remove a project (and from its groups); refuses if others depend on it unless `--force` |
@@ -213,7 +214,8 @@ branch. On terminals shorter than 20 rows the `runr` mark makes room for the lis
 | `←` `→` | Move between the group cards in a row |
 | `space` | Select / unselect; on a group, selects all its projects (or unselects them if all are selected) |
 | `enter` | Start the selection, or the item under the cursor if nothing is selected |
-| `R` | Start with extra arguments: like `enter`, but first a form with a field per project that will start, dependencies included. What you type is added to the end of the project's command, e.g. `--port 3001` makes `go run .` run as `go run . --port 3001`. The fields remember what you typed last. `shift+enter` does the same in terminals that report it (kitty, ghostty, WezTerm, foot, recent Windows Terminal) |
+| `l` | Start the last session again, like `runr up --last`. Under the `runr` mark the launcher shows what that is: `l  last session: backend, web` |
+| `R` | Start with extra arguments: like `enter`, but first a form with a field per project that will start, dependencies included. What you type is added to the end of the project's command, e.g. `--port 3001` makes `go run .` run as `go run . --port 3001`. The fields start with what you typed last, also in an earlier session. `shift+enter` does the same in terminals that report it (kitty, ghostty, WezTerm, foot, recent Windows Terminal) |
 | `/` | Jump: every group and project shows a letter (`a`–`z`, then `A`–`Z`). A group's letter starts that group; a project's letter selects or unselects it and stays in jump mode, so you can pick several and press `enter` to start them. `esc` or `/` leaves |
 | `n` | New project |
 | `e` | Edit the project (or group) under the cursor; changing the name renames it |
@@ -425,7 +427,7 @@ session's projects; in the launcher `F` covers all registered projects and `P` t
 - runr never restarts a process on its own.
 - **If runr itself is killed** (`kill -9`, a crash, a closed terminal that doesn't send
   SIGHUP), the programs it started keep running on Linux and macOS. runr keeps a small file
-  per session listing them (in `~/.local/state/runr/sessions`, or `$XDG_STATE_HOME`; on
+  per session listing them (in `~/.local/state/runr/sessions`, or under `$XDG_STATE_HOME`; on
   macOS `~/Library/Caches/runr/sessions`), so the next `runr` or `runr up` asks first:
   `Kill 2 processes left over from a previous runr session? api (pid 4123), db (pid 4120)`.
   `enter`/`y` stops them like a normal shutdown, `esc`/`n` leaves them running and doesn't

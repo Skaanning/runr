@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/colorprofile"
 
 	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/state"
 	"github.com/Skaanning/runr/internal/supervisor"
 )
 
@@ -37,6 +38,7 @@ func (b *syncBuffer) String() string {
 
 func plainConfig(t *testing.T, projects map[string]*config.Project) *config.Config {
 	t.Helper()
+	t.Setenv(state.EnvVar, t.TempDir()) // runPlain records the last session
 	cfg := config.New()
 	cfg.Settings.ShutdownTimeoutValue.Duration = 5 * time.Second
 	dir := t.TempDir()
@@ -60,7 +62,7 @@ func startPlain(t *testing.T, cfg *config.Config, names ...string) (*syncBuffer,
 	out := &syncBuffer{}
 	sigs := make(chan os.Signal, 2)
 	result := make(chan error, 1)
-	go func() { result <- runPlain(out, cfg, supervisor.Options{}, names, projects, sigs, plainColors{}) }()
+	go func() { result <- runPlain(out, cfg, supervisor.Options{}, names, nil, projects, sigs, plainColors{}) }()
 	return out, sigs, result
 }
 
@@ -284,7 +286,7 @@ func TestPlainLogDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = runPlain(&syncBuffer{}, cfg, supervisor.Options{LogDir: logs}, []string{"api"}, projects, make(chan os.Signal), plainColors{})
+	err = runPlain(&syncBuffer{}, cfg, supervisor.Options{LogDir: logs}, []string{"api"}, nil, projects, make(chan os.Signal), plainColors{})
 	if err == nil {
 		t.Error("a crash should fail the run")
 	}

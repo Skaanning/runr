@@ -22,13 +22,15 @@ type plainColors struct {
 	dark    bool                 // the terminal's background, for the theme's palette
 }
 
-// runPlain starts the projects and prints their output interleaved, one line
-// per output line, until every project has finished. The first signal on
-// sigs stops everything gracefully; a second one kills it.
-func runPlain(out io.Writer, cfg *config.Config, opts supervisor.Options, names, projects []string, sigs <-chan os.Signal, colors plainColors) error {
+// runPlain starts the projects, with extra arguments by project, and
+// prints their output interleaved, one line per output line, until every
+// project has finished. The first signal on sigs stops everything
+// gracefully; a second one kills it.
+func runPlain(out io.Writer, cfg *config.Config, opts supervisor.Options, names []string, args map[string]string, projects []string, sigs <-chan os.Signal, colors plainColors) error {
 	pr := newPlainPrinter(out, cfg, projects, colors)
-	sup := supervisor.New(cfg, opts)
-	if err := sup.Start(names...); err != nil {
+	sess := newRecordingSession(cfg, opts)
+	sup := sess.Supervisor
+	if err := sess.begin(names, args); err != nil {
 		sup.Close()
 		return err
 	}

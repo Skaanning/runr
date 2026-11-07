@@ -4,20 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"os"
-	"path/filepath"
 	"strconv"
 )
-
-func stateDir() (string, error) {
-	if d := os.Getenv("XDG_STATE_HOME"); filepath.IsAbs(d) {
-		return d, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(home, ".local", "state"), nil
-}
 
 // procStart returns when a process started: field 22 of /proc/<pid>/stat,
 // in clock ticks since boot.

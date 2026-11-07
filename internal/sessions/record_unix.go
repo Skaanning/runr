@@ -12,17 +12,18 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/Skaanning/runr/internal/state"
 )
 
-// Dir is where session files live: $XDG_STATE_HOME/runr/sessions (default
-// ~/.local/state) on Linux and other Unix systems, the user cache directory
-// on macOS.
+// Dir is where session files live: sessions in runr's state directory
+// (see state.Dir).
 func Dir() (string, error) {
-	base, err := stateDir()
+	base, err := state.Dir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(base, "runr", "sessions"), nil
+	return filepath.Join(base, "sessions"), nil
 }
 
 // Recorder keeps the session file of this runr process up to date. Errors

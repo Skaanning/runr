@@ -7,10 +7,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func stateDir() (string, error) {
-	return os.UserCacheDir()
-}
-
 // procStart returns when a process started (kern.proc.pid's p_starttime),
 // as "seconds.microseconds".
 func procStart(pid int) (string, error) {

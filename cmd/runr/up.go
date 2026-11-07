@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,18 +20,33 @@ import (
 )
 
 func newUpCmd() *cobra.Command {
-	var plain bool
+	var plain, last bool
 	var logDirFlag string
 	cmd := &cobra.Command{
-		Use:               "up <name...>",
-		Short:             "Start groups and/or projects",
-		Long:              "Start the given groups and/or projects, plus everything they depend on.",
-		Args:              cobra.MinimumNArgs(1),
+		Use:   "up <name...>",
+		Short: "Start groups and/or projects",
+		Long: "Start the given groups and/or projects, plus everything they depend on.\n\n" +
+			"With --last, start what the last session started, with the same extra arguments.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if last {
+				if len(args) > 0 {
+					return errors.New("--last starts the last session; leave out the names")
+				}
+				return nil
+			}
+			return cobra.MinimumNArgs(1)(cmd, args)
+		},
 		ValidArgsFunction: completeProjectsAndGroups,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			s, err := loadStore()
 			if err != nil {
 				return err
+			}
+			var extra map[string]string
+			if last {
+				if args, extra, err = lastSession(s.cfg, cmd.ErrOrStderr()); err != nil {
+					return err
+				}
 			}
 			projects, err := prepareUp(s.cfg, args, cmd.ErrOrStderr())
 			if err != nil {
@@ -58,11 +74,12 @@ func newUpCmd() *cobra.Command {
 				if len(orphans) > 0 {
 					fmt.Fprintf(cmd.ErrOrStderr(), "runr: %s; left running (runr cleanup stops them)\n", sessions.Summary(orphans))
 				}
-				return runPlain(cmd.OutOrStdout(), s.cfg, opts, args, projects, sigs, colorsFor(cmd.OutOrStdout()))
+				return runPlain(cmd.OutOrStdout(), s.cfg, opts, args, extra, projects, sigs, colorsFor(cmd.OutOrStdout()))
 			}
-			return runTUI(cmd.ErrOrStderr(), s.cfg, opts, args, leftoversFor(orphans, s.cfg.Settings.ShutdownTimeout()), sigs)
+			return runTUI(cmd.ErrOrStderr(), s.cfg, opts, args, extra, leftoversFor(orphans, s.cfg.Settings.ShutdownTimeout()), sigs)
 		},
 	}
+	cmd.Flags().BoolVar(&last, "last", false, "start what the last session started, with the same extra arguments")
 	cmd.Flags().StringVar(&logDirFlag, "log-dir", "", "append each project's output to <dir>/<project>.log (overrides settings.log_dir)")
 	_ = cmd.MarkFlagDirname("log-dir")
 	// Plain interleaved output, for debugging and non-interactive use.
@@ -71,22 +88,29 @@ func newUpCmd() *cobra.Command {
 	return cmd
 }
 
-// runTUI starts the projects and shows the running view until the user
-// quits. Projects that ended crashed or blocked are listed on stderr
-// afterwards, since the TUI's screen is gone by then.
+// runTUI starts the projects, with extra arguments by project, and shows
+// the running view until the user quits. Projects that ended crashed or
+// blocked are listed on stderr afterwards, since the TUI's screen is gone
+// by then.
 //
 // With left set, the projects start once the question about those
 // leftover processes is answered.
-func runTUI(stderr io.Writer, cfg *config.Config, opts supervisor.Options, names []string, left *tui.Leftovers, sigs <-chan os.Signal) error {
-	sup := supervisor.New(cfg, opts)
+func runTUI(stderr io.Writer, cfg *config.Config, opts supervisor.Options, names []string, args map[string]string, left *tui.Leftovers, sigs <-chan os.Signal) error {
+	sess := newRecordingSession(cfg, opts)
 	var err error
 	if left == nil {
-		err = sup.Start(names...)
+		err = sess.begin(names, args)
+	} else {
+		for name, a := range args {
+			if err = sess.SetArgs(name, a); err != nil {
+				break
+			}
+		}
 	}
 	if err == nil {
-		err = tui.Run(sup, cfg, names, gitReader(), left, sigs)
+		err = tui.Run(sess, cfg, names, gitReader(), left, sigs)
 	}
-	finish(stderr, sup)
+	finish(stderr, sess.Supervisor)
 	return err
 }
 
