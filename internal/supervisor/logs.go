@@ -25,6 +25,7 @@ type LogLine struct {
 	Stream  Stream
 	Text    string
 	Time    time.Time
+	Error   bool // the program's line matches settings.error_pattern
 }
 
 // Logs stores the most recent output lines of every project in per-project
@@ -49,14 +50,20 @@ func NewLogs(capacity int) *Logs {
 
 // Append stores a line and returns it with its sequence number and timestamp.
 func (l *Logs) Append(project string, stream Stream, text string) LogLine {
+	return l.AppendLine(LogLine{Project: project, Stream: stream, Text: text})
+}
+
+// AppendLine stores line, setting its sequence number and timestamp, and
+// returns it.
+func (l *Logs) AppendLine(line LogLine) LogLine {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.seq++
-	line := LogLine{Seq: l.seq, Project: project, Stream: stream, Text: text, Time: l.now()}
-	buf := l.buffers[project]
+	line.Seq, line.Time = l.seq, l.now()
+	buf := l.buffers[line.Project]
 	if buf == nil {
 		buf = &ring{capacity: l.capacity}
-		l.buffers[project] = buf
+		l.buffers[line.Project] = buf
 	}
 	buf.push(line)
 	if l.onAppend != nil {

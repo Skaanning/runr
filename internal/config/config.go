@@ -21,6 +21,7 @@ const EnvVar = "RUNR_CONFIG"
 const (
 	DefaultShutdownTimeout = 5 * time.Second
 	DefaultScrollbackLines = 10000
+	DefaultErrorPattern    = `(?i)\b(error|panic|fatal|exception|traceback)\b`
 )
 
 // Config is the global registry of projects and groups.
@@ -39,6 +40,16 @@ type Settings struct {
 	ThemeValue           string   `toml:"theme,omitempty"`
 	ThemeBackgroundValue bool     `toml:"theme_background,omitempty"`
 	LogDirValue          string   `toml:"log_dir,omitempty"`
+	ErrorPatternValue    string   `toml:"error_pattern,omitempty"`
+}
+
+// ErrorPattern is the regular expression that marks a line of output as an
+// error, matched against the line without escape sequences.
+func (s Settings) ErrorPattern() string {
+	if s.ErrorPatternValue == "" {
+		return DefaultErrorPattern
+	}
+	return s.ErrorPatternValue
 }
 
 // LogDir is the directory where runr up appends each project's output to

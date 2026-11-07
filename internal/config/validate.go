@@ -74,6 +74,9 @@ func (c *Config) Validate() (warnings []Issue, err error) {
 	if t := c.Settings.ThemeValue; t != "" && !slices.Contains(ThemeNames, t) {
 		addErr("settings", "", "theme", "unknown theme %q (one of %s)", t, strings.Join(ThemeNames, ", "))
 	}
+	if _, err := regexp.Compile(c.Settings.ErrorPatternValue); err != nil {
+		addErr("settings", "", "error_pattern", "invalid regex: %v", err)
+	}
 	if dir, err := c.Settings.LogDir(); err != nil {
 		addErr("settings", "", "log_dir", "%v", err)
 	} else if fi, err := os.Stat(dir); dir != "" && err == nil && !fi.IsDir() {

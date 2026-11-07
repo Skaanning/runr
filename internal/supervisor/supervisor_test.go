@@ -62,6 +62,24 @@ func (r *recorder) states(name string) []State {
 	return append([]State(nil), r.history[name]...)
 }
 
+// waitInfo waits until the latest info of a project satisfies ok.
+func (r *recorder) waitInfo(t *testing.T, name string, ok func(ProcessInfo) bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		r.mu.Lock()
+		info := r.latest[name]
+		r.mu.Unlock()
+		if ok(info) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: unexpected info %+v", name, info)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 func (r *recorder) warningsOf(name string) []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -636,4 +654,44 @@ func TestTracker(t *testing.T) {
 	if got := tr.get(); !slices.Equal(got, want) {
 		t.Errorf("calls = %q, want %q", got, want)
 	}
+}
+
+func TestErrorLines(t *testing.T) {
+	// The first run prints three error lines, colored or not, and two that
+	// only look like it; the second run none.
+	s, r := newTestSupervisor(t, map[string]string{"api": `if [ -f ran ]; then echo fine; exit 0; fi; touch ran
+printf '\033[31mERROR\033[0m: boom\n'; echo 'no errors here'; echo 'terror'; echo 'panic: x' >&2; echo 'Traceback (most recent call last):'`})
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitInfo(t, "api", func(i ProcessInfo) bool { return i.State == Exited && i.Errors == 3 })
+	var marked []string
+	for _, l := range s.Logs().Lines("api") {
+		if l.Error {
+			marked = append(marked, l.Text)
+		}
+	}
+	slices.Sort(marked) // stdout and stderr lines can come in either order
+	if want := []string{"\x1b[31mERROR\x1b[0m: boom", "Traceback (most recent call last):", "panic: x"}; !slices.Equal(marked, want) {
+		t.Errorf("marked %q", marked)
+	}
+
+	if err := s.Restart("api"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitInfo(t, "api", func(i ProcessInfo) bool { return i.State == Exited && i.Restarts == 1 && i.Errors == 0 })
+}
+
+func TestErrorPatternSetting(t *testing.T) {
+	cfg := config.New()
+	cfg.Settings.ErrorPatternValue = `^E\d+`
+	cfg.Projects["api"] = &config.Project{Dir: t.TempDir(), Cmd: "echo E42 failed; echo error"}
+	s, r := newTestSupervisorWithConfig(t, cfg)
+	if err := s.Start("api"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitInfo(t, "api", func(i ProcessInfo) bool { return i.State == Exited && i.Errors == 1 })
+	waitLog(t, s, "api", "out:error")
+	time.Sleep(20 * time.Millisecond) // a second count would have arrived by now
+	r.waitInfo(t, "api", func(i ProcessInfo) bool { return i.Errors == 1 })
 }

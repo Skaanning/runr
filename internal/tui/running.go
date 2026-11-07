@@ -105,6 +105,8 @@ type runningModel struct {
 	argsFor    string // project whose extra arguments the input edits (R), or ""
 	input      textinput.Model
 	matchInfo  string // position of the current match, e.g. "3/17"
+	errorSeq   uint64 // Seq of the error line jumped to (e), 0 if none
+	errorInfo  string // its position, e.g. "2/7"
 
 	picker  *picker   // open picker (start another, branches), or nil
 	confirm *question // open question in the help line, or nil
@@ -428,7 +430,7 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 // to expire the toasts it showed.
 func (m *runningModel) handleEvents(events []supervisor.Event) tea.Cmd {
 	var lines, single []supervisor.LogLine
-	states, toasts := false, false
+	states, changed, toasts := false, false, false
 	sec := m.now().Unix()
 	for _, e := range events {
 		switch e := e.(type) {
@@ -436,7 +438,7 @@ func (m *runningModel) handleEvents(events []supervisor.Event) tea.Cmd {
 			entry := m.entry(e.Info.Name)
 			prev := entry.info.State
 			entry.info = e.Info
-			states = true
+			states, changed = true, changed || prev != e.Info.State
 			if t, ok := m.newToast(prev, e.Info); ok {
 				m.addToast(t)
 				toasts = true
@@ -467,10 +469,10 @@ func (m *runningModel) handleEvents(events []supervisor.Event) tea.Cmd {
 	}
 	var cmd tea.Cmd
 	if states {
-		m.layout() // exit codes change the sidebar's width
-		if !m.stopping {
-			cmd = m.ports.refresh() // started processes may listen soon, ended ones don't
-		}
+		m.layout() // exit codes and error counts change the sidebar's width
+	}
+	if changed && !m.stopping {
+		cmd = m.ports.refresh() // started processes may listen soon, ended ones don't
 	}
 	if toasts {
 		return tea.Batch(cmd, tea.Tick(toastFor, func(time.Time) tea.Msg { return toastMsg{} }))
@@ -549,10 +551,15 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 		m.jump(1)
 	case "N":
 		m.jump(-1)
+	case "e":
+		m.jumpError(1)
+	case "E":
+		m.jumpError(-1)
 	case "esc":
 		if m.search.active() {
 			m.setSearch(search{})
 		}
+		m.clearErrorJump()
 	case "b":
 		return m.openBranches()
 	case "p":
@@ -809,12 +816,60 @@ func (m *runningModel) jump(dir int) {
 	}
 	v := m.view()
 	idx := v.matching(m.search)
-	v.invalidate()
 	if len(idx) == 0 {
 		v.current, m.matchInfo = 0, ""
+		v.invalidate()
 		m.notice = fmt.Sprintf("no matches for %q", m.search.query)
 		return
 	}
+	k := m.step(v, idx, dir, "search")
+	m.matchInfo = fmt.Sprintf("%d/%d", k+1, len(idx))
+}
+
+// jumpError moves to the next (dir > 0) or previous (dir < 0) error line in
+// the view shown, like jump, and stops following.
+func (m *runningModel) jumpError(dir int) {
+	v := m.view()
+	var idx []int
+	for i, l := range v.lines {
+		if l.Error {
+			idx = append(idx, i)
+		}
+	}
+	if len(idx) == 0 {
+		m.notice = "no errors in this view"
+		return
+	}
+	if v.following() {
+		v.toggleFollow()
+	}
+	k := m.step(v, idx, dir, "errors")
+	m.errorSeq, m.errorInfo = v.current, fmt.Sprintf("%d/%d", k+1, len(idx))
+}
+
+// clearErrorJump forgets the error line jumped to.
+func (m *runningModel) clearErrorJump() {
+	for _, v := range []*logView{m.combined, m.single} {
+		if v != nil && m.errorSeq != 0 && v.current == m.errorSeq {
+			v.current = 0
+			v.invalidate()
+		}
+	}
+	m.errorSeq, m.errorInfo = 0, ""
+}
+
+// errorJumpShown reports whether the view shown is at the error line jumped
+// to, so the help line shows its position.
+func (m *runningModel) errorJumpShown() bool {
+	return m.errorSeq != 0 && m.view().current == m.errorSeq
+}
+
+// step moves v to the next (dir > 0) or previous (dir < 0) of the lines
+// idx (not empty), wrapping around at either end with a notice that starts
+// with what, and returns its position in idx. Without a current line it
+// starts from the edge of the screen.
+func (m *runningModel) step(v *logView, idx []int, dir int, what string) int {
+	v.invalidate()
 	v.render()
 	cur := -1
 	if v.current != 0 {
@@ -835,18 +890,33 @@ func (m *runningModel) jump(dir int) {
 	case k < 0:
 		k = len(idx) - 1
 		if cur >= 0 {
-			m.notice = "search wrapped to the bottom"
+			m.notice = what + " wrapped to the bottom"
 		}
 	case k >= len(idx):
 		k = 0
 		if cur >= 0 {
-			m.notice = "search wrapped to the top"
+			m.notice = what + " wrapped to the top"
 		}
 	}
 	v.current = v.lines[idx[k]].Seq
 	v.invalidate()
 	v.reveal(idx[k])
-	m.matchInfo = fmt.Sprintf("%d/%d", k+1, len(idx))
+	return k
+}
+
+// hasErrors reports whether the processes in the view shown counted error
+// lines in their latest runs.
+func (m *runningModel) hasErrors() bool {
+	if m.single != nil {
+		e := m.byName[m.singleFor]
+		return e != nil && e.info.Errors > 0
+	}
+	for _, e := range m.entries {
+		if e.info.Errors > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *runningModel) selectedEntry() *sidebarEntry {
@@ -1207,13 +1277,15 @@ func (m *runningModel) render() string {
 	}
 	cols := m.sidebarLayout()
 	var logRows []string
+	var marks []rowMark // none for the picker
 	if m.picker != nil {
 		logRows = m.picker.view(m.logWidth()-1, m.bodyHeight()) // a space before the border
 	} else {
 		logRows = m.drawToasts(m.view().view(), m.logWidth())
+		marks = m.view().rowMarks()
 	}
 	if m.panes() {
-		return m.renderPanes(cols, logRows)
+		return m.renderPanes(cols, logRows, marks)
 	}
 
 	sw := cols.width
@@ -1226,7 +1298,7 @@ func (m *runningModel) render() string {
 	for r, side := range m.sidebarRows(m.bodyHeight(), cols) {
 		b.WriteString(side)
 		b.WriteString(divider)
-		b.WriteByte(' ')
+		b.WriteString(m.gutter(marks, r))
 		b.WriteString(logRows[r])
 		b.WriteByte('\n')
 	}
@@ -1234,6 +1306,20 @@ func (m *runningModel) render() string {
 	b.WriteByte('\n')
 	b.WriteString(m.help())
 	return b.String()
+}
+
+// gutter renders the column left of log row r: a red bar on the rows of
+// error lines, a yellow one on the error line jumped to (e).
+func (m *runningModel) gutter(marks []rowMark, r int) string {
+	if r < len(marks) {
+		switch marks[r] {
+		case errorMark:
+			return m.st.err.Render("▌")
+		case currentError:
+			return m.st.warn.Render("▌")
+		}
+	}
+	return " "
 }
 
 func (m *runningModel) header() string {
@@ -1285,7 +1371,7 @@ func spread(left, right string, width int) (string, bool) {
 
 // renderPanes draws the processes and logs panes, the status bar and the
 // help line.
-func (m *runningModel) renderPanes(cols sidebarCols, logRows []string) string {
+func (m *runningModel) renderPanes(cols sidebarCols, logRows []string, marks []rowMark) string {
 	sw := cols.width
 	side, sideTitle := m.st.accent, m.st.accent.Bold(true).Render("processes")
 	title, note, border := m.logPane()
@@ -1308,7 +1394,7 @@ func (m *runningModel) renderPanes(cols sidebarCols, logRows []string) string {
 		b.WriteString(row)
 		b.WriteString(side.Render("│"))
 		b.WriteString(border.Render("│"))
-		b.WriteByte(' ')
+		b.WriteString(m.gutter(marks, r))
 		b.WriteString(pad(logRows[r], logW-3))
 		b.WriteString(border.Render("│"))
 		b.WriteByte('\n')
@@ -1472,9 +1558,23 @@ func (m *runningModel) sidebarRow(i int, cols sidebarCols) []string {
 }
 
 // details renders the second line of a process in the sidebar, in at most
-// width cells: its ports and git label joined by " · ", faint except for
-// the git markers. The git label is truncated first.
+// width cells: its count of error lines in red, then its ports and git label,
+// joined by " · ", faint except for the git markers. The git label is
+// truncated first.
 func (m *runningModel) details(e *sidebarEntry, width int) string {
+	if width <= 0 || e.info.Errors == 0 {
+		return m.portsAndGit(e, width)
+	}
+	errs := ansi.Truncate(count(e.info.Errors, "error"), width, "…")
+	out := m.st.err.Render(errs)
+	if rest := m.portsAndGit(e, width-ansi.StringWidth(errs)-3); ansi.StringWidth(rest) > 0 {
+		out += m.st.faint.Render(" · ") + rest
+	}
+	return out
+}
+
+// portsAndGit renders the ports and git label of details.
+func (m *runningModel) portsAndGit(e *sidebarEntry, width int) string {
 	if width <= 0 {
 		return ""
 	}
@@ -1507,6 +1607,12 @@ func (m *runningModel) detailsWidth(e *sidebarEntry) int {
 			w += 3 // " · "
 		}
 		w += min(gitWidth(g), maxGitWidth)
+	}
+	if e.info.Errors > 0 {
+		if w > 0 {
+			w += 3
+		}
+		w += len(count(e.info.Errors, "error"))
 	}
 	return w
 }
@@ -1560,8 +1666,12 @@ func (m *runningModel) help() string {
 	if m.git != nil && len(m.git.repos.ByRoot) > 0 {
 		keys = append(keys, [2]string{"F", "fetch all"}, [2]string{"P", "pull all"})
 	}
+	keys = append(keys, [2]string{"/", "search"})
+	if m.hasErrors() {
+		keys = append(keys, [2]string{"e", "errors"})
+	}
 	keys = append(keys, [][2]string{
-		{"/", "search"}, {"pgup/pgdn", "scroll"}, {"g/G", "top/bottom"}, {"f", "follow"}, {"w", "save"},
+		{"pgup/pgdn", "scroll"}, {"g/G", "top/bottom"}, {"f", "follow"}, {"w", "save"},
 		{"c", "copy cmd"},
 	}...)
 	if len(m.idle) > 0 || !m.showAll && len(m.entries) < len(m.cfg.Projects) {
@@ -1573,9 +1683,20 @@ func (m *runningModel) help() string {
 	}
 	keys = append(keys, [2]string{"q", "quit"})
 	var parts []string
+	var front [][2]string // the keys of the search and the error jumps
+	var where []string    // their positions
 	if m.search.active() {
-		keys = append([][2]string{{"n/N", "next/prev"}, {"esc", "clear"}}, keys...)
-		parts = append(parts, m.st.bold.Render("/"+m.search.query)+" "+m.st.faint.Render(m.matchInfo))
+		front = append(front, [2]string{"n/N", "next/prev"})
+		where = append(where, m.st.bold.Render("/"+m.search.query)+" "+m.st.faint.Render(m.matchInfo))
+	}
+	if m.errorJumpShown() {
+		front = append(front, [2]string{"e/E", "next/prev error"})
+		keys = slices.DeleteFunc(keys, func(k [2]string) bool { return k[0] == "e" })
+		where = append(where, m.st.err.Bold(true).Render("error")+" "+m.st.faint.Render(m.errorInfo))
+	}
+	if len(front) > 0 {
+		keys = append(append(front, [2]string{"esc", "clear"}), keys...)
+		parts = append(parts, strings.Join(where, "  "))
 	}
 	if m.stopping {
 		keys, parts = [][2]string{{"ctrl+c", "force quit"}}, nil

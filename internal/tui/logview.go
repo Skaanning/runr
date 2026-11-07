@@ -28,18 +28,47 @@ type logView struct {
 
 	width, height int
 
-	current uint64 // Seq of the search match jumped to; 0 if none
+	current uint64 // Seq of the line jumped to (search match or error); 0 if none
 
 	// Cached rendering, valid unless dirty.
 	dirty             bool
 	rows              []string
-	first, last       int  // lines visible in rows, partially at the edges; -1 if none
-	firstRow, lastRow int  // rows of first and last at the top and bottom edges
-	atTop             bool // the first row is the start of the first line
+	marks             []rowMark // of each row
+	first, last       int       // lines visible in rows, partially at the edges; -1 if none
+	firstRow, lastRow int       // rows of first and last at the top and bottom edges
+	atTop             bool      // the first row is the start of the first line
 }
 
 // lastRow as an anchor row means the anchor line's last row.
 const lastRow = math.MaxInt
+
+// rowMark is what the gutter left of a row shows.
+type rowMark byte
+
+const (
+	noMark       rowMark = iota
+	errorMark            // a row of an error line
+	currentError         // a row of the error line jumped to
+)
+
+// mark returns the mark of the rows of line i.
+func (v *logView) mark(i int) rowMark {
+	switch l := v.lines[i]; {
+	case !l.Error:
+		return noMark
+	case l.Seq == v.current:
+		return currentError
+	}
+	return errorMark
+}
+
+// appendMarks appends n marks of line i.
+func (v *logView) appendMarks(i, n int) {
+	m := v.mark(i)
+	for range n {
+		v.marks = append(v.marks, m)
+	}
+}
 
 func newLogView(limit int, format formatFunc) *logView {
 	return &logView{limit: max(limit, 1), format: format, follow: true, dirty: true}
@@ -183,12 +212,18 @@ func (v *logView) view() []string {
 	return v.rows
 }
 
+// rowMarks returns the marks of the rows view returns.
+func (v *logView) rowMarks() []rowMark {
+	v.render()
+	return v.marks
+}
+
 func (v *logView) render() {
 	if !v.dirty {
 		return
 	}
 	v.dirty = false
-	v.rows = v.rows[:0]
+	v.rows, v.marks = v.rows[:0], v.marks[:0]
 	v.first, v.last, v.firstRow, v.lastRow, v.atTop = -1, -1, 0, 0, true
 	if len(v.lines) > 0 && v.height > 0 {
 		if !v.follow && v.anchorTop && !v.renderFromTop(min(v.anchor, len(v.lines)-1), v.anchorRow) {
@@ -204,7 +239,7 @@ func (v *logView) render() {
 		}
 	}
 	for len(v.rows) < v.height {
-		v.rows = append(v.rows, "")
+		v.rows, v.marks = append(v.rows, ""), append(v.marks, noMark)
 	}
 }
 
@@ -220,14 +255,15 @@ func (v *logView) renderFromTop(top, row int) bool {
 			offset, rows = row, rows[row:]
 		}
 		v.rows = append(v.rows, rows...)
+		v.appendMarks(i, len(rows))
 		if over := len(v.rows) - v.height; over >= 0 {
-			v.rows = v.rows[:v.height]
+			v.rows, v.marks = v.rows[:v.height], v.marks[:v.height]
 			v.first, v.last, v.firstRow, v.lastRow = top, i, row, offset+len(rows)-1-over
 			v.atTop = top == 0 && row == 0
 			return true
 		}
 	}
-	v.rows = v.rows[:0]
+	v.rows, v.marks = v.rows[:0], v.marks[:0]
 	return false
 }
 
@@ -251,9 +287,10 @@ func (v *logView) renderFromBottom(bottom, row int) {
 	v.first, v.last, v.lastRow, v.atTop = i+1, bottom, row, i < 0
 	for j := len(chunks) - 1; j >= 0; j-- {
 		v.rows = append(v.rows, chunks[j]...)
+		v.appendMarks(bottom-j, len(chunks[j]))
 	}
 	if over := len(v.rows) - v.height; over > 0 {
-		v.rows = v.rows[over:]
+		v.rows, v.marks = v.rows[over:], v.marks[over:]
 		v.firstRow, v.atTop = over, false
 		return
 	}
@@ -267,6 +304,7 @@ func (v *logView) renderFromBottom(bottom, row int) {
 		}
 		take := min(len(after), v.height-len(v.rows))
 		v.rows = append(v.rows, after[:take]...)
+		v.appendMarks(line, take)
 		after, row = after[take:], row+take
 		v.last, v.lastRow = line, row
 	}

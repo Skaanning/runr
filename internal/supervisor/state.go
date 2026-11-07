@@ -54,4 +54,5 @@ type ProcessInfo struct {
 	Exit      proc.ExitStatus // how the most recent run ended; valid in Stopped, Exited, Crashed
 	Restarts  int             // number of times the project was started again in this session
 	Args      string          // extra arguments of the most recent start (see Supervisor.SetArgs)
+	Errors    int             // lines of the most recent run that match settings.error_pattern
 }

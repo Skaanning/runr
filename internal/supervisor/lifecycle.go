@@ -24,6 +24,7 @@ func (s *Supervisor) spawn(m *managed) {
 	m.info.StartedAt = time.Now()
 	m.info.Exit = proc.ExitStatus{}
 	m.info.Pid = 0
+	m.info.Errors = 0
 	m.info.Args = s.args[m.name]
 	command := m.project.CommandWith(m.info.Args)
 
@@ -72,24 +73,49 @@ func (s *Supervisor) spawn(m *managed) {
 	s.schedule()
 }
 
-// lineHandler returns the output callback for the current run of m. It stores
-// each line and, while the run is not ready yet, checks it against ready_log.
-// It runs on the process's reader goroutine, not the loop.
+// lineHandler returns the output callback for the current run of m. It
+// stores each line, marking and counting those that match error_pattern, and,
+// while the run is not ready yet, checks it against ready_log. It runs on the
+// process's reader goroutines (one per stream), not the loop.
 func (s *Supervisor) lineHandler(m *managed) func(proc.Line) {
-	name, gen, re := m.name, m.gen, m.readyRe
+	name, gen, re, errorRe := m.name, m.gen, m.readyRe, s.errorRe
 	var ready atomic.Bool
+	var errCount atomic.Int64
+	var counting atomic.Bool // a count is on its way to the loop
 	return func(l proc.Line) {
 		stream := Stdout
 		if l.Stream == proc.Stderr {
 			stream = Stderr
 		}
-		s.events.push(LineEvent{Line: s.logs.Append(name, stream, l.Text)})
+		text := plaintext.StripANSI(l.Text)
+		isError := errorRe != nil && errorRe.MatchString(text)
+		s.events.push(LineEvent{Line: s.logs.AppendLine(LogLine{Project: name, Stream: stream, Text: l.Text, Error: isError})})
 
-		if re != nil && !ready.Load() && re.MatchString(plaintext.StripANSI(l.Text)) {
+		// The loop takes the latest count, so a burst of errors sends one
+		// update rather than one per line.
+		if isError {
+			errCount.Add(1)
+			if counting.CompareAndSwap(false, true) {
+				s.post(func() {
+					counting.Store(false)
+					s.countErrors(m, gen, int(errCount.Load()))
+				})
+			}
+		}
+		if re != nil && !ready.Load() && re.MatchString(text) {
 			ready.Store(true)
 			s.post(func() { s.becameReady(m, gen) })
 		}
 	}
+}
+
+// countErrors updates the count of error lines of run gen of m.
+func (s *Supervisor) countErrors(m *managed, gen, n int) {
+	if gen != m.gen || n == m.info.Errors {
+		return
+	}
+	m.info.Errors = n
+	s.events.push(StateEvent{Info: m.info})
 }
 
 func (s *Supervisor) becameReady(m *managed, gen int) {

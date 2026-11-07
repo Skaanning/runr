@@ -50,6 +50,7 @@ type Tracker interface {
 type Supervisor struct {
 	cfg     *config.Config
 	logs    *Logs
+	errorRe *regexp.Regexp // settings.error_pattern; nil if invalid
 	baseEnv []string
 	timeout time.Duration
 
@@ -116,6 +117,9 @@ func New(cfg *config.Config, opts Options) *Supervisor {
 		procs:   map[string]*managed{},
 		args:    map[string]string{},
 		tracker: opts.Tracker,
+	}
+	if re, err := regexp.Compile(cfg.Settings.ErrorPattern()); err == nil {
+		s.errorRe = re
 	}
 	if opts.LogDir != "" {
 		s.files = logfile.NewWriter(opts.LogDir, s.logFileFailed)

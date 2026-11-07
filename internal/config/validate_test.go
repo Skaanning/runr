@@ -186,6 +186,11 @@ func TestValidateErrors(t *testing.T) {
 			[]string{`settings: theme: unknown theme "solarized" (one of terminal, catppuccin, tokyo-night, gruvbox, nord)`},
 		},
 		{
+			"bad error_pattern",
+			func(c *Config) { c.Settings.ErrorPatternValue = "(error" },
+			[]string{"settings: error_pattern: invalid regex: error parsing regexp: missing closing ): `(error`"},
+		},
+		{
 			"log_dir is a file",
 			func(c *Config) { c.Settings.LogDirValue = "validate_test.go" }, // relative to the package
 			[]string{`settings: log_dir: validate_test.go is not a directory`},

@@ -8,7 +8,8 @@ type Event interface {
 	isEvent()
 }
 
-// StateEvent reports that a project changed state.
+// StateEvent reports that a project changed state, or that its count of
+// error lines (ProcessInfo.Errors) went up.
 type StateEvent struct {
 	Info ProcessInfo
 }

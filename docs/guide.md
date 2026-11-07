@@ -7,7 +7,7 @@ Everything about using runr. For a short introduction, see the [README](../READM
 - [Configuration](#configuration): [settings](#settings), [themes](#themes),
   [project fields](#project-fields), [validation](#validation)
 - [The launcher](#the-launcher)
-- [The running view](#the-running-view)
+- [The running view](#the-running-view): [errors](#errors)
 - [Saving logs](#saving-logs)
 - [Git](#git)
 - [How processes are run](#how-processes-are-run)
@@ -140,6 +140,7 @@ backend = ["db", "api"]
 | `theme_background` | `false` | Paint the theme's background and text color behind the whole TUI instead of letting your terminal's show through. See [Themes](#themes). |
 | `show_all` | `true` | List the registered projects that aren't running in the running view's sidebar, below the session's (`a` toggles it for a session) |
 | `log_dir` | — | Directory where every session appends each project's output to `<project>.log`, e.g. `"~/.local/state/runr/logs"`; `runr up --log-dir` overrides it (see [Saving logs](#saving-logs)) |
+| `error_pattern` | `'(?i)\b(error\|panic\|fatal\|exception\|traceback)\b'` | The [regular expression](https://pkg.go.dev/regexp/syntax) that marks a line of output as an error (see [Errors](#errors)), matched without the line's colors |
 
 ### Themes
 
@@ -296,7 +297,8 @@ so for 5 seconds.
 | `P` | Pull the git repositories of every project in the session, after confirming |
 | `/` | Search the output; `enter` jumps to the newest match, `esc` cancels |
 | `n` / `N` | Next newer / older match |
-| `esc` | Clear the search |
+| `e` / `E` | Jump to the next newer / older error line (see [Errors](#errors)) |
+| `esc` | Clear the search and the error position |
 | `PgUp` / `PgDn` | Scroll a page |
 | `g` / `G` (`home` / `end`) | Jump to the top / bottom |
 | `f` | Toggle follow (auto-scroll); scrolling to the bottom resumes it |
@@ -306,6 +308,23 @@ so for 5 seconds.
 
 Search is plain text (no regex) and smart-case: an all-lowercase query ignores case, any
 uppercase letter makes it case-sensitive.
+
+### Errors
+
+runr marks the lines of output that look like errors: those containing `error`, `panic`,
+`fatal`, `exception` or `traceback` as a word, in any case (`no errors` and `terror` don't
+count). A red `▌` sits left of each of them, and the process's second line in the sidebar
+says how many its current run printed, e.g. `3 errors`; the count starts again at every
+restart.
+
+`e` jumps to the next error line in the log you're looking at (all processes, or the
+selected one), `E` to the previous one, wrapping around at either end. The line jumped to
+gets a yellow `▌`, scrolling stops, and the bottom line shows where you are, e.g.
+`error 2/7`; `esc` clears it and `G` scrolls back to the newest output.
+
+To match something else, set `error_pattern` in `[settings]`, e.g.
+`error_pattern = '\b(ERROR|FATAL)\b'` for upper-case log levels only. runr's own lines
+(`starting: …`, `crashed …`) are never counted.
 
 ![Searching the combined logs for POST](images/search.png)
 

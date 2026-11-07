@@ -149,7 +149,8 @@ func TestLoadMissingFile(t *testing.T) {
 	if c.Projects == nil || c.Groups == nil || len(c.Projects) != 0 {
 		t.Errorf("expected empty initialized config, got %+v", c)
 	}
-	if c.Settings.ShutdownTimeout() != DefaultShutdownTimeout || c.Settings.ScrollbackLines() != DefaultScrollbackLines {
+	if c.Settings.ShutdownTimeout() != DefaultShutdownTimeout || c.Settings.ScrollbackLines() != DefaultScrollbackLines ||
+		c.Settings.ErrorPattern() != DefaultErrorPattern {
 		t.Errorf("defaults not applied: %+v", c.Settings)
 	}
 }
