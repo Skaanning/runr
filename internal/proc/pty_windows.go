@@ -107,7 +107,10 @@ func (t *conPTY) spawn(cmd *exec.Cmd) error {
 	var pi windows.ProcessInformation
 	// Suspended until attach has put it in its Job Object, as with pipes.
 	flags := uint32(windows.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT | windows.CREATE_SUSPENDED)
-	if err := windows.CreateProcess(app, line, nil, nil, false, flags, block, dir, &si.StartupInfo, &pi); err != nil {
+	err = withCtrlC(func() error {
+		return windows.CreateProcess(app, line, nil, nil, false, flags, block, dir, &si.StartupInfo, &pi)
+	})
+	if err != nil {
 		return err
 	}
 	windows.CloseHandle(pi.Thread)
@@ -121,6 +124,32 @@ func (t *conPTY) spawn(cmd *exec.Cmd) error {
 	}
 	cmd.Process = p
 	return nil
+}
+
+var (
+	setConsoleCtrlHandler = windows.NewLazySystemDLL("kernel32.dll").NewProc("SetConsoleCtrlHandler")
+	ctrlCMu               sync.Mutex // withCtrlC changes a setting of the whole process
+)
+
+// ctrlCIgnored is the ConsoleFlags bit set while the process ignores Ctrl+C.
+const ctrlCIgnored = 0x1
+
+// withCtrlC runs create (a CreateProcess) with Ctrl+C not ignored by runr.
+// A process created while Ctrl+C is ignored ignores it too, and on a pseudo
+// console that would make it deaf to the Ctrl+C terminate types. runr
+// itself may well start that way: programs run from Git Bash do. runr's own
+// setting is restored afterwards.
+func withCtrlC(create func() error) error {
+	ctrlCMu.Lock()
+	defer ctrlCMu.Unlock()
+	if windows.RtlGetCurrentPeb().ProcessParameters.ConsoleFlags&ctrlCIgnored == 0 {
+		return create()
+	}
+	if ok, _, _ := setConsoleCtrlHandler.Call(0, 0); ok == 0 {
+		return create() // it will ignore Ctrl+C; stopping falls back to the kill
+	}
+	defer setConsoleCtrlHandler.Call(0, 1)
+	return create()
 }
 
 // envBlock returns env (KEY=VALUE pairs) as CreateProcess takes it: UTF-16

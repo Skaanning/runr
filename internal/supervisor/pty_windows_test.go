@@ -72,7 +72,7 @@ func TestPTYWindows(t *testing.T) {
 	}
 	waitFor("stopped", reached(Stopped))
 	if took := time.Since(start); took > 5*time.Second {
-		t.Errorf("stopping took %v: Ctrl+C didn't reach it", took)
+		t.Errorf("stopping took %v: Ctrl+C didn't reach it; log %q", took, texts(s.Logs().Lines("term")))
 	}
 	for _, l := range s.Logs().Lines("term") {
 		if strings.ContainsRune(sgr.ReplaceAllString(l.Text, ""), '\x1b') {
