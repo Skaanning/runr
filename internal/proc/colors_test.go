@@ -23,3 +23,19 @@ func TestKeepColors(t *testing.T) {
 		}
 	}
 }
+
+func TestConsoleLine(t *testing.T) {
+	// As ConPTY sends them (windows-latest CI runner).
+	for in, want := range map[string]string{
+		"\x1b[m\x1b[32mterminal":                  "\x1b[32mterminal",
+		"\x1b[mto stderr":                         "to stderr",
+		"\x1b[0m\x1b[mready":                      "ready",
+		"\x1b[?25l\x1b[2J\x1b[m\x1b[Hhello\x1b[K": "hello",
+		"\x1b[m":              "",
+		"red \x1b[31mx\x1b[m": "red \x1b[31mx\x1b[m",
+	} {
+		if got := consoleLine(in); got != want {
+			t.Errorf("consoleLine(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

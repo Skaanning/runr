@@ -181,7 +181,7 @@ any, it is ready as soon as it has started. Ports and URLs are tried every 250 m
 times out after 1 s) for as long as the process runs; there is no overall time limit.
 | `color` | no | Color of the name in the TUI: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, their `bright-` variants (`bright-red`, …), an ANSI number `0`–`255`, or a hex code `#f80` / `#ff8800`. Projects without one get a color from a fixed palette, in name order, so a project has the same color in the launcher and every session. |
 | `display_name` | no | Label shown in the TUI instead of the project name |
-| `pty` | no | `true` runs the project on a pseudo-terminal, so it behaves as in a terminal: for programs that drop their colors or buffer their output otherwise. Unix only for now. See [How processes are run](#how-processes-are-run). |
+| `pty` | no | `true` runs the project on a pseudo-terminal, so it behaves as in a terminal: for programs that drop their colors or buffer their output otherwise. See [How processes are run](#how-processes-are-run). |
 
 Names of projects and groups may contain letters, digits, `.`, `_` and `-` (starting with a
 letter or digit), and share one namespace so `runr up <name>` is never ambiguous.
@@ -445,8 +445,10 @@ session's projects; in the launcher `F` covers all registered projects and `P` t
   (`dotnet run`, `docker compose`, `ls --color=auto`, …). It gets `TERM=xterm-256color`
   and a terminal as wide as the logs pane (resized with it) and 50 rows tall; stdout and
   stderr arrive as one stream. Nothing is typed into it, so a program waiting for input
-  waits forever. Stopping works as without it. Not on Windows yet: there the project runs
-  with pipes and runr says so once per session.
+  waits forever. Stopping works as without it (on Windows runr types Ctrl+C into the
+  project's console instead of sending CTRL_BREAK). On Windows the terminal is a pseudo
+  console (ConPTY), which redraws a screen rather than passing output through: runr keeps
+  the text and its colors and drops the rest of what it sends.
 - **Stopping** (`s`, `r`, `q`): each process and everything it started gets SIGTERM
   (`CTRL_BREAK` on Windows) and `shutdown_timeout` to exit before it is killed. On quit,
   projects stop in reverse dependency order: dependents first, then what they depend on.

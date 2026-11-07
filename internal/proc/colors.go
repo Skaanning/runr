@@ -26,6 +26,23 @@ func keepColors(s string) string {
 	return b.String()
 }
 
+// consoleLine returns a line of a pseudo console's (ConPTY's) output as runr
+// keeps it: its colors (keepColors), without the color resets it starts
+// lines with. Each log line starts out uncolored anyway.
+func consoleLine(s string) string {
+	s = keepColors(s)
+	for {
+		switch {
+		case strings.HasPrefix(s, "\x1b[m"):
+			s = s[3:]
+		case strings.HasPrefix(s, "\x1b[0m"):
+			s = s[4:]
+		default:
+			return s
+		}
+	}
+}
+
 // escapeSequence returns the length of the escape sequence s starts with,
 // and whether it sets colors. An unfinished one takes the rest of s.
 func escapeSequence(s string) (n int, color bool) {

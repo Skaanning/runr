@@ -152,8 +152,8 @@ func (t *conPTY) Read(b []byte) (int, error)  { return t.out.Read(b) }
 func (t *conPTY) Write(b []byte) (int, error) { return t.in.Write(b) }
 
 // clean keeps the colors of the console's output and drops the rest of its
-// escape sequences (see keepColors).
-func (t *conPTY) clean(line string) string { return keepColors(line) }
+// escape sequences (see consoleLine).
+func (t *conPTY) clean(line string) string { return consoleLine(line) }
 
 func (t *conPTY) resize(cols, rows int) error {
 	t.mu.Lock()
