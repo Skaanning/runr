@@ -105,7 +105,8 @@ func (t *conPTY) spawn(cmd *exec.Cmd) error {
 	}
 
 	var pi windows.ProcessInformation
-	flags := uint32(windows.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT)
+	// Suspended until attach has put it in its Job Object, as with pipes.
+	flags := uint32(windows.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT | windows.CREATE_SUSPENDED)
 	if err := windows.CreateProcess(app, line, nil, nil, false, flags, block, dir, &si.StartupInfo, &pi); err != nil {
 		return err
 	}

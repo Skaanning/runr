@@ -3,6 +3,7 @@
 package proc
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -89,5 +90,23 @@ func TestSignalAfterExitIsNoop(t *testing.T) {
 	}
 	if err := p.Kill(); err != nil {
 		t.Errorf("Kill after exit: %v", err)
+	}
+}
+
+// The process is in its Job Object before it runs (it starts suspended), so
+// a child it starts right away is in the job too.
+func TestChildStartsInJob(t *testing.T) {
+	for _, pty := range []bool{false, true} {
+		p, c := startHelper(t, "grandchild", Spec{PTY: pty})
+		line := c.waitForPrefix(t, "child ")
+		childPid, err := strconv.Atoi(strings.TrimPrefix(line, "child "))
+		if err != nil {
+			t.Fatalf("bad child line %q", line)
+		}
+		if pids := Pids([]*Process{p})[0]; !slices.Contains(pids, childPid) || !slices.Contains(pids, p.Pid()) {
+			t.Errorf("pty %v: job has %v; shell %d, child %d", pty, pids, p.Pid(), childPid)
+		}
+		_ = p.Kill()
+		waitDone(t, p, 10*time.Second)
 	}
 }

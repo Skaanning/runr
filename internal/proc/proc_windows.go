@@ -4,6 +4,7 @@ package proc
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -29,7 +30,9 @@ func newCommand(command string) *exec.Cmd {
 		CmdLine: `"` + shell + `" /d /s /c "` + command + `"`,
 		// A new process group lets us send CTRL_BREAK to just this command and
 		// keeps it from receiving the Ctrl+C typed into runr's console.
-		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP,
+		// Suspended until attach has put it in its Job Object, so that
+		// nothing it starts can escape the job.
+		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_SUSPENDED,
 	}
 	return cmd
 }
@@ -51,14 +54,57 @@ type jobState struct {
 	interrupt  io.Writer // the pseudo console's input, if it runs on one
 }
 
+// attach puts the command's process, started suspended, in a new Job Object
+// and then lets it run.
 func attach(cmd *exec.Cmd) (platformHandle, error) {
 	s := &jobState{pid: uint32(cmd.Process.Pid), process: cmd.Process}
-	// Failing to set up the job is not fatal (e.g. the process already
-	// exited); kill then falls back to stopping just the shell process.
+	// Failing to set up the job is not fatal; kill then falls back to
+	// stopping just the shell process.
 	if job, err := newJob(s.pid); err == nil {
 		s.job = job
 	}
+	if err := resume(s.pid); err != nil {
+		if s.job != 0 {
+			windows.CloseHandle(s.job)
+		}
+		return platformHandle{}, fmt.Errorf("resuming the process: %w", err)
+	}
 	return platformHandle{s}, nil
+}
+
+// resume starts the threads of a process created suspended (it has one, its
+// main thread). os/exec doesn't keep the thread's handle, so it is found in a
+// snapshot of the system's threads.
+func resume(pid uint32) error {
+	snap, err := windows.CreateToolhelp32Snapshot(windows.TH32CS_SNAPTHREAD, 0)
+	if err != nil {
+		return err
+	}
+	defer windows.CloseHandle(snap)
+	entry := windows.ThreadEntry32{Size: uint32(unsafe.Sizeof(windows.ThreadEntry32{}))}
+	resumed := 0
+	for err = windows.Thread32First(snap, &entry); err == nil; err = windows.Thread32Next(snap, &entry) {
+		if entry.OwnerProcessID != pid {
+			continue
+		}
+		thread, err := windows.OpenThread(windows.THREAD_SUSPEND_RESUME, false, entry.ThreadID)
+		if err != nil {
+			return err
+		}
+		_, err = windows.ResumeThread(thread)
+		windows.CloseHandle(thread)
+		if err != nil {
+			return err
+		}
+		resumed++
+	}
+	if !errors.Is(err, windows.ERROR_NO_MORE_FILES) {
+		return err
+	}
+	if resumed == 0 {
+		return fmt.Errorf("no thread of process %d", pid)
+	}
+	return nil
 }
 
 func newJob(pid uint32) (windows.Handle, error) {
