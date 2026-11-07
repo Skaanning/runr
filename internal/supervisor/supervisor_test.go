@@ -719,7 +719,7 @@ func TestPTY(t *testing.T) {
 	cfg := config.New()
 	dir := t.TempDir()
 	cfg.Projects["term"] = &config.Project{Dir: dir, PTY: true, ReadyLog: `^on a tty$`,
-		Cmd: `[ -t 1 ] && echo on a tty; echo "TERM=$TERM"; stty size; trap 'stty size' WINCH; while :; do sleep 0.02; done`}
+		Cmd: `[ -t 1 ] && echo on a tty; echo "TERM=$TERM"; trap 'stty size' WINCH; stty size; while :; do sleep 0.02; done`}
 	cfg.Projects["pipes"] = &config.Project{Dir: dir, Cmd: `[ -t 1 ] || echo no tty`}
 	s, r := newTestSupervisorWithConfig(t, cfg)
 	if err := s.Resize(100, 0); err != nil { // rows stay at the default
