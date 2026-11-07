@@ -4,6 +4,7 @@ package proc
 
 import (
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"sync"
@@ -46,7 +47,8 @@ type jobState struct {
 	pid        uint32
 	process    *os.Process
 	released   bool
-	terminated bool // CTRL_BREAK sent by terminate
+	terminated bool      // CTRL_BREAK (or Ctrl+C) sent by terminate
+	interrupt  io.Writer // the pseudo console's input, if it runs on one
 }
 
 func attach(cmd *exec.Cmd) (platformHandle, error) {
@@ -87,8 +89,18 @@ func newJob(pid uint32) (windows.Handle, error) {
 	return job, nil
 }
 
-// terminate sends CTRL_BREAK to the command's process group. If that is not
-// possible (e.g. runr has no console), it falls back to a forced kill.
+// interruptWith makes terminate type Ctrl+C into the process's pseudo
+// console (Spec.PTY): a console's ctrl events only reach the processes
+// attached to it, and runr's isn't theirs.
+func (s *jobState) interruptWith(w io.Writer) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.interrupt = w
+}
+
+// terminate sends CTRL_BREAK to the command's process group, or Ctrl+C to
+// every process on its pseudo console. If that is not possible (e.g. runr
+// has no console), it falls back to a forced kill.
 func (s *jobState) terminate() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -96,6 +108,12 @@ func (s *jobState) terminate() error {
 		return nil
 	}
 	s.terminated = true
+	if s.interrupt != nil {
+		if _, err := s.interrupt.Write([]byte{0x03}); err != nil {
+			return s.killLocked()
+		}
+		return nil
+	}
 	if err := windows.GenerateConsoleCtrlEvent(windows.CTRL_BREAK_EVENT, s.pid); err != nil {
 		return s.killLocked()
 	}

@@ -69,9 +69,8 @@ type Supervisor struct {
 	args     map[string]string // extra arguments by project, see SetArgs
 	cols     int               // pseudo-terminal size, see Resize
 	rows     int
-	noPTY    map[string]bool // projects warned that pty isn't supported here
-	order    []string        // session order: the order projects were first added
-	closing  bool            // set by Close; no new processes are started
+	order    []string // session order: the order projects were first added
+	closing  bool     // set by Close; no new processes are started
 	shutdown *shutdown
 }
 
@@ -125,7 +124,6 @@ func New(cfg *config.Config, opts Options) *Supervisor {
 		args:    map[string]string{},
 		cols:    proc.DefaultCols,
 		rows:    proc.DefaultRows,
-		noPTY:   map[string]bool{},
 		tracker: opts.Tracker,
 	}
 	if re, err := regexp.Compile(cfg.Settings.ErrorPattern()); err == nil {

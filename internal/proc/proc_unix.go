@@ -40,6 +40,10 @@ func (h platformHandle) kill() error {
 }
 func (h platformHandle) release() {}
 
+// interruptWith does nothing: on Unix terminate signals the process group,
+// on a pseudo-terminal too.
+func (h platformHandle) interruptWith(terminal) {}
+
 // stopLeftovers runs after the shell has exited and stops whatever it left
 // running in its process group: SIGTERM (unless terminate already sent one),
 // then SIGKILL if anything is still there after timeout. After kill there is

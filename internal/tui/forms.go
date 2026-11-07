@@ -598,9 +598,6 @@ func newProjectForm(st *styles, cfg *config.Config, name string, git GitReader) 
 	startup.fields = append(startup.fields, readyLog, readyPort, readyURL)
 	pty := newChoiceField("pty", "Terminal", []formOption{{value: ptyOption}}, &v.pty)
 	pty.desc = "colors and line buffering as in a terminal; no input"
-	if !proc.PTYSupported {
-		pty.desc = "not on this system yet: runs with pipes"
-	}
 	startup.fields = append(startup.fields, pty)
 
 	env := newTextField("env", "Variables", &v.env)

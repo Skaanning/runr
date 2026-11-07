@@ -10,30 +10,47 @@ import (
 	"github.com/creack/pty"
 )
 
-// PTYSupported reports whether Spec.PTY runs commands on a pseudo-terminal
-// here.
-const PTYSupported = true
+// unixTerminal is a pseudo-terminal's master end.
+type unixTerminal struct {
+	master *os.File
+}
 
-// openPTY opens a pseudo-terminal of cols × rows and connects cmd to its
-// slave end as the controlling terminal of a new session. The session's
-// process group is the shell's pid, as with pipes, so signalling the group
-// and finding leftovers work the same.
-func openPTY(cmd *exec.Cmd, cols, rows int) (master, slave *os.File, err error) {
-	master, slave, err = pty.Open()
+// startOnTerminal starts cmd on a new pseudo-terminal of cols × rows, as the
+// leader of a new session with the terminal as its controlling terminal. The
+// session's process group is the shell's pid, as with pipes, so signalling
+// the group and finding leftovers work the same. It returns the terminal and
+// the function that waits for cmd.
+func startOnTerminal(cmd *exec.Cmd, cols, rows int) (terminal, func() error, error) {
+	master, slave, err := pty.Open()
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := setSize(master, cols, rows); err != nil {
+	t := unixTerminal{master}
+	if err := t.resize(cols, rows); err != nil {
 		master.Close()
 		slave.Close()
 		return nil, nil, err
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
-	return master, slave, nil
+	err = cmd.Start()
+	// The child has its own copy; reads of the master end with EIO once
+	// every process holding the slave end has exited.
+	slave.Close()
+	if err != nil {
+		master.Close()
+		return nil, nil, err
+	}
+	return t, cmd.Wait, nil
 }
 
-func setSize(f *os.File, cols, rows int) error {
+func (t unixTerminal) Read(b []byte) (int, error)  { return t.master.Read(b) }
+func (t unixTerminal) Write(b []byte) (int, error) { return t.master.Write(b) }
+func (t unixTerminal) clean(line string) string    { return line }
+func (t unixTerminal) exited()                     {}
+func (t unixTerminal) close()                      { t.master.Close() }
+
+func (t unixTerminal) resize(cols, rows int) error {
 	c, r := termSize(cols, rows)
-	return pty.Setsize(f, &pty.Winsize{Cols: c, Rows: r})
+	return pty.Setsize(t.master, &pty.Winsize{Cols: c, Rows: r})
 }

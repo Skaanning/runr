@@ -20,8 +20,8 @@ type Spec struct {
 
 	// PTY runs the command on a pseudo-terminal of Cols × Rows (0: 120 × 50)
 	// instead of pipes, so it behaves as in a terminal (colors, line
-	// buffering). Its output is one stream (Stdout); it gets no input. Only
-	// where PTYSupported; elsewhere pipes are used.
+	// buffering). Its output is one stream (Stdout); it gets no input. On
+	// Windows it is a pseudo console (ConPTY).
 	PTY        bool
 	Cols, Rows int
 
@@ -102,13 +102,22 @@ type Process struct {
 	handle platformHandle
 
 	termMu sync.Mutex
-	term   *os.File // the pseudo-terminal's master end while it is open; nil without one
+	term   terminal // the pseudo-terminal while it is open; nil without one
 }
 
-// output is a file runr reads a process's output from.
-type output struct {
-	f      *os.File
-	stream Stream
+// terminal is the pseudo-terminal a process runs on (Spec.PTY); see
+// startOnTerminal.
+type terminal interface {
+	io.Reader // the output of the programs on it
+	io.Writer // input to them
+	resize(cols, rows int) error
+	// clean returns a line of output as runr keeps it.
+	clean(line string) string
+	// exited is called once the command has exited and its leftovers are
+	// dealt with; on Windows the output only ends after it.
+	exited()
+	// close releases the terminal once its output has been read.
+	close()
 }
 
 // Start runs spec.Command through the system shell in its own process group.
@@ -120,15 +129,15 @@ func Start(spec Spec, onLine func(Line)) (*Process, error) {
 	cmd.Dir = spec.Dir
 	cmd.Env = spec.Env
 
-	pty := spec.PTY && PTYSupported
-	var outs []output
-	var childEnds []*os.File
-	if pty {
-		master, slave, err := openPTY(cmd, spec.Cols, spec.Rows)
+	var term terminal
+	var outs []*os.File // the pipes: stdout, stderr
+	wait := cmd.Wait
+	if spec.PTY {
+		t, w, err := startOnTerminal(cmd, spec.Cols, spec.Rows)
 		if err != nil {
-			return nil, fmt.Errorf("opening a pseudo-terminal: %w", err)
+			return nil, fmt.Errorf("starting on a pseudo-terminal: %w", err)
 		}
-		outs, childEnds = []output{{master, Stdout}}, []*os.File{slave}
+		term, wait = t, w
 	} else {
 		outR, outW, err := os.Pipe()
 		if err != nil {
@@ -142,35 +151,36 @@ func Start(spec Spec, onLine func(Line)) (*Process, error) {
 		}
 		cmd.Stdout = outW
 		cmd.Stderr = errW
-		outs, childEnds = []output{{outR, Stdout}, {errR, Stderr}}, []*os.File{outW, errW}
+		err = cmd.Start()
+		// The child has its own copies of the write ends; ours must be
+		// closed so that reads hit EOF once every process holding them has
+		// exited.
+		outW.Close()
+		errW.Close()
+		if err != nil {
+			outR.Close()
+			errR.Close()
+			return nil, err
+		}
+		outs = []*os.File{outR, errR}
 	}
 	closeOutputs := func() {
-		for _, o := range outs {
-			o.f.Close()
+		for _, f := range outs {
+			f.Close()
+		}
+		if term != nil {
+			term.exited()
+			term.close()
 		}
 	}
 
-	err := cmd.Start()
-	// The child has its own copies of its ends; ours must be closed so that
-	// reads end (EOF, or EIO on a pseudo-terminal) once every process holding
-	// them has exited.
-	for _, f := range childEnds {
-		f.Close()
-	}
-	if err != nil {
-		closeOutputs()
-		return nil, err
-	}
-
 	p := &Process{cmd: cmd, done: make(chan struct{})}
+	var err error
 	if p.handle, err = attach(cmd); err != nil {
 		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		_ = wait()
 		closeOutputs()
 		return nil, err
-	}
-	if pty {
-		p.term = outs[0].f
 	}
 
 	var mu sync.Mutex
@@ -180,17 +190,28 @@ func Start(spec Spec, onLine func(Line)) (*Process, error) {
 		onLine(l)
 	}
 	var readers sync.WaitGroup
-	for _, o := range outs {
+	for i, f := range outs {
 		readers.Add(1)
 		go func() {
 			defer readers.Done()
-			if !pty {
-				defer o.f.Close()
-				readLines(o.f, o.stream, emit)
-				return
-			}
+			defer f.Close()
+			readLines(f, Stream(i), emit)
+		}()
+	}
+	if term != nil {
+		p.term = term
+		p.handle.interruptWith(term)
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
 			defer p.closeTerm()
-			readLines(&terminalReader{f: o.f}, o.stream, emit)
+			readLines(&terminalReader{t: term}, Stdout, func(l Line) {
+				// Lines of nothing but the terminal's own escape sequences
+				// (Windows) are dropped.
+				if text := term.clean(l.Text); text != "" || l.Text == "" {
+					emit(Line{Stream: l.Stream, Text: text})
+				}
+			})
 		}()
 	}
 	drained := make(chan struct{})
@@ -200,13 +221,16 @@ func Start(spec Spec, onLine func(Line)) (*Process, error) {
 	}()
 
 	go func() {
-		err := cmd.Wait()
+		err := wait()
 		p.status = exitStatus(cmd.ProcessState, err)
 		leftoverTimeout := spec.LeftoverTimeout
 		if leftoverTimeout <= 0 {
 			leftoverTimeout = drainTimeout
 		}
 		p.status.Leftovers = p.handle.stopLeftovers(leftoverTimeout)
+		if term != nil {
+			term.exited()
+		}
 		select {
 		case <-drained:
 		case <-time.After(drainTimeout):
@@ -225,7 +249,7 @@ func (p *Process) Resize(cols, rows int) error {
 	if p.term == nil {
 		return nil
 	}
-	return setSize(p.term, cols, rows)
+	return p.term.resize(cols, rows)
 }
 
 // closeTerm closes the pseudo-terminal once its output has been read.
@@ -233,16 +257,16 @@ func (p *Process) closeTerm() {
 	p.termMu.Lock()
 	defer p.termMu.Unlock()
 	if p.term != nil {
-		p.term.Close()
+		p.term.close()
 		p.term = nil
 	}
 }
 
-// terminalReader reads a pseudo-terminal's master end and answers the
-// programs' cursor position requests (ESC [ 6 n), which some send to find
-// out about the terminal and wait for, with a fixed position.
+// terminalReader reads a pseudo-terminal's output and answers the programs'
+// cursor position requests (ESC [ 6 n), which some send to find out about
+// the terminal and wait for, with a fixed position.
 type terminalReader struct {
-	f *os.File
+	t terminal
 }
 
 var (
@@ -251,9 +275,9 @@ var (
 )
 
 func (r *terminalReader) Read(b []byte) (int, error) {
-	n, err := r.f.Read(b)
+	n, err := r.t.Read(b)
 	if n > 0 && bytes.Contains(b[:n], cursorRequest) {
-		_, _ = r.f.Write(cursorReply)
+		_, _ = r.t.Write(cursorReply)
 	}
 	return n, err
 }
