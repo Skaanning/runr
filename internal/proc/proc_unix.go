@@ -22,10 +22,11 @@ func newCommand(command string) *exec.Cmd {
 type platformHandle struct {
 	pgid       int
 	terminated *atomic.Bool // SIGTERM already sent by terminate
+	killed     *atomic.Bool // SIGKILL already sent by kill
 }
 
 func attach(cmd *exec.Cmd) (platformHandle, error) {
-	return platformHandle{pgid: cmd.Process.Pid, terminated: new(atomic.Bool)}, nil
+	return platformHandle{pgid: cmd.Process.Pid, terminated: new(atomic.Bool), killed: new(atomic.Bool)}, nil
 }
 
 func (h platformHandle) terminate() error {
@@ -33,18 +34,28 @@ func (h platformHandle) terminate() error {
 	return h.signal(syscall.SIGTERM)
 }
 
-func (h platformHandle) kill() error { return h.signal(syscall.SIGKILL) }
-func (h platformHandle) release()    {}
+func (h platformHandle) kill() error {
+	h.killed.Store(true)
+	return h.signal(syscall.SIGKILL)
+}
+func (h platformHandle) release() {}
 
 // stopLeftovers runs after the shell has exited and stops whatever it left
 // running in its process group: SIGTERM (unless terminate already sent one),
-// then SIGKILL if anything is still there after timeout. It reports whether
-// the group had any processes left.
+// then SIGKILL if anything is still there after timeout. After kill there is
+// no grace period: the group gets SIGKILL again and at most drainTimeout to
+// go (killed processes can still be found until they are reaped, which can
+// take a moment on macOS). It reports whether the group had any processes
+// left.
 func (h platformHandle) stopLeftovers(timeout time.Duration) bool {
 	if !h.groupAlive() {
 		return false
 	}
-	if !h.terminated.Load() {
+	switch {
+	case h.killed.Load():
+		_ = h.signal(syscall.SIGKILL)
+		timeout = min(timeout, drainTimeout)
+	case !h.terminated.Load():
 		_ = h.signal(syscall.SIGTERM)
 	}
 	deadline := time.Now().Add(timeout)
