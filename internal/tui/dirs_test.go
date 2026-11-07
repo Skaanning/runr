@@ -150,7 +150,7 @@ func TestProjectFormCompletesDir(t *testing.T) {
 	}
 
 	// Hidden folders once a "." is typed; nothing for no match.
-	fd = focusDir(t, m, projects)
+	focusDir(t, m, projects)
 	if got := (projectFormOf(t, m)).completion(); got != projects+"billing-api"+string(filepath.Separator) {
 		t.Fatalf("completion = %q", got)
 	}

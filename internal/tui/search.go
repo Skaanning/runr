@@ -50,7 +50,7 @@ func (s search) matches(raw string, buf *[]byte) bool {
 	if b, ok := appendPlainFast((*buf)[:0], raw); ok {
 		*buf = b
 		if !s.fold {
-			return bytes.Index(b, s.bytes) >= 0
+			return bytes.Contains(b, s.bytes)
 		}
 		return indexFold(b, s.query) >= 0
 	}
