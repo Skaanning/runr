@@ -28,4 +28,13 @@ jobs:
           unformatted=$(gofmt -l .)
           if [ -n "$unformatted" ]; then echo "gofmt needed:"; echo "$unformatted"; exit 1; fi
       - run: go vet ./...
-      - run: go test ./...
+      # staticcheck looks at one OS's files at a time; the Linux runner
+      # checks all three, so the dearer runners don't build it.
+      - if: runner.os == 'Linux'
+        run: make staticcheck
+      # The race detector on Linux only: it is slower, and the code it
+      # guards (supervisor, proc, tui) is mostly the same on every OS.
+      - if: runner.os == 'Linux'
+        run: go test -race ./...
+      - if: runner.os != 'Linux'
+        run: go test ./...
