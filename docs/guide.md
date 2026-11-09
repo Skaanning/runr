@@ -329,6 +329,7 @@ so for 5 seconds.
 | `+` | Start a group, or another project when the sidebar doesn't list them all (type to filter, `enter` to start, `esc` to close) |
 | `a` | Show or hide the projects that aren't running |
 | `!` | Select the project of the newest toast |
+| `i` | Attach to the selected process to type into it (`pty = true` projects; see [Typing into a program](#typing-into-a-program)); `ctrl+q` detaches |
 | `o` | Open the selected process's port (`http://localhost:<port>`) in the browser; asks which one when it listens on several |
 | `b` | Switch the selected project's git repository to another branch (see [Git](#git)) |
 | `p` | Pull the selected project's git repository (`git pull --ff-only`), after confirming |
@@ -370,6 +371,22 @@ lines, `crashed (…)` and `failed to start: …` always count, whatever the pat
 
 runr adds its own lines to each process's log, such as `starting: <cmd>`,
 `waiting for db`, `ready` and `crashed (exit code 1)`, so you can see what happened when.
+
+### Typing into a program
+
+A project with `pty = true` runs on a terminal, and you can type into it, e.g. to answer a
+script that asks for a branch name. Select it and press `i`: runr shows its log and every key
+goes to the program, as in a terminal: `enter`, `backspace`, arrows, `ctrl+c` (which
+interrupts the program, not runr) and pastes. `ctrl+q` detaches and gives runr its keys back;
+runr also detaches when the program exits.
+
+The line the program is writing, such as a prompt and what you type after it, shows at the
+bottom of the log while it is unfinished, in both views and also when you aren't attached,
+so you can see that a program is waiting. It becomes a log line once the program ends it;
+log files, search, error counts and `ready_log` only see finished lines. What you type
+appears because the program's terminal echoes it; input a program reads without echo
+(`Read-Host -AsSecureString`, passwords) doesn't appear in the log. Projects without
+`pty = true` get no input.
 
 ## Saving logs
 
@@ -481,8 +498,9 @@ session's projects; in the launcher `F` covers all registered projects and `P` t
   pseudo-terminal instead, for tools that only color or flush their output on a terminal
   (`dotnet run`, `docker compose`, `ls --color=auto`, …). It gets `TERM=xterm-256color`
   and a terminal as wide as the logs pane (resized with it) and 50 rows tall; stdout and
-  stderr arrive as one stream. Nothing is typed into it, so a program waiting for input
-  waits forever. Stopping works as without it (on Windows runr types Ctrl+C into the
+  stderr arrive as one stream. The line it is writing shows as it changes, so a prompt
+  (`branch: `) is visible before it ends; select the project and press `i` to attach and
+  type into it (see [Typing into a program](#typing-into-a-program)). Stopping works as without it (on Windows runr types Ctrl+C into the
   project's console instead of sending CTRL_BREAK). On Windows the terminal is a pseudo
   console (ConPTY), which redraws a screen rather than passing output through: runr keeps
   the text and its colors and drops the rest of what it sends.
@@ -531,6 +549,8 @@ session's projects; in the launcher `F` covers all registered projects and `P` t
 - **The terminal kept runr's background after runr was killed:** runr restores the colors when
   it exits, but not when it's killed with `SIGKILL`. Run `reset`, or
   `printf '\e]110\a\e]111\a'`.
+- **A program waits for input:** without `pty = true` it gets none; with it, select the
+  project and press `i` to type into it (see [Typing into a program](#typing-into-a-program)).
 - **A project's spinner keeps spinning:** it is waiting for a dependency, or its `ready_log` hasn't
   matched, or its `ready_port`/`ready_url` doesn't answer (wrong port, or the server listens
   on another address than `localhost`). Select it and press `tab` to see its log; runr's lines say what it's waiting for.

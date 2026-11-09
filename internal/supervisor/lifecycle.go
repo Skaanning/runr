@@ -82,7 +82,17 @@ func (s *Supervisor) lineHandler(m *managed) func(proc.Line) {
 	var ready atomic.Bool
 	var errCount atomic.Int64
 	var counting atomic.Bool // a count is on its way to the loop
+	pending := false         // a PendingEvent with text was sent last; calls are never concurrent
 	return func(l proc.Line) {
+		if l.Partial {
+			pending = l.Text != ""
+			s.events.push(PendingEvent{Project: name, Text: l.Text})
+			return
+		}
+		if pending {
+			pending = false
+			s.events.push(PendingEvent{Project: name})
+		}
 		stream := Stdout
 		if l.Stream == proc.Stderr {
 			stream = Stderr
@@ -196,6 +206,9 @@ func (s *Supervisor) exited(m *managed, gen int, status proc.ExitStatus) {
 	m.proc = nil
 	m.info.Pid = 0
 	m.info.Exit = status
+	if m.project.PTY {
+		s.events.push(PendingEvent{Project: m.name}) // in case reading the output was cut short
+	}
 
 	if status.Leftovers && !m.stopRequested {
 		s.system(m, "stopped processes the command left running")

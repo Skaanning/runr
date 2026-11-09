@@ -34,11 +34,12 @@ type recorder struct {
 	history  map[string][]State
 	latest   map[string]ProcessInfo
 	warnings map[string][]string
+	pending  map[string][]string // PendingEvent texts
 	closed   chan struct{}
 }
 
 func record(s *Supervisor) *recorder {
-	r := &recorder{history: map[string][]State{}, latest: map[string]ProcessInfo{}, warnings: map[string][]string{}, closed: make(chan struct{})}
+	r := &recorder{history: map[string][]State{}, latest: map[string]ProcessInfo{}, warnings: map[string][]string{}, pending: map[string][]string{}, closed: make(chan struct{})}
 	go func() {
 		defer close(r.closed)
 		for e := range s.Events() {
@@ -49,6 +50,8 @@ func record(s *Supervisor) *recorder {
 				r.latest[e.Info.Name] = e.Info
 			case WarningEvent:
 				r.warnings[e.Project] = append(r.warnings[e.Project], e.Text)
+			case PendingEvent:
+				r.pending[e.Project] = append(r.pending[e.Project], e.Text)
 			}
 			r.mu.Unlock()
 		}
@@ -78,6 +81,12 @@ func (r *recorder) waitInfo(t *testing.T, name string, ok func(ProcessInfo) bool
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
+}
+
+func (r *recorder) pendingOf(name string) []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.pending[name]...)
 }
 
 func (r *recorder) warningsOf(name string) []string {
@@ -742,4 +751,65 @@ func TestPTY(t *testing.T) {
 		t.Fatal(err)
 	}
 	r.waitState(t, "term", Stopped)
+}
+
+func TestInput(t *testing.T) {
+	cfg := config.New()
+	dir := t.TempDir()
+	cfg.Projects["ask"] = &config.Project{Dir: dir, PTY: true, DisplayName: "Ask",
+		Cmd: `printf 'branch: '; read b; echo "got $b"; sleep 30`}
+	cfg.Projects["pipes"] = &config.Project{Dir: dir, Cmd: `sleep 30`}
+	cfg.Projects["idle"] = &config.Project{Dir: dir, PTY: true, Cmd: `true`}
+	s, r := newTestSupervisorWithConfig(t, cfg)
+	if err := s.Start("ask", "pipes"); err != nil {
+		t.Fatal(err)
+	}
+	waitPending := func(text string) {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for !slices.Contains(r.pendingOf("ask"), text) {
+			if time.Now().After(deadline) {
+				t.Fatalf("no unfinished line %q; got %q", text, r.pendingOf("ask"))
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	waitPending("branch: ")
+	// Typed and echoed piece by piece, with a typo taken back.
+	for _, typed := range []struct{ in, echo string }{{"feat", "branch: feat"}, {"ure/xx", "branch: feature/xx"}, {"\x7f", "branch: feature/x"}} {
+		if err := s.Input("ask", []byte(typed.in)); err != nil {
+			t.Fatal(err)
+		}
+		waitPending(typed.echo)
+	}
+	if err := s.Input("ask", []byte("\r")); err != nil {
+		t.Fatal(err)
+	}
+	waitLog(t, s, "ask", "out:branch: feature/x")
+	waitLog(t, s, "ask", "out:got feature/x")
+	if p := r.pendingOf("ask"); p[len(p)-1] != "" {
+		t.Errorf("pending lines %q: not cleared", p)
+	}
+	for _, l := range logLines(s, "ask") {
+		if l == "out:branch: " || l == "out:branch: feat" {
+			t.Errorf("an unfinished line in the log: %q", logLines(s, "ask"))
+		}
+	}
+
+	for name, want := range map[string]string{
+		"pipes": "pipes doesn't take input: set pty = true",
+		"idle":  "idle isn't running",
+		"nope":  `unknown project "nope"`,
+	} {
+		if err := s.Input(name, []byte("x")); err == nil || err.Error() != want {
+			t.Errorf("Input(%s) = %v, want %q", name, err, want)
+		}
+	}
+	if err := s.Stop("ask"); err != nil {
+		t.Fatal(err)
+	}
+	r.waitState(t, "ask", Stopped)
+	if err := s.Input("ask", []byte("x")); err == nil || err.Error() != "Ask isn't running" {
+		t.Errorf("after stopping: %v", err)
+	}
 }

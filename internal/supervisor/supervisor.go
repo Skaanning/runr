@@ -380,6 +380,36 @@ func (s *Supervisor) Note(name string, lines ...string) error {
 	})
 }
 
+// Input types b into a running project's pseudo-terminal (pty = true), as
+// keys pressed in a terminal: "\r" is Enter. It doesn't wait for the
+// program to read it.
+func (s *Supervisor) Input(name string, b []byte) error {
+	return s.call(func() error {
+		m, err := s.existing(name)
+		if err != nil {
+			return err
+		}
+		p := s.cfg.Projects[name]
+		if m != nil {
+			p = m.project // as started
+		}
+		label := p.Label(name)
+		switch {
+		case !p.PTY:
+			return fmt.Errorf("%s doesn't take input: set pty = true", label)
+		case m == nil || m.proc == nil:
+			return fmt.Errorf("%s isn't running", label)
+		}
+		if err := m.proc.Type(b); err != nil {
+			if errors.Is(err, proc.ErrNoTerminal) {
+				return fmt.Errorf("%s isn't running", label)
+			}
+			return fmt.Errorf("%s: %w", label, err)
+		}
+		return nil
+	})
+}
+
 // Kill force-kills a project immediately.
 func (s *Supervisor) Kill(name string) error {
 	return s.call(func() error {

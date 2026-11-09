@@ -4,6 +4,7 @@ package supervisor
 
 import (
 	"os"
+	"os/exec"
 	"regexp"
 	"slices"
 	"strings"
@@ -79,6 +80,59 @@ func TestPTYWindows(t *testing.T) {
 			t.Errorf("an escape sequence other than colors in %q", l.Text)
 		}
 	}
+}
+
+// TestInputWindows answers a PowerShell Read-Host prompt through Input.
+func TestInputWindows(t *testing.T) {
+	if _, err := exec.LookPath("pwsh"); err != nil {
+		t.Skip("pwsh not installed")
+	}
+	cfg := config.New()
+	cfg.Projects["ask"] = &config.Project{Dir: t.TempDir(), PTY: true,
+		Cmd: `pwsh -NoLogo -NoProfile -Command "$b = Read-Host 'branch'; Write-Output ('got ' + $b); Start-Sleep 30"`}
+	s := New(cfg, Options{BaseEnv: os.Environ()})
+	t.Cleanup(s.Close)
+
+	var mu sync.Mutex
+	var pending []string
+	go func() {
+		for e := range s.Events() {
+			if pe, ok := e.(PendingEvent); ok {
+				mu.Lock()
+				pending = append(pending, pe.Text)
+				mu.Unlock()
+			}
+		}
+	}()
+	waitFor := func(what string, ok func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(30 * time.Second)
+		for !ok() {
+			if time.Now().After(deadline) {
+				mu.Lock()
+				defer mu.Unlock()
+				t.Fatalf("no %s; pending %q, log %q", what, pending, texts(s.Logs().Lines("ask")))
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	}
+	if err := s.Start("ask"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor("prompt", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return slices.ContainsFunc(pending, func(p string) bool { return strings.Contains(sgr.ReplaceAllString(p, ""), "branch:") })
+	})
+	for _, b := range []string{"feature/xx", "\x7f", "\r"} {
+		if err := s.Input("ask", []byte(b)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitFor("answer", func() bool {
+		return slices.ContainsFunc(s.Logs().Lines("ask"), func(l LogLine) bool { return sgr.ReplaceAllString(l.Text, "") == "got feature/x" })
+	})
+	t.Logf("pending %q\nlog %q", pending, texts(s.Logs().Lines("ask")))
 }
 
 var sgr = regexp.MustCompile(`\x1b\[[0-9;:]*m`)

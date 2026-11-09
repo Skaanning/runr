@@ -2,8 +2,8 @@ package supervisor
 
 import "sync"
 
-// Event is sent on Supervisor.Events: a StateEvent, LineEvent or
-// WarningEvent.
+// Event is sent on Supervisor.Events: a StateEvent, LineEvent,
+// PendingEvent or WarningEvent.
 type Event interface {
 	isEvent()
 }
@@ -19,6 +19,15 @@ type LineEvent struct {
 	Line LogLine
 }
 
+// PendingEvent reports the unfinished current line of a project that runs
+// on a pseudo-terminal (pty = true) as it changes, e.g. a prompt and what is
+// typed after it. It is not a log line: once the line is complete it arrives
+// as a LineEvent, after a PendingEvent with an empty Text.
+type PendingEvent struct {
+	Project string
+	Text    string
+}
+
 // WarningEvent reports a problem worth pointing out that doesn't stop the
 // project, e.g. that a port it uses is taken. Its text is also in the log.
 type WarningEvent struct {
@@ -28,6 +37,7 @@ type WarningEvent struct {
 
 func (StateEvent) isEvent()   {}
 func (LineEvent) isEvent()    {}
+func (PendingEvent) isEvent() {}
 func (WarningEvent) isEvent() {}
 
 // eventQueue decouples producers from the consumer: push never blocks, and a

@@ -30,6 +30,11 @@ type logView struct {
 
 	current uint64 // Seq of the line jumped to (search match or error); 0 if none
 
+	// tail holds the unfinished lines of programs on a terminal (prompts,
+	// what is typed), drawn after the lines while following. They aren't
+	// lines yet: scrolling, search and below() leave them out.
+	tail []supervisor.LogLine
+
 	// Cached rendering, valid unless dirty.
 	dirty             bool
 	rows              []string
@@ -82,6 +87,12 @@ func (v *logView) append(lines ...supervisor.LogLine) {
 			v.anchor, v.anchorRow = 0, 0
 		}
 	}
+	v.dirty = true
+}
+
+// setTail sets the unfinished lines shown after the lines while following.
+func (v *logView) setTail(tail []supervisor.LogLine) {
+	v.tail = tail
 	v.dirty = true
 }
 
@@ -203,7 +214,7 @@ func (v *logView) below() int {
 	if v.last < 0 {
 		return 0
 	}
-	return len(v.lines) - 1 - v.last
+	return max(len(v.lines)-1-v.last, 0)
 }
 
 // view returns exactly height rows.
@@ -223,6 +234,21 @@ func (v *logView) render() {
 		return
 	}
 	v.dirty = false
+	if v.follow && len(v.tail) > 0 {
+		// Drawn as lines after the last one; indexes past the lines (first,
+		// last) are clamped where they are used.
+		lines := v.lines
+		v.lines = append(lines[:len(lines):len(lines)], v.tail...)
+		defer func() {
+			v.lines = lines
+			if n := len(lines) - 1; v.last > n {
+				v.last, v.lastRow = n, lastRow
+				if v.first > n {
+					v.first, v.firstRow = n, lastRow
+				}
+			}
+		}()
+	}
 	v.rows, v.marks = v.rows[:0], v.marks[:0]
 	v.first, v.last, v.firstRow, v.lastRow, v.atTop = -1, -1, 0, 0, true
 	if len(v.lines) > 0 && v.height > 0 {

@@ -443,7 +443,7 @@ func (m *runningModel) logPane() (title, note string, border lipgloss.Style) {
 	v := m.view()
 	border = m.st.faint
 	switch {
-	case m.picker != nil || m.editing || m.argsFor != "" || m.search.active():
+	case m.picker != nil || m.editing || m.argsFor != "" || m.search.active() || m.attached != "":
 		border = m.st.accent
 	case !v.following():
 		border = m.st.warn
@@ -482,6 +482,8 @@ func (m *runningModel) statusBar() string {
 	switch {
 	case m.stopping:
 		b.mode, b.color = "STOPPING", m.st.pal.ansi[ansiRed]
+	case m.attached != "":
+		b.mode, b.color = "ATTACHED", m.st.pal.ansi[ansiBlue]
 	case m.picker != nil:
 		b.mode, b.color = m.picker.modeName(), m.st.pal.ansi[ansiBlue]
 	case m.confirm != nil:
@@ -646,6 +648,11 @@ func (m *runningModel) help() string {
 			{"type", "to filter"}, {"↑↓", "select"}, {"enter", m.picker.action}, {"esc", "cancel"},
 		}), m.width, "…")
 	}
+	if m.attached != "" {
+		label := m.styleOf(m.attached).Bold(true).Render(m.labelOf(m.attached))
+		return ansi.Truncate(" "+label+m.st.faint.Render(" · keys go to the program  ")+
+			m.st.hintList([][2]string{{"ctrl+q", "detach"}}), m.width, "…")
+	}
 	if m.argsFor != "" {
 		hints := m.st.hintList([][2]string{{"enter", "restart"}, {"esc", "cancel"}})
 		label := m.st.bold.Render(m.labelOf(m.argsFor) + " args ")
@@ -674,6 +681,10 @@ func (m *runningModel) help() string {
 	}
 	if e := m.selectedEntry(); e != nil && m.selectedIdle() == "" && e.info.State.Alive() && len(m.ports.get(e.info.Name)) > 0 {
 		keys = append(keys, [2]string{"o", "open"})
+	}
+	if e := m.selectedEntry(); e != nil && m.selectedIdle() == "" && e.info.State.Alive() &&
+		m.cfg.Projects[e.info.Name] != nil && m.cfg.Projects[e.info.Name].PTY {
+		keys = append(keys, [2]string{"i", "attach"})
 	}
 	if name := m.selectedName(); name != "" {
 		if _, ok := m.git.get(name); ok {

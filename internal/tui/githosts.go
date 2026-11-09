@@ -48,7 +48,7 @@ func (h runningGit) sharing(project, root string) []string {
 }
 func (h runningGit) busy() bool {
 	m := h.m
-	return m.stopping || m.picker != nil || m.confirm != nil || m.editing || m.argsFor != ""
+	return m.stopping || m.picker != nil || m.confirm != nil || m.editing || m.argsFor != "" || m.attached != ""
 }
 func (h runningGit) setNotice(n string)      { h.m.notice = n }
 func (h runningGit) openPicker(p *picker)    { h.m.picker = p }

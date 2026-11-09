@@ -1,6 +1,8 @@
 package proc
 
 import (
+	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -35,6 +37,12 @@ func init() {
 			}
 			time.Sleep(20 * time.Millisecond)
 		}
+	}
+	moreHelpers["ask"] = func() {
+		// A prompt waiting for a line of input.
+		fmt.Print("branch: ")
+		answer, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		fmt.Printf("got %s (%v)\n", strings.TrimRight(answer, "\r\n"), err)
 	}
 	moreHelpers["wideline"] = func() {
 		fmt.Println(strings.Repeat("x", 300))
@@ -109,4 +117,42 @@ func TestPTYTerminateIsGraceful(t *testing.T) {
 		t.Errorf("status = %+v; output %q", status, c.texts(Stdout))
 	}
 	c.waitForPrefix(t, "bye")
+}
+
+func TestPTYInput(t *testing.T) {
+	p, c := startHelper(t, "ask", Spec{PTY: true})
+	deadline := time.Now().Add(10 * time.Second)
+	for !slices.ContainsFunc(c.partials(), func(s string) bool {
+		return plaintext.StripANSI(s) == "branch: " || plaintext.StripANSI(s) == "branch:"
+	}) {
+		if time.Now().After(deadline) {
+			t.Fatalf("no prompt; partial lines %q, lines %q", c.partials(), c.texts(Stdout))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// Typed with a mistake corrected by backspace (DEL, as terminals send it).
+	if _, err := p.Write([]byte("feature/xx\x7f\r")); err != nil {
+		t.Fatal(err)
+	}
+	if status := waitDone(t, p, 10*time.Second); !status.Success() {
+		t.Fatalf("status %+v; output %q", status, c.texts(Stdout))
+	}
+	out := nonEmpty(c.texts(Stdout))
+	for i := range out {
+		out[i] = plaintext.StripANSI(out[i])
+	}
+	if !slices.Contains(out, "branch: feature/x") || !slices.Contains(out, "got feature/x (<nil>)") {
+		t.Errorf("output %q", out)
+	}
+	if _, err := p.Write([]byte("x")); !errors.Is(err, ErrNoTerminal) {
+		t.Errorf("write after exit: %v", err)
+	}
+}
+
+func TestWriteWithoutTerminal(t *testing.T) {
+	p, _ := startHelper(t, "tty", Spec{})
+	if _, err := p.Write([]byte("x")); !errors.Is(err, ErrNoTerminal) {
+		t.Errorf("err = %v", err)
+	}
+	waitDone(t, p, 5*time.Second)
 }

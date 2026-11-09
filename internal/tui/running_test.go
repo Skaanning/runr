@@ -28,6 +28,8 @@ type fakeSession struct {
 	pids     map[string][]int    // returned by Pids
 	seen     map[string][]int    // passed to RememberPorts
 	sizes    [][2]int            // passed to Resize
+	typed    map[string]string   // passed to Input, by project
+	inputErr error               // returned by Input
 }
 
 func newFakeSession(names ...string) *fakeSession {
@@ -62,6 +64,16 @@ func (f *fakeSession) StopAll() <-chan struct{}        { f.stopAll++; return f.s
 func (f *fakeSession) KillAll()                        { f.killAll++ }
 func (f *fakeSession) Resize(cols, rows int) error {
 	f.sizes = append(f.sizes, [2]int{cols, rows})
+	return nil
+}
+func (f *fakeSession) Input(name string, b []byte) error {
+	if f.inputErr != nil {
+		return f.inputErr
+	}
+	if f.typed == nil {
+		f.typed = map[string]string{}
+	}
+	f.typed[name] += string(b)
 	return nil
 }
 func (f *fakeSession) Pids() map[string][]int               { return f.pids }
@@ -141,6 +153,8 @@ func key(s string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 	case "ctrl+s":
 		return tea.KeyPressMsg{Code: 's', Mod: tea.ModCtrl}
+	case "ctrl+q":
+		return tea.KeyPressMsg{Code: 'q', Mod: tea.ModCtrl}
 	}
 	r := []rune(s)[0]
 	return tea.KeyPressMsg{Code: r, Text: s}

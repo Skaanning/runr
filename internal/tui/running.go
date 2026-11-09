@@ -30,7 +30,8 @@ type Session interface {
 	Note(name string, lines ...string) error
 	Pids() map[string][]int // process trees of the live processes, by project
 	RememberPorts(ports map[string][]int)
-	Resize(cols, rows int) error // of the pseudo-terminals (pty = true); 0 keeps one
+	Resize(cols, rows int) error       // of the pseudo-terminals (pty = true); 0 keeps one
+	Input(name string, b []byte) error // typed into a project's pseudo-terminal
 }
 
 const (
@@ -101,10 +102,18 @@ type runningModel struct {
 	prevSearch search // restored when editing is cancelled
 	editing    bool   // the search input is open
 	argsFor    string // project whose extra arguments the input edits (R), or ""
-	input      textinput.Model
-	matchInfo  string // position of the current match, e.g. "3/17"
-	errorSeq   uint64 // Seq of the error line jumped to (e), 0 if none
-	errorInfo  string // its position, e.g. "2/7"
+
+	// pending is the unfinished current line of each project on a
+	// pseudo-terminal, shown after its lines (see logView.tail).
+	pending map[string]string
+	// attached is the project keys are typed into (i), or ""; ctrl+q
+	// detaches, back to the combined view if attaching left it.
+	attached     string
+	attachedFrom bool // the combined view was shown before attaching
+	input        textinput.Model
+	matchInfo    string // position of the current match, e.g. "3/17"
+	errorSeq     uint64 // Seq of the error line jumped to (e), 0 if none
+	errorInfo    string // its position, e.g. "2/7"
 
 	picker  *picker   // open picker (start another, branches), or nil
 	confirm *question // open question in the help line, or nil
@@ -125,7 +134,7 @@ type runningModel struct {
 }
 
 func newRunningModel(sess Session, cfg *config.Config, names []string, st *styles) *runningModel {
-	m := &runningModel{sess: sess, cfg: cfg, st: st, titles: names, byName: map[string]*sidebarEntry{}, now: time.Now}
+	m := &runningModel{sess: sess, cfg: cfg, st: st, titles: names, byName: map[string]*sidebarEntry{}, pending: map[string]string{}, now: time.Now}
 	m.ports = newPortTracker(sess.Pids)
 	m.gitOps = newGitActions(runningGit{m}, st, cfg)
 	m.showAll = cfg.Settings.ShowAll()
@@ -199,7 +208,99 @@ func (m *runningModel) showSingle(name string) {
 	for _, l := range lines {
 		m.snapSeq = max(m.snapSeq, l.Seq)
 	}
+	m.updateTails()
 	m.layout()
+}
+
+// updateTails shows the unfinished lines in the views: every project's in
+// the combined view, in session order, and the one of the single view's.
+// The attached project's ends in a cursor.
+func (m *runningModel) updateTails() {
+	tail := func(name string) []supervisor.LogLine {
+		text, ok := m.pending[name]
+		if name == m.attached {
+			text += "\x1b[7m \x1b[27m"
+		} else if !ok {
+			return nil
+		}
+		return []supervisor.LogLine{{Project: name, Stream: supervisor.Stdout, Text: text}}
+	}
+	var all []supervisor.LogLine
+	for _, e := range m.entries {
+		all = append(all, tail(e.info.Name)...)
+	}
+	if m.combined != nil {
+		m.combined.setTail(all)
+	}
+	if m.single != nil {
+		m.single.setTail(tail(m.singleFor))
+	}
+}
+
+// attach starts typing into the selected project, in its own view: keys go
+// to the program until ctrl+q.
+func (m *runningModel) attach() {
+	name := m.selectedName()
+	if name == "" || m.stopping {
+		return
+	}
+	label := m.labelOf(name)
+	e := m.byName[name]
+	switch {
+	case m.cfg.Projects[name] == nil || !m.cfg.Projects[name].PTY:
+		m.notice = label + " doesn't take input: set pty = true"
+		return
+	case m.selectedIdle() != "" || e == nil || !e.info.State.Alive():
+		m.notice = label + " isn't running"
+		return
+	}
+	m.attachedFrom = m.single == nil
+	if m.single == nil || m.singleFor != name {
+		m.showSingle(name)
+	}
+	m.attached = name
+	m.single.scrollBottom()
+	m.updateTails()
+	m.layout()
+}
+
+// detach stops typing into the attached project, with notice (if any) in
+// the help line.
+func (m *runningModel) detach(notice string) {
+	if m.attached == "" {
+		return
+	}
+	m.attached = ""
+	if m.attachedFrom {
+		m.single = nil
+	}
+	m.notice = notice
+	m.updateTails()
+	m.layout()
+}
+
+// handleAttachedKey types a key into the attached project; ctrl+q detaches.
+func (m *runningModel) handleAttachedKey(msg tea.KeyPressMsg) tea.Cmd {
+	if msg.String() == "ctrl+q" {
+		m.detach("")
+		return nil
+	}
+	m.typeInto(keyBytes(msg))
+	return nil
+}
+
+// typeInto sends b to the attached project, and shows the newest output.
+func (m *runningModel) typeInto(b []byte) {
+	if len(b) == 0 {
+		return
+	}
+	if err := m.sess.Input(m.attached, b); err != nil {
+		m.detach(err.Error())
+		return
+	}
+	if m.single != nil && !m.single.following() {
+		m.single.scrollBottom()
+	}
 }
 
 func (m *runningModel) Init() tea.Cmd {
@@ -393,6 +494,10 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 	default:
 		var cmd tea.Cmd
 		switch {
+		case m.attached != "":
+			if p, ok := msg.(tea.PasteMsg); ok {
+				m.typeInto([]byte(strings.NewReplacer("\r\n", "\r", "\n", "\r").Replace(p.Content)))
+			}
 		case m.picker != nil:
 			cmd = m.picker.update(msg) // a paste
 		case m.editing:
@@ -409,7 +514,7 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 // to expire the toasts it showed.
 func (m *runningModel) handleEvents(events []supervisor.Event) tea.Cmd {
 	var lines, single []supervisor.LogLine
-	states, changed, toasts := false, false, false
+	states, changed, toasts, pending := false, false, false, false
 	sec := m.now().Unix()
 	for _, e := range events {
 		switch e := e.(type) {
@@ -422,6 +527,14 @@ func (m *runningModel) handleEvents(events []supervisor.Event) tea.Cmd {
 				m.addToast(t)
 				toasts = true
 			}
+		case supervisor.PendingEvent:
+			m.entry(e.Project)
+			if e.Text == "" {
+				delete(m.pending, e.Project)
+			} else {
+				m.pending[e.Project] = e.Text
+			}
+			pending = true
 		case supervisor.WarningEvent:
 			m.entry(e.Project)
 			if !m.stopping {
@@ -446,6 +559,12 @@ func (m *runningModel) handleEvents(events []supervisor.Event) tea.Cmd {
 	if len(single) > 0 {
 		m.single.append(single...)
 	}
+	if pending {
+		m.updateTails()
+	}
+	if e := m.byName[m.attached]; e != nil && !e.info.State.Alive() {
+		m.detach(e.label + " isn't running any more")
+	}
 	var cmd tea.Cmd
 	if states {
 		m.layout() // exit codes and error counts change the sidebar's width
@@ -464,6 +583,8 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	toasts := m.toasts // any key dismisses them
 	m.toasts = nil
 	switch {
+	case m.attached != "":
+		return m.handleAttachedKey(msg)
 	case m.confirm != nil:
 		return m.handleConfirmKey(msg)
 	case m.picker != nil:
@@ -539,6 +660,8 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 			m.setSearch(search{})
 		}
 		m.clearErrorJump()
+	case "i":
+		m.attach()
 	case "b":
 		return m.openBranches()
 	case "p":
@@ -796,6 +919,7 @@ func (m *runningModel) report(err error) {
 // interrupt starts a graceful shutdown, or forces it if one is running.
 func (m *runningModel) interrupt() tea.Cmd {
 	m.confirm, m.toasts = nil, nil // everything stops now
+	m.detach("")
 	if !m.stopping {
 		m.stopping = true
 		done := m.sess.StopAll()

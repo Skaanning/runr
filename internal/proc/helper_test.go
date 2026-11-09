@@ -141,12 +141,26 @@ func (c *collector) add(l Line) {
 	c.lines = append(c.lines, l)
 }
 
+// texts returns the complete lines of stream.
 func (c *collector) texts(stream Stream) []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	var out []string
 	for _, l := range c.lines {
-		if l.Stream == stream {
+		if l.Stream == stream && !l.Partial {
+			out = append(out, l.Text)
+		}
+	}
+	return out
+}
+
+// partials returns the unfinished lines reported so far.
+func (c *collector) partials() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var out []string
+	for _, l := range c.lines {
+		if l.Partial {
 			out = append(out, l.Text)
 		}
 	}

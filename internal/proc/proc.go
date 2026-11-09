@@ -3,13 +3,16 @@ package proc
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // Spec describes a process to start.
@@ -20,8 +23,9 @@ type Spec struct {
 
 	// PTY runs the command on a pseudo-terminal of Cols × Rows (0: 120 × 50)
 	// instead of pipes, so it behaves as in a terminal (colors, line
-	// buffering). Its output is one stream (Stdout); it gets no input. On
-	// Windows it is a pseudo console (ConPTY).
+	// buffering). Its output is one stream (Stdout), with the unfinished
+	// current line reported as it changes (Line.Partial); Process.Write
+	// types into it. On Windows it is a pseudo console (ConPTY).
 	PTY        bool
 	Cols, Rows int
 
@@ -45,7 +49,15 @@ const (
 type Line struct {
 	Stream Stream
 	Text   string
+	// Partial marks the unfinished current line of a pseudo-terminal, e.g. a
+	// prompt and what is typed after it. The next Line replaces it: a newer
+	// partial line, or the complete one.
+	Partial bool
 }
+
+// ErrNoTerminal is returned by Process.Write for a process that doesn't run
+// on a pseudo-terminal, or no longer does.
+var ErrNoTerminal = errors.New("not running on a terminal")
 
 // MaxLineBytes is the longest line delivered as one Line; longer lines are
 // split into several.
@@ -103,6 +115,8 @@ type Process struct {
 
 	termMu sync.Mutex
 	term   terminal // the pseudo-terminal while it is open; nil without one
+
+	input chan []byte // queued for the terminal (Type); nil without one
 }
 
 // terminal is the pseudo-terminal a process runs on (Spec.PTY); see
@@ -201,16 +215,18 @@ func Start(spec Spec, onLine func(Line)) (*Process, error) {
 	}
 	if term != nil {
 		p.term = term
+		p.input = make(chan []byte, 256)
+		go p.typist()
 		p.handle.interruptWith(term)
 		readers.Add(1)
 		go func() {
 			defer readers.Done()
 			defer p.closeTerm()
-			readLines(&terminalReader{t: term}, Stdout, func(l Line) {
+			readTerminal(&terminalReader{t: term}, func(l Line) {
 				// Lines of nothing but the terminal's own escape sequences
 				// (Windows) are dropped.
-				if text := term.clean(l.Text); text != "" || l.Text == "" {
-					emit(Line{Stream: l.Stream, Text: text})
+				if text := term.clean(editLine(l.Text)); text != "" || l.Text == "" || l.Partial {
+					emit(Line{Stream: Stdout, Text: text, Partial: l.Partial})
 				}
 			})
 		}()
@@ -251,6 +267,55 @@ func (p *Process) Resize(cols, rows int) error {
 		return nil
 	}
 	return p.term.resize(cols, rows)
+}
+
+// Write types b into the process's pseudo-terminal, as keys pressed in a
+// terminal: "\r" is Enter, "\x03" Ctrl+C. Without one it returns
+// ErrNoTerminal. It blocks while the terminal's input buffer is full, i.e.
+// while the program doesn't read its input; see Type.
+func (p *Process) Write(b []byte) (int, error) {
+	p.termMu.Lock()
+	t := p.term
+	p.termMu.Unlock()
+	if t == nil {
+		return 0, ErrNoTerminal
+	}
+	return t.Write(b) // closing the terminal meanwhile makes it fail
+}
+
+// ErrInputFull is returned by Type while earlier input is still waiting for
+// the program to read it.
+var ErrInputFull = errors.New("the program isn't reading its input")
+
+// Type queues b to be written to the process's pseudo-terminal (see Write)
+// and returns without waiting. Input is written in the order it was typed.
+func (p *Process) Type(b []byte) error {
+	if p.input == nil {
+		return ErrNoTerminal
+	}
+	select {
+	case <-p.done:
+		return ErrNoTerminal
+	default:
+	}
+	select {
+	case p.input <- slices.Clone(b):
+		return nil
+	default:
+		return ErrInputFull
+	}
+}
+
+// typist writes the queued input until the process is done.
+func (p *Process) typist() {
+	for {
+		select {
+		case b := <-p.input:
+			_, _ = p.Write(b)
+		case <-p.done:
+			return
+		}
+	}
 }
 
 // closeTerm closes the pseudo-terminal once its output has been read.
@@ -349,6 +414,60 @@ func readLines(r io.Reader, stream Stream, emit func(Line)) {
 			return
 		}
 	}
+}
+
+// readTerminal reads a pseudo-terminal's output like readLines, and after
+// every read that ends inside a line also passes on that unfinished line as
+// it is so far (Partial), e.g. a prompt waiting for input. At the end the
+// unfinished line becomes a complete one.
+func readTerminal(r io.Reader, emit func(Line)) {
+	chunk := make([]byte, 4096)
+	var buf []byte
+	for {
+		n, err := r.Read(chunk)
+		buf = append(buf, chunk[:n]...)
+		for {
+			i := bytes.IndexByte(buf, '\n')
+			if i < 0 && len(buf) < MaxLineBytes {
+				break
+			}
+			if i < 0 || i >= MaxLineBytes {
+				i = MaxLineBytes - 1
+			}
+			emit(Line{Text: cleanLine(buf[:i+1])})
+			buf = append(buf[:0], buf[i+1:]...)
+		}
+		if err != nil {
+			if len(buf) > 0 {
+				emit(Line{Text: cleanLine(buf)})
+			}
+			return
+		}
+		if n > 0 && len(buf) > 0 {
+			if shown := unfinished(buf); len(shown) > 0 {
+				emit(Line{Text: cleanLine(shown), Partial: true})
+			}
+		}
+	}
+}
+
+// unfinished returns b without a rune or escape sequence cut off at its
+// end, which the next read completes.
+func unfinished(b []byte) []byte {
+	if i := bytes.LastIndexByte(b, '\x1b'); i >= 0 {
+		if n, _ := escapeSequence(string(b[i:])); i+n == len(b) && !escapeComplete(b[i:]) {
+			b = b[:i]
+		}
+	}
+	for k := 1; k <= utf8.UTFMax && k <= len(b); k++ {
+		if r := b[len(b)-k]; utf8.RuneStart(r) {
+			if !utf8.FullRune(b[len(b)-k:]) {
+				b = b[:len(b)-k]
+			}
+			break
+		}
+	}
+	return b
 }
 
 func cleanLine(b []byte) string {
