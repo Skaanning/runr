@@ -16,6 +16,7 @@ import (
 )
 
 func launcherConfig(t *testing.T) *config.Config {
+	t.Setenv(config.RootEnvVar, "") // dirs are stored as typed
 	dir := t.TempDir()
 	return &config.Config{
 		Projects: map[string]*config.Project{

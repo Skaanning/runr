@@ -180,6 +180,9 @@ func newAddCmd() *cobra.Command {
 				if p.Dir, err = os.Getwd(); err != nil {
 					return err
 				}
+				if p.Dir, err = config.NormalizeDir(p.Dir); err != nil {
+					return err
+				}
 			}
 			s.cfg.Projects[name] = p
 

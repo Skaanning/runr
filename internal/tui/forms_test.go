@@ -119,6 +119,37 @@ func TestProjectValuesNormalizesDir(t *testing.T) {
 	}
 }
 
+func TestProjectValuesUnderRunrRoot(t *testing.T) {
+	cfg := launcherConfig(t)
+	root := t.TempDir()
+	api := filepath.Join(root, "api")
+	if err := os.Mkdir(api, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(config.RootEnvVar, root)
+
+	v := newProjectValues(cfg, "")
+	v.name, v.cmd, v.dir = "x", "run", api
+	if c, err := v.candidate(cfg); err != nil || c.Projects["x"].Dir != "$RUNR_ROOT/api" {
+		t.Fatalf("typed absolute: %v", err)
+	}
+	v.dir = "$RUNR_ROOT/api"
+	if c, err := v.candidate(cfg); err != nil || c.Projects["x"].Dir != "$RUNR_ROOT/api" {
+		t.Fatalf("typed in root form: %v", err)
+	}
+	if check := checkDir(nil, "x", "$RUNR_ROOT/api", ""); check.err != nil {
+		t.Fatalf("check: %v", check.err)
+	}
+	if got := browseStart("$RUNR_ROOT/api/nope"); got != api {
+		t.Fatalf("browseStart = %q, want %q", got, api)
+	}
+
+	t.Setenv(config.RootEnvVar, "")
+	if check := checkDir(nil, "x", "$RUNR_ROOT/api", ""); check.err == nil || !strings.Contains(check.err.Error(), "$RUNR_ROOT is not set") {
+		t.Fatalf("check with the root unset: %v", check.err)
+	}
+}
+
 func TestGroupValues(t *testing.T) {
 	cfg := launcherConfig(t)
 	cfg.Groups["backend"] = []string{"db", "api"}

@@ -370,7 +370,7 @@ func checkDir(git GitReader, name, dir, envFile string) dirCheck {
 	var c dirCheck
 	dir, err := config.NormalizeDir(cleanPath(dir))
 	if err == nil {
-		dir, err = config.ExpandHome(dir)
+		dir, err = config.ExpandDir(dir)
 	}
 	if err != nil {
 		c.err = err

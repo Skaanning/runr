@@ -209,9 +209,13 @@ func importedProjects(file *importer.File, prefix string) (projects map[string]*
 		order = append(order, name)
 	}
 
+	dir, err := config.NormalizeDir(file.Dir) // $RUNR_ROOT/… when under the root
+	if err != nil {
+		return nil, nil, err
+	}
 	projects = map[string]*config.Project{}
 	for _, svc := range file.Services {
-		p := &config.Project{Dir: file.Dir, Cmd: svc.Cmd, EnvFile: file.EnvFile, ReadyPort: svc.Port}
+		p := &config.Project{Dir: dir, Cmd: svc.Cmd, EnvFile: file.EnvFile, ReadyPort: svc.Port}
 		if svc.Args != nil {
 			p.Cmd = joinCommand(svc.Args)
 		}

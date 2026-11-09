@@ -18,6 +18,15 @@ import (
 // EnvVar names the environment variable that overrides the config file location.
 const EnvVar = "RUNR_CONFIG"
 
+// RootEnvVar names the environment variable that holds the shared root for
+// project directories. A dir written as RootToken, or RootToken followed by
+// a path, resolves under it, so one config works for people who keep their
+// repositories in different places.
+const (
+	RootEnvVar = "RUNR_ROOT"
+	RootToken  = "$" + RootEnvVar
+)
+
 const (
 	DefaultShutdownTimeout = 5 * time.Second
 	DefaultScrollbackLines = 10000
@@ -149,9 +158,9 @@ func (p *Project) ReadyConditions() []string {
 	return set
 }
 
-// ResolvedDir returns Dir with a leading ~ expanded to the user's home directory.
+// ResolvedDir returns Dir with a leading $RUNR_ROOT or ~ expanded (see ExpandDir).
 func (p *Project) ResolvedDir() (string, error) {
-	return ExpandHome(p.Dir)
+	return ExpandDir(p.Dir)
 }
 
 // ResolvedEnvFile returns the absolute path of EnvFile (resolved relative to the
@@ -315,6 +324,54 @@ func ExpandHome(path string) (string, error) {
 	return filepath.Join(home, path[1:]), nil
 }
 
+// Root returns the shared root for project directories from $RUNR_ROOT, with
+// ~ expanded; ok is false when the variable is unset or empty. The root must
+// be an absolute path.
+func Root() (root string, ok bool, err error) {
+	v := strings.TrimSpace(os.Getenv(RootEnvVar))
+	if v == "" {
+		return "", false, nil
+	}
+	if root, err = ExpandHome(v); err != nil {
+		return "", false, err
+	}
+	if !filepath.IsAbs(root) {
+		return "", false, fmt.Errorf("%s=%s is not an absolute path", RootEnvVar, v)
+	}
+	return filepath.Clean(root), true, nil
+}
+
+// rootRel reports whether dir is in root form, $RUNR_ROOT or $RUNR_ROOT
+// followed by a separator, and returns the path after the token.
+func rootRel(dir string) (rel string, ok bool) {
+	rest, ok := strings.CutPrefix(dir, RootToken)
+	if !ok || (rest != "" && rest[0] != '/' && rest[0] != '\\') {
+		return "", false
+	}
+	return strings.TrimLeft(rest, `/\`), true
+}
+
+// ExpandDir resolves a project directory as written in the config: a
+// leading $RUNR_ROOT is replaced by Root(), a leading ~ by the user's home
+// directory. Other paths are returned unchanged.
+func ExpandDir(dir string) (string, error) {
+	rel, ok := rootRel(dir)
+	if !ok {
+		return ExpandHome(dir)
+	}
+	root, set, err := Root()
+	if err != nil {
+		return "", err
+	}
+	if !set {
+		return "", fmt.Errorf("%s is not set", RootToken)
+	}
+	if rel == "" {
+		return root, nil
+	}
+	return filepath.Join(root, filepath.FromSlash(strings.ReplaceAll(rel, `\`, "/"))), nil
+}
+
 // DisplayPath shortens paths under the home directory to ~/... for output.
 func DisplayPath(path string) string {
 	home, err := os.UserHomeDir()
@@ -330,13 +387,43 @@ func DisplayPath(path string) string {
 	return path
 }
 
-// NormalizeDir makes dir absolute, keeping a leading ~ so the config stays
-// portable between machines. Trailing separators are dropped.
+// NormalizeDir makes dir absolute, keeping a leading ~ or $RUNR_ROOT so the
+// config stays portable between machines. A directory under $RUNR_ROOT, when
+// it is set, is written as $RUNR_ROOT/<path> with forward slashes. Trailing
+// separators are dropped.
 func NormalizeDir(dir string) (string, error) {
-	if dir == "" || strings.HasPrefix(dir, "~") {
+	if dir == "" {
+		return "", nil
+	}
+	if _, ok := rootRel(dir); ok {
 		return strings.TrimRight(dir, `/\`), nil
 	}
-	return filepath.Abs(dir)
+	norm := strings.TrimRight(dir, `/\`)
+	abs := norm
+	if strings.HasPrefix(dir, "~") {
+		expanded, err := ExpandHome(norm)
+		if err != nil {
+			return norm, nil // keep it as written; Validate reports it
+		}
+		abs = expanded
+	} else {
+		var err error
+		if abs, err = filepath.Abs(dir); err != nil {
+			return "", err
+		}
+		norm = abs
+	}
+	if root, ok, err := Root(); err == nil && ok {
+		if rel, err := filepath.Rel(root, filepath.Clean(abs)); err == nil {
+			if rel == "." {
+				return RootToken, nil
+			}
+			if filepath.IsLocal(rel) {
+				return RootToken + "/" + filepath.ToSlash(rel), nil
+			}
+		}
+	}
+	return norm, nil
 }
 
 // Clone returns a deep copy of the config.

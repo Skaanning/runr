@@ -12,12 +12,13 @@ import (
 
 // testEnv points runr at a fresh config file, and its state (session
 // files, the last session) at a fresh directory, for the duration of the
-// test.
+// test. $RUNR_ROOT is cleared.
 func testEnv(t *testing.T) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "config.toml")
 	t.Setenv(config.EnvVar, path)
 	t.Setenv(state.EnvVar, t.TempDir())
+	t.Setenv(config.RootEnvVar, "")
 	return path
 }
 

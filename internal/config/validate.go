@@ -98,7 +98,7 @@ func (c *Config) Validate() (warnings []Issue, err error) {
 		if strings.TrimSpace(p.Dir) == "" {
 			addErr("project", name, "dir", "is required")
 		} else if dir, err := p.ResolvedDir(); err != nil {
-			addErr("project", name, "dir", "%v", err)
+			addWarn("project", name, "dir", "%v", err) // e.g. $RUNR_ROOT unset here: other projects still work
 		} else if fi, err := os.Stat(dir); err != nil {
 			addWarn("project", name, "dir", "%s does not exist", dir)
 		} else if !fi.IsDir() {

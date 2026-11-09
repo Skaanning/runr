@@ -327,3 +327,23 @@ func TestExampleConfigIsValid(t *testing.T) {
 		t.Errorf("settings = %+v", c.Settings)
 	}
 }
+
+func TestValidateRootUnset(t *testing.T) {
+	c := validConfig(t)
+	root := filepath.Dir(c.Projects["api"].Dir)
+	c.Projects["api"].Dir = "$RUNR_ROOT/" + filepath.Base(c.Projects["api"].Dir)
+
+	t.Setenv(RootEnvVar, root)
+	if warnings, err := c.Validate(); err != nil || len(warnings) != 0 {
+		t.Fatalf("with the root set: %v, %v", warnings, err)
+	}
+
+	t.Setenv(RootEnvVar, "")
+	warnings, err := c.Validate()
+	if err != nil {
+		t.Fatalf("an unset root is a warning, not an error: %v", err)
+	}
+	if len(warnings) != 1 || warnings[0].String() != `project "api": dir: $RUNR_ROOT is not set` {
+		t.Errorf("warnings: %v", warnings)
+	}
+}

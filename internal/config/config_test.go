@@ -381,3 +381,126 @@ func TestTheme(t *testing.T) {
 		t.Error(err)
 	}
 }
+
+// setHome points the user's home directory at dir for the test.
+func setHome(t *testing.T, dir string) {
+	t.Helper()
+	t.Setenv("HOME", dir)
+	t.Setenv("USERPROFILE", dir)
+}
+
+func TestRoot(t *testing.T) {
+	home := t.TempDir()
+	setHome(t, home)
+	abs := t.TempDir()
+	tests := []struct {
+		value   string
+		want    string
+		ok      bool
+		wantErr string
+	}{
+		{"", "", false, ""},
+		{"  ", "", false, ""},
+		{abs, abs, true, ""},
+		{abs + string(filepath.Separator), abs, true, ""},
+		{"~/work", filepath.Join(home, "work"), true, ""},
+		{"work", "", false, "RUNR_ROOT=work is not an absolute path"},
+	}
+	for _, tt := range tests {
+		t.Setenv(RootEnvVar, tt.value)
+		got, ok, err := Root()
+		if tt.wantErr != "" {
+			if err == nil || err.Error() != tt.wantErr {
+				t.Errorf("Root() with %q: err = %v, want %q", tt.value, err, tt.wantErr)
+			}
+			continue
+		}
+		if err != nil || got != tt.want || ok != tt.ok {
+			t.Errorf("Root() with %q = %q, %v, %v; want %q, %v", tt.value, got, ok, err, tt.want, tt.ok)
+		}
+	}
+}
+
+func TestExpandDir(t *testing.T) {
+	home := t.TempDir()
+	setHome(t, home)
+	root := t.TempDir()
+	t.Setenv(RootEnvVar, root)
+	tests := map[string]string{
+		"$RUNR_ROOT":           root,
+		"$RUNR_ROOT/":          root,
+		"$RUNR_ROOT/api":       filepath.Join(root, "api"),
+		"$RUNR_ROOT/apps/web":  filepath.Join(root, "apps", "web"),
+		`$RUNR_ROOT\apps\web`:  filepath.Join(root, "apps", "web"),
+		"$RUNR_ROOTX/api":      "$RUNR_ROOTX/api",
+		"${RUNR_ROOT}/api":     "${RUNR_ROOT}/api",
+		"~/code":               filepath.Join(home, "code"),
+		"/srv/api":             "/srv/api",
+		"rel/$RUNR_ROOT/thing": "rel/$RUNR_ROOT/thing",
+	}
+	for in, want := range tests {
+		if got, err := ExpandDir(in); err != nil || got != want {
+			t.Errorf("ExpandDir(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+
+	t.Setenv(RootEnvVar, "~/work")
+	if got, err := ExpandDir("$RUNR_ROOT/api"); err != nil || got != filepath.Join(home, "work", "api") {
+		t.Errorf("with a ~ root: %q, %v", got, err)
+	}
+
+	t.Setenv(RootEnvVar, "")
+	if _, err := ExpandDir("$RUNR_ROOT/api"); err == nil || err.Error() != "$RUNR_ROOT is not set" {
+		t.Errorf("unset root: err = %v", err)
+	}
+	if got, err := ExpandDir("/srv/api"); err != nil || got != "/srv/api" {
+		t.Errorf("unset root, plain dir: %q, %v", got, err)
+	}
+
+	t.Setenv(RootEnvVar, "relative")
+	if _, err := ExpandDir("$RUNR_ROOT/api"); err == nil || !strings.Contains(err.Error(), "not an absolute path") {
+		t.Errorf("relative root: err = %v", err)
+	}
+}
+
+func TestNormalizeDir(t *testing.T) {
+	home := t.TempDir()
+	setHome(t, home)
+	root := filepath.Join(home, "work")
+	cwd := t.TempDir()
+	t.Chdir(cwd)
+
+	check := func(in, want string) {
+		t.Helper()
+		if got, err := NormalizeDir(in); err != nil || got != want {
+			t.Errorf("NormalizeDir(%q) with RUNR_ROOT=%q = %q, %v; want %q", in, os.Getenv(RootEnvVar), got, err, want)
+		}
+	}
+
+	// Without a root: as before.
+	t.Setenv(RootEnvVar, "")
+	check("", "")
+	check("~/work/api/", "~/work/api")
+	check("sub", filepath.Join(cwd, "sub"))
+	check(filepath.Join(root, "api"), filepath.Join(root, "api"))
+	check("$RUNR_ROOT/api/", "$RUNR_ROOT/api") // kept as written, even unset
+
+	for _, value := range []string{root, "~/work"} {
+		t.Setenv(RootEnvVar, value)
+		check(filepath.Join(root, "api"), "$RUNR_ROOT/api")
+		check(filepath.Join(root, "apps", "web")+string(filepath.Separator), "$RUNR_ROOT/apps/web")
+		check(root, "$RUNR_ROOT")
+		check("~/work/api", "$RUNR_ROOT/api")
+		check("~/work", "$RUNR_ROOT")
+		check("$RUNR_ROOT/api", "$RUNR_ROOT/api")
+		check(`$RUNR_ROOT\api`, `$RUNR_ROOT\api`)
+		check(root+"2", root+"2")                                               // a sibling with the same prefix
+		check(filepath.Join(root, "..", "other"), filepath.Join(home, "other")) // outside
+		check("~/other", "~/other")
+		check("sub", filepath.Join(cwd, "sub"))
+	}
+
+	// A relative root is ignored here; ExpandDir and Validate report it.
+	t.Setenv(RootEnvVar, "work")
+	check(filepath.Join(root, "api"), filepath.Join(root, "api"))
+}

@@ -76,7 +76,7 @@ func expandDir(dir string) string {
 	if dir == "" {
 		return "."
 	}
-	if d, err := config.ExpandHome(dir); err == nil {
+	if d, err := config.ExpandDir(dir); err == nil {
 		return d
 	}
 	return dir

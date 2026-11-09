@@ -99,7 +99,9 @@ Everything lives in one file:
 | Windows | `%AppData%\runr\config.toml` |
 
 Set `RUNR_CONFIG=/path/to/config.toml` to use a different file. The file is created on the
-first change and is readable only by you, since `env` values may hold secrets.
+first change and is readable only by you, since `env` values may hold secrets. To share a
+config with your team when everyone keeps their repositories somewhere else, see
+[Sharing a config](#sharing-a-config).
 
 You can edit it by hand, but `runr add`/`edit`, `runr group …` and the launcher's forms all
 validate before saving and are usually easier. runr rewrites the whole file when it saves,
@@ -166,7 +168,7 @@ saves the one you pick. `runr theme` lists them and `runr theme <name>` sets one
 
 | Field | Required | Description |
 |---|---|---|
-| `dir` | yes | Working directory. `~` is expanded. |
+| `dir` | yes | Working directory. `~` is expanded, and a leading `$RUNR_ROOT` is replaced by that variable (see [Sharing a config](#sharing-a-config)). |
 | `cmd` | yes | Command line, run with `sh -c` (Unix) or `cmd /c` (Windows), so pipes, `&&` and variables work |
 | `env` | no | Environment variables, e.g. `{ PORT = "8080" }` |
 | `env_file` | no | A `.env` file, relative to `dir` (absolute and `~` paths work too) |
@@ -185,6 +187,36 @@ times out after 1 s) for as long as the process runs; there is no overall time l
 
 Names of projects and groups may contain letters, digits, `.`, `_` and `-` (starting with a
 letter or digit), and share one namespace so `runr up <name>` is never ambiguous.
+
+### Sharing a config
+
+Set `RUNR_ROOT` to the directory where you keep your repositories, e.g. in your shell profile:
+
+```sh
+export RUNR_ROOT=~/work        # a teammate might use ~/src, or D:\src on Windows
+```
+
+A `dir` that starts with `$RUNR_ROOT` is then resolved under it, so the same config works for
+everyone, wherever their checkouts are:
+
+```toml
+[projects.api]
+dir = "$RUNR_ROOT/api"
+cmd = "go run ./cmd/server"
+```
+
+While `RUNR_ROOT` is set, `runr add`, `runr edit --dir`, `runr import` and the launcher's form
+write directories under it this way by themselves; directories elsewhere keep their `~` or
+absolute form. To switch a project you added earlier, run `runr edit <name> --dir <its dir>`
+(or open it in the launcher's form and save). The value of `RUNR_ROOT` may start with `~` and
+must otherwise be an absolute path. Only the exact form `$RUNR_ROOT` is understood, not
+`${RUNR_ROOT}` or other variables.
+
+If `RUNR_ROOT` isn't set, projects that use it get a warning (`dir: $RUNR_ROOT is not set`)
+and `runr up` refuses to start them; the other projects work as usual.
+
+To keep the shared file itself in one place, point `RUNR_CONFIG` at it. Remember that `env`
+values are in the file too, so leave secrets to an `env_file` that each person keeps.
 
 ### Validation
 

@@ -47,8 +47,10 @@ cmd = "go run ./cmd/worker"
 depends_on = ["db"]
 color = "#ff8800"
 
+# With RUNR_ROOT set (e.g. export RUNR_ROOT=~/code), a dir can be written relative to it,
+# so a team can share one config while keeping their checkouts in different places.
 [projects.web]
-dir = "~/code/web"
+dir = "$RUNR_ROOT/web"
 cmd = "npm run dev"
 depends_on = ["api"]
 # npm prints an update notice when it exits; this turns it off.
