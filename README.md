@@ -20,6 +20,10 @@ Works on Linux, macOS and Windows.
 - **Launcher:** pick groups and projects to start, and add or edit them in forms.
 - **Running view:** every process with its state, uptime, ports and git branch; combined or
   per-process logs with search; restart, stop and start processes as you go.
+- **Interactive programs:** run a project on a terminal (`pty = true`) and attach to it to
+  answer its prompts, e.g. a script that asks for a branch name.
+- **Shared configs:** write project directories as `$RUNR_ROOT/api`, so a team can share one
+  config while everyone keeps their checkouts in a different place.
 - **Git:** see each project's branch and changes, switch branches, fetch and pull all.
 - **Import** projects from a `Procfile` or a Docker Compose file.
 - **Logs** saved to files on demand or for every session, plain output when piped, and color
@@ -93,8 +97,10 @@ Already have a `Procfile` or `compose.yaml`? `runr import` registers all of it a
 The [guide](docs/guide.md) covers everything else:
 
 - [Commands](docs/guide.md#commands) and their flags
-- [Configuration](docs/guide.md#configuration): settings, themes, project fields
-- [The launcher](docs/guide.md#the-launcher) and [the running view](docs/guide.md#the-running-view), with all their keys
+- [Configuration](docs/guide.md#configuration): settings, themes, project fields,
+  [sharing a config](docs/guide.md#sharing-a-config)
+- [The launcher](docs/guide.md#the-launcher) and [the running view](docs/guide.md#the-running-view), with all their keys,
+  and [typing into a program](docs/guide.md#typing-into-a-program)
 - [Saving logs](docs/guide.md#saving-logs) and [Git](docs/guide.md#git)
 - [How processes are run](docs/guide.md#how-processes-are-run) and
   [Troubleshooting](docs/guide.md#troubleshooting)
