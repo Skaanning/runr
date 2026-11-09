@@ -163,6 +163,17 @@ func (p *Project) ResolvedDir() (string, error) {
 	return ExpandDir(p.Dir)
 }
 
+// DisplayDir is the project's directory as shown in the UI: resolved (see
+// ExpandDir) and shortened with DisplayPath, or Dir as written when it can't
+// be resolved, e.g. $RUNR_ROOT/api while RUNR_ROOT is unset.
+func (p *Project) DisplayDir() string {
+	dir, err := p.ResolvedDir()
+	if err != nil {
+		return p.Dir
+	}
+	return DisplayPath(dir)
+}
+
 // ResolvedEnvFile returns the absolute path of EnvFile (resolved relative to the
 // project dir), or "" if no env file is configured.
 func (p *Project) ResolvedEnvFile() (string, error) {

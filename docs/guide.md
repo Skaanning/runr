@@ -212,6 +212,9 @@ absolute form. To switch a project you added earlier, run `runr edit <name> --di
 must otherwise be an absolute path. Only the exact form `$RUNR_ROOT` is understood, not
 `${RUNR_ROOT}` or other variables.
 
+The launcher and the branch picker show the resolved directory (`~/work/api`); `runr ls`
+shows the dir as written in the config.
+
 If `RUNR_ROOT` isn't set, projects that use it get a warning (`dir: $RUNR_ROOT is not set`)
 and `runr up` refuses to start them; the other projects work as usual.
 

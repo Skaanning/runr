@@ -334,7 +334,7 @@ func (a *gitActions) showBranches(msg branchesMsg) tea.Cmd {
 	others := a.labels(h.sharing(msg.project, msg.repo.Root))
 	var dir string
 	if p := a.cfg.Projects[msg.project]; p != nil {
-		dir = p.Dir
+		dir = p.DisplayDir()
 	}
 	context := branchContext(a.st, h.styledLabel(msg.project), dir, h.tracker(), msg.project)
 	p, cmd := branchPicker(a.st, msg, h.label(msg.project), context, others, func(b gitinfo.Branch) tea.Cmd {

@@ -534,3 +534,23 @@ func inFrame(rows []string) []string {
 	}
 	return out
 }
+
+func TestLauncherShowsResolvedRootDirs(t *testing.T) {
+	cfg := launcherConfig(t)
+	root := t.TempDir()
+	cfg.Projects["db"].Dir = "$RUNR_ROOT"
+	t.Setenv(config.RootEnvVar, root)
+
+	m := newTestLauncher(t, cfg)
+	screen := strings.Join(launcherScreen(m), "\n")
+	if strings.Contains(screen, "$RUNR_ROOT") {
+		t.Errorf("the launcher shows the root token:\n%s", screen)
+	}
+
+	// Unset, the dir can't be resolved: shown as written, so it says why.
+	t.Setenv(config.RootEnvVar, "")
+	m = newTestLauncher(t, cfg)
+	if screen := strings.Join(launcherScreen(m), "\n"); !strings.Contains(screen, "$RUNR_ROOT") {
+		t.Errorf("unset root not shown:\n%s", screen)
+	}
+}

@@ -9,8 +9,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
-
-	"github.com/Skaanning/runr/internal/config"
 )
 
 // Drawing the launcher: the group cards and project list, the status bar
@@ -169,7 +167,7 @@ func (m *launcherModel) rows() (rows []string, first, last int) {
 	nameWidth, dirWidth, gitCol := 0, 0, 0
 	for _, it := range m.items[groups:] {
 		nameWidth = max(nameWidth, ansi.StringWidth(it.name))
-		dirWidth = max(dirWidth, ansi.StringWidth(config.DisplayPath(m.cfg.Projects[it.name].Dir)))
+		dirWidth = max(dirWidth, ansi.StringWidth(m.cfg.Projects[it.name].DisplayDir()))
 		if g, ok := m.git.get(it.name); ok {
 			gitCol = max(gitCol, gitWidth(g))
 		}
@@ -255,7 +253,7 @@ func (m *launcherModel) projectRow(name, label string, current bool, nameWidth, 
 		nameStyle.Foreground(color).Render(pad(ansi.Truncate(name, nameWidth, "…"), nameWidth)) + "  "
 
 	p := m.cfg.Projects[name]
-	dir := pad(shortenPath(config.DisplayPath(p.Dir), dirWidth), dirWidth)
+	dir := pad(shortenPath(p.DisplayDir(), dirWidth), dirWidth)
 	if m.missing[name] {
 		dir = m.st.err.Render(dir)
 	} else {

@@ -504,3 +504,23 @@ func TestNormalizeDir(t *testing.T) {
 	t.Setenv(RootEnvVar, "work")
 	check(filepath.Join(root, "api"), filepath.Join(root, "api"))
 }
+
+func TestDisplayDir(t *testing.T) {
+	home := t.TempDir()
+	setHome(t, home)
+	t.Setenv(RootEnvVar, filepath.Join(home, "work"))
+	tests := map[string]string{
+		"$RUNR_ROOT/api": "~" + string(filepath.Separator) + filepath.Join("work", "api"),
+		"~/code":         "~" + string(filepath.Separator) + "code",
+		"/srv/api":       "/srv/api",
+	}
+	for dir, want := range tests {
+		if got := (&Project{Dir: dir}).DisplayDir(); got != want {
+			t.Errorf("DisplayDir(%q) = %q, want %q", dir, got, want)
+		}
+	}
+	t.Setenv(RootEnvVar, "")
+	if got := (&Project{Dir: "$RUNR_ROOT/api"}).DisplayDir(); got != "$RUNR_ROOT/api" {
+		t.Errorf("unset root: %q", got)
+	}
+}
