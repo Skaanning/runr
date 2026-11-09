@@ -424,10 +424,28 @@ func (pf *projectForm) dirInfo() string {
 		return st.warn.Render(c.err.Error())
 	}
 	info := st.ok.Render("✓") + " " + st.faint.Render("exists")
+	if config.RootPrefix(cleanPath(pf.v.dir)) > 0 {
+		if dir, err := config.ExpandDir(cleanPath(pf.v.dir)); err == nil {
+			info += st.faint.Render(" · " + config.DisplayPath(dir))
+		}
+	}
 	if c.git != nil {
 		info += st.faint.Render(" · git: ") + gitLabel(st, *c.git, maxGitWidth)
 	}
 	return info
+}
+
+// rootPrefix picks the $RUNR_ROOT a dir starts with, to draw it apart:
+// in the accent color while RUNR_ROOT is set, as a warning while it isn't.
+func rootPrefix(st *styles, dir string) (int, lipgloss.Style) {
+	n := config.RootPrefix(dir)
+	if n == 0 {
+		return 0, lipgloss.Style{}
+	}
+	if _, ok, err := config.Root(); !ok || err != nil {
+		return n, st.warn
+	}
+	return n, st.accent.Bold(true)
 }
 
 // envFileInfo is the line under the env file: "✓ found · 4 variables".
@@ -566,6 +584,9 @@ func newProjectForm(st *styles, cfg *config.Config, name string, git GitReader) 
 	dirField.check, dirField.info = check("dir"), pf.dirInfo
 	dirField.keys, dirField.ghost, dirField.path = pf.completeDir, pf.dirGhost, true
 	dirField.hints = [][2]string{{"→", "complete"}, {"ctrl+o", "browse"}}
+	dirField.prefix = func(value string) (int, lipgloss.Style) {
+		return rootPrefix(pf.st, value)
+	}
 	pf.dirField = dirField
 	basics := &formSection{title: "Basics", fields: []*formField{nameField, cmdField, dirField}}
 
@@ -629,7 +650,7 @@ func newProjectForm(st *styles, cfg *config.Config, name string, git GitReader) 
 		handle: pf.handle,
 		state:  pf,
 		context: func() string {
-			return st.faint.Render(config.DisplayPath(strings.TrimSpace(v.dir)))
+			return st.faint.Render((&config.Project{Dir: strings.TrimSpace(v.dir)}).DisplayDir())
 		},
 	}
 }

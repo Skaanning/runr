@@ -362,6 +362,15 @@ func rootRel(dir string) (rel string, ok bool) {
 	return strings.TrimLeft(rest, `/\`), true
 }
 
+// RootPrefix returns the length of the $RUNR_ROOT token that dir starts
+// with, or 0 when dir isn't in root form.
+func RootPrefix(dir string) int {
+	if _, ok := rootRel(dir); ok {
+		return len(RootToken)
+	}
+	return 0
+}
+
 // ExpandDir resolves a project directory as written in the config: a
 // leading $RUNR_ROOT is replaced by Root(), a leading ~ by the user's home
 // directory. Other paths are returned unchanged.

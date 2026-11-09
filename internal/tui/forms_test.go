@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/Skaanning/runr/internal/config"
@@ -147,6 +148,65 @@ func TestProjectValuesUnderRunrRoot(t *testing.T) {
 	t.Setenv(config.RootEnvVar, "")
 	if check := checkDir(nil, "x", "$RUNR_ROOT/api", ""); check.err == nil || !strings.Contains(check.err.Error(), "$RUNR_ROOT is not set") {
 		t.Fatalf("check with the root unset: %v", check.err)
+	}
+}
+
+func TestStylePrefix(t *testing.T) {
+	style := lipgloss.NewStyle().Bold(true)
+	prefix := func(string) (int, lipgloss.Style) { return len(config.RootToken), style }
+	value := "$RUNR_ROOT/api"
+
+	view := "\x1b[31m" + value + "\x1b[m"
+	out := stylePrefix(view, value, -1, prefix)
+	if ansi.Strip(out) != value || !strings.HasPrefix(out, style.Render("$RUNR_ROOT")) {
+		t.Errorf("no cursor: %q", out)
+	}
+
+	// The cursor's cell (reverse video) is kept as the input drew it.
+	view = "\x1b[31m$RU\x1b[m\x1b[7mN\x1b[m\x1b[31mR_ROOT/api\x1b[m"
+	out = stylePrefix(view, value, 3, prefix)
+	if ansi.Strip(out) != value || !strings.HasPrefix(out, style.Render("$RU")+"\x1b[31m\x1b[m\x1b[7mN") ||
+		!strings.Contains(out, style.Render("R_ROOT")) {
+		t.Errorf("cursor in the prefix: %q", out)
+	}
+
+	// Scrolled so that the value's start isn't shown: unchanged.
+	if view := "\x1b[31mOOT/api\x1b[m"; stylePrefix(view, value, -1, prefix) != view {
+		t.Error("scrolled view changed")
+	}
+	none := func(string) (int, lipgloss.Style) { return 0, style }
+	if view := "/srv/api"; stylePrefix(view, view, -1, none) != view {
+		t.Error("no prefix: view changed")
+	}
+}
+
+func TestProjectFormShowsRunrRoot(t *testing.T) {
+	cfg := launcherConfig(t)
+	root := t.TempDir()
+	api := filepath.Join(root, "api")
+	if err := os.Mkdir(api, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv(config.RootEnvVar, root)
+	st := newStyles(terminalTheme)
+	ef := newProjectForm(st, cfg, "", nil)
+	pf := ef.state.(*projectForm)
+	pf.dirField.setValue("$RUNR_ROOT/api")
+
+	rows := strings.Join(ef.form.fieldRows(pf.dirField, false, 80), "\n")
+	if !strings.Contains(rows, st.accent.Bold(true).Render("$RUNR_ROOT")) {
+		t.Errorf("token not in the accent color: %q", rows)
+	}
+	c := checkDir(nil, "x", pf.v.dir, "")
+	pf.checked = &c
+	if got, want := ansi.Strip(pf.dirInfo()), "✓ exists · "+config.DisplayPath(api); got != want {
+		t.Errorf("dir info = %q, want %q", got, want)
+	}
+
+	t.Setenv(config.RootEnvVar, "")
+	rows = strings.Join(ef.form.fieldRows(pf.dirField, false, 80), "\n")
+	if !strings.Contains(rows, st.warn.Render("$RUNR_ROOT")) {
+		t.Errorf("unset root: token not as a warning: %q", rows)
 	}
 }
 

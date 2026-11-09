@@ -64,6 +64,9 @@ type formField struct {
 	ghost func() string
 	// path marks an input holding a path: a paste loses quotes around it.
 	path bool
+	// prefix, if set, returns how many leading characters (ASCII) of an
+	// input's value to draw in style instead, e.g. $RUNR_ROOT; 0 for none.
+	prefix func(value string) (n int, style lipgloss.Style)
 	// display, if set, renders a text field's value while it isn't focused.
 	display func(width int) []string
 
@@ -473,10 +476,17 @@ func (f *form) fieldRows(fd *formField, focused bool, width int) []string {
 		fd.input.SetWidth(max(w-1, 1)) // a cell for the cursor
 		// The input scrolls its value to fit; past its width is only padding.
 		value := pad(ansi.Truncate(fd.input.View(), max(w, 1), ""), w)
+		cursor := -1 // the cursor's cell, kept as the input drew it
+		if focused {
+			cursor = fd.input.Position()
+		}
 		if focused && fd.ghost != nil && fd.input.Position() == len([]rune(fd.input.Value())) {
 			if g := fd.ghost(); g != "" {
 				value = pad(f.ghostView(fd.input.Value(), g, max(w, 1)), w)
 			}
+		}
+		if fd.prefix != nil {
+			value = stylePrefix(value, fd.input.Value(), cursor, fd.prefix)
 		}
 		rows = append(rows, bar+st.faint.Render("›")+" "+adorn+value+note)
 	case textField:
@@ -518,6 +528,32 @@ func (f *form) fieldRows(fd *formField, focused bool, width int) []string {
 		}
 	}
 	return rows
+}
+
+// stylePrefix redraws the prefix of an input's value that prefix picks in
+// its style, when the input shows the value from its start (it scrolls long
+// values). The cursor's cell stays as it was drawn.
+func stylePrefix(view, value string, cursor int, prefix func(string) (int, lipgloss.Style)) string {
+	n, style := prefix(value)
+	if n <= 0 || n > len(value) || !strings.HasPrefix(ansi.Strip(view), value[:n]) {
+		return view
+	}
+	var b strings.Builder
+	for i := 0; i < n; {
+		if i == cursor {
+			b.WriteString(ansi.Cut(view, i, i+1))
+			i++
+			continue
+		}
+		end := n
+		if cursor > i && cursor < n {
+			end = cursor
+		}
+		b.WriteString(style.Render(value[i:end]))
+		i = end
+	}
+	b.WriteString(ansi.Cut(view, n, ansi.StringWidth(view)))
+	return b.String()
 }
 
 // ghostView renders an input's value with the cursor at its end, on the

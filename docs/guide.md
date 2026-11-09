@@ -213,7 +213,9 @@ must otherwise be an absolute path. Only the exact form `$RUNR_ROOT` is understo
 `${RUNR_ROOT}` or other variables.
 
 The launcher and the branch picker show the resolved directory (`~/work/api`); `runr ls`
-shows the dir as written in the config.
+shows the dir as written in the config. In the project form, `$RUNR_ROOT` is drawn in the
+accent color (yellow while the variable isn't set), and the line under the field shows where
+it points: `✓ exists · ~/work/api`.
 
 If `RUNR_ROOT` isn't set, projects that use it get a warning (`dir: $RUNR_ROOT is not set`)
 and `runr up` refuses to start them; the other projects work as usual.
