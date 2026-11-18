@@ -432,8 +432,8 @@ func TestListenPathTooLong(t *testing.T) {
 }
 
 // deadSocket leaves a socket file nobody listens on in dir, as a runr that
-// was killed does, modified at mod.
-func deadSocket(t *testing.T, dir, name string, mod time.Time) string {
+// was killed does. (Windows can't change a socket file's times.)
+func deadSocket(t *testing.T, dir, name string) string {
 	t.Helper()
 	os.MkdirAll(dir, 0o700)
 	path := filepath.Join(dir, name)
@@ -443,9 +443,6 @@ func deadSocket(t *testing.T, dir, name string, mod time.Time) string {
 	}
 	ln.SetUnlinkOnClose(false)
 	ln.Close()
-	if err := os.Chtimes(path, mod, mod); err != nil {
-		t.Fatal(err)
-	}
 	return path
 }
 
@@ -460,22 +457,31 @@ func TestSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(a.Close)
-	stale := deadSocket(t, dir, "100.sock", time.Now().Add(-time.Minute))
-	fresh := deadSocket(t, dir, "101.sock", time.Now())
+	dead := deadSocket(t, dir, "100.sock")
 	os.WriteFile(filepath.Join(dir, "notes.txt"), nil, 0o600)
 
+	// A new socket nobody listens on may be a session about to listen: kept.
 	found, problems := Sessions(dir)
 	if len(found) != 2 || found[0].Path != a.Path() || found[1].Path != b.Path() || found[1].Status.Pid != 200 {
 		t.Errorf("found = %+v", found)
 	}
-	if len(problems) != 1 || !strings.HasPrefix(problems[0].Error(), "session 101: ") {
+	if len(problems) != 1 || !strings.HasPrefix(problems[0].Error(), "session 100: ") {
 		t.Errorf("problems = %v", problems)
 	}
-	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Error("stale socket kept")
+	if _, err := os.Stat(dead); err != nil {
+		t.Error("new socket removed")
 	}
-	if _, err := os.Stat(fresh); err != nil {
-		t.Error("fresh socket removed")
+
+	// Once it is old enough, it is stale: removed without a word.
+	old := staleAfter
+	staleAfter = -time.Hour
+	t.Cleanup(func() { staleAfter = old })
+	found, problems = Sessions(dir)
+	if len(found) != 2 || len(problems) != 0 {
+		t.Errorf("found = %+v, problems = %v", found, problems)
+	}
+	if _, err := os.Stat(dead); !os.IsNotExist(err) {
+		t.Error("stale socket kept")
 	}
 }
 
