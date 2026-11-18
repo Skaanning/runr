@@ -7,9 +7,10 @@ Everything about using runr. For a short introduction, see the [README](../READM
 - [Configuration](#configuration): [settings](#settings), [themes](#themes),
   [project fields](#project-fields), [validation](#validation)
 - [The launcher](#the-launcher)
-- [The running view](#the-running-view): [errors](#errors)
+- [The running view](#the-running-view): [errors](#errors), [typing into a program](#typing-into-a-program)
 - [Saving logs](#saving-logs)
 - [Talking to a running session](#talking-to-a-running-session)
+- [Using runr from an AI coding agent](#using-runr-from-an-ai-coding-agent)
 - [Git](#git)
 - [How processes are run](#how-processes-are-run): [cleaning up after a kill](#cleaning-up-after-a-kill)
 - [Troubleshooting](#troubleshooting)
@@ -57,6 +58,7 @@ Flags for `add` and `edit`:
 | `--color <color>` | `color` |
 | `--display-name <label>` | `display_name` |
 | `--pty` | `pty` (`--pty=false` turns it off) |
+| `--stop-cmd <cmd>` | `stop_cmd` (`--stop-cmd=` clears it) |
 
 With `edit`, a flag given an empty value (e.g. `--color=`) clears that field.
 
@@ -64,7 +66,8 @@ If `runr up` isn't connected to a terminal (piped, or run from a script), it pri
 interleaved output with a name prefix instead of opening the UI, and exits once all
 processes have finished — with exit code 1 if any crashed. Ctrl+C stops everything. Unless
 that output is a terminal (and `NO_COLOR` isn't set), it has no colors: the programs'
-colors and other escape codes are removed too.
+colors and other escape codes are removed too. Other terminals can still look at and control
+it (see [Talking to a running session](#talking-to-a-running-session)).
 
 ## Importing a Procfile or compose file
 
@@ -83,7 +86,10 @@ runr up shop                      # the group named after the compose name or th
   starting the dependencies to runr, from `depends_on`. A service with a published TCP port
   gets that host port as `ready_port`. A service that another one waits for with
   `condition: service_completed_successfully` (a migration, say) becomes a one-shot task
-  (`ready = "exit"`) instead; other conditions are ignored. Images, builds, environment and
+  (`ready = "exit"`) instead; other conditions are ignored. Each service gets
+  `stop_cmd = "docker compose [-f <file>] stop <service>"`, so its container is stopped even
+  when runr has to kill `docker compose up` (see
+  [Cleaning up after a kill](#cleaning-up-after-a-kill)). Images, builds, environment and
   profiles stay in the compose file.
 - `runr import <file>` imports a file of any name (`--format procfile|compose` if the name
   doesn't tell), `runr import <dir>` searches that directory.
@@ -142,7 +148,7 @@ backend = ["db", "api"]
 
 | Key | Default | Description |
 |---|---|---|
-| `shutdown_timeout` | `"5s"` | How long a stopping process gets before it is killed (Go duration: `500ms`, `10s`, `1m`) |
+| `shutdown_timeout` | `"5s"` | How long a stopping process gets before it is killed (Go duration: `500ms`, `10s`, `1m`). Docker Compose projects may need more, e.g. `"15s"`: stopping a Postgres container takes about 10 s |
 | `scrollback_lines` | `10000` | Lines of output kept per process |
 | `theme` | `"terminal"` | Colors of the TUI: `terminal` (your terminal's own colors), `catppuccin`, `tokyo-night`, `gruvbox` or `nord`. See [Themes](#themes). |
 | `theme_background` | `false` | Paint the theme's background and text color behind the whole TUI instead of letting your terminal's show through. See [Themes](#themes). |
@@ -482,6 +488,57 @@ Windows, or `$RUNR_STATE_DIR`). Only your user can open it. The socket goes away
 session ends; one left by a runr that was killed is removed by the next `runr status` or
 `runr logs`. Socket paths are limited to about 100 characters, so a very long
 `$RUNR_STATE_DIR` turns this off (`runr status` says so).
+
+## Using runr from an AI coding agent
+
+Coding agents (Claude Code, Codex, Cursor and the like) run commands in a terminal of their
+own, so they can't see the runr you are watching. With the commands from
+[Talking to a running session](#talking-to-a-running-session) they don't need to: they
+read the logs of your session, restart what they changed and check that it came up, while
+you keep watching it in the running view. No copy-pasting crash output.
+
+The commands an agent needs:
+
+| Command | What the agent gets |
+|---|---|
+| `runr status --json` | Every session and its processes: state, pid, ports, error count, how the last run ended |
+| `runr logs api --errors -n 50` | api's recent error lines and crashes, in plain text |
+| `runr logs api -n 200` | The context around them |
+| `runr restart api --wait` | Restarts api after a change; exit code 0 once it is ready, 1 with its last 20 lines if it crashes, is blocked or isn't ready within `--timeout` (default 1m) |
+| `runr start worker --wait` | Starts a project (and what it needs) in your session |
+| `runr up backend > /tmp/runr.log 2>&1 &` | A session of its own, when none runs; `runr down` stops it afterwards |
+
+Things to tell an agent, or to keep in mind when it uses runr:
+
+- **Never `runr logs -f`**: it follows until the session ends, so the agent's command never
+  returns. `-n` gives it the recent lines instead.
+- **`runr down` stops the whole session.** An agent should only stop a session it started
+  itself, and use `--session <pid>` when several run.
+- **Exit codes mean something:** `runr status` exits 1 when no session runs, `restart --wait`
+  and `start --wait` when the project didn't come up.
+- **Read-only commands are safe to allow without asking:** `runr status` and `runr logs` only
+  read. `start`, `stop`, `restart` and `down` change what runs.
+
+To make an agent use runr, add something like this to the instructions it reads in your
+repository (`AGENTS.md`, `CLAUDE.md`, …):
+
+```markdown
+## Running the app
+
+The services run under runr (https://github.com/Skaanning/runr), usually in a session
+the developer is watching. Don't start your own servers on the same ports.
+
+- See what runs: `runr status` (`--json` for details). Exit code 1: nothing runs; then
+  start it yourself with `runr up backend > /tmp/runr.log 2>&1 &` and stop it
+  with `runr down` when you're done.
+- Read logs: `runr logs <project> -n 100`; only errors and crashes: `--errors`.
+  Never use `runr logs -f`: it doesn't return.
+- After changing a service, restart it and check it came up:
+  `runr restart <project> --wait`. On failure it prints the project's last lines.
+- Never `runr down` or `runr stop` a session you didn't start.
+```
+
+Replace `backend` with your group and the project names with yours (`runr ls` lists them).
 
 ## Git
 

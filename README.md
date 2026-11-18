@@ -24,9 +24,12 @@ Works on Linux, macOS and Windows.
   answer its prompts, e.g. a script that asks for a branch name.
 - **Shared configs:** write project directories as `$RUNR_ROOT/api`, so a team can share one
   config while everyone keeps their checkouts in a different place.
-- **From another terminal:** `runr status`, `runr logs api --errors` and
+- **From another terminal or an AI agent:** `runr status`, `runr logs api --errors` and
   `runr restart api --wait` show and change what a running session is doing, so scripts and
-  coding agents can restart a service and read a crash without copy-paste.
+  coding agents can restart a service and read a crash without copy-paste (see
+  [Using runr from an AI coding agent](docs/guide.md#using-runr-from-an-ai-coding-agent)).
+- **Clean shutdowns:** everything stops in reverse dependency order, and a project's
+  `stop_cmd` cleans up what it leaves behind when it has to be killed, e.g. Docker containers.
 - **Git:** see each project's branch and changes, switch branches, fetch and pull all.
 - **Import** projects from a `Procfile` or a Docker Compose file.
 - **Logs** saved to files on demand or for every session, plain output when piped, and color
@@ -104,9 +107,11 @@ The [guide](docs/guide.md) covers everything else:
   [sharing a config](docs/guide.md#sharing-a-config)
 - [The launcher](docs/guide.md#the-launcher) and [the running view](docs/guide.md#the-running-view), with all their keys,
   and [typing into a program](docs/guide.md#typing-into-a-program)
-- [Saving logs](docs/guide.md#saving-logs), [talking to a running session](docs/guide.md#talking-to-a-running-session)
+- [Saving logs](docs/guide.md#saving-logs), [talking to a running session](docs/guide.md#talking-to-a-running-session),
+  [using runr from an AI coding agent](docs/guide.md#using-runr-from-an-ai-coding-agent)
   and [Git](docs/guide.md#git)
-- [How processes are run](docs/guide.md#how-processes-are-run) and
+- [How processes are run](docs/guide.md#how-processes-are-run),
+  [cleaning up after a kill](docs/guide.md#cleaning-up-after-a-kill) and
   [Troubleshooting](docs/guide.md#troubleshooting)
 
 ## License
