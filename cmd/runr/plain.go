@@ -26,7 +26,7 @@ type plainColors struct {
 // prints their output interleaved, one line per output line, until every
 // project has finished. The first signal on sigs stops everything
 // gracefully; a second one kills it.
-func runPlain(out io.Writer, cfg *config.Config, opts supervisor.Options, names []string, args map[string]string, projects []string, sigs <-chan os.Signal, colors plainColors) error {
+func runPlain(out io.Writer, cfg *config.Config, opts supervisor.Options, names []string, args map[string]string, projects []string, sigs chan os.Signal, colors plainColors) error {
 	pr := newPlainPrinter(out, cfg, projects, colors)
 	sess := newRecordingSession(cfg, opts)
 	sup := sess.Supervisor
@@ -37,7 +37,7 @@ func runPlain(out io.Writer, cfg *config.Config, opts supervisor.Options, names 
 		sup.Close()
 		return err
 	}
-	stopControl := serveControl(sess, cfg, names)
+	stopControl := serveControl(sess, cfg, names, sigs)
 
 	latest := map[string]supervisor.ProcessInfo{}
 	events := sup.Events()

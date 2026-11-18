@@ -27,6 +27,11 @@ var (
 	staleAfter   = 2 * time.Second  // a socket nobody listens on is removed once this old
 )
 
+// NoMatchError is returned by Pick when no session has all the names.
+type NoMatchError struct{ msg string }
+
+func (e *NoMatchError) Error() string { return e.msg }
+
 // Session is a running session found by Sessions.
 type Session struct {
 	Path   string
@@ -163,9 +168,9 @@ func Pick(sessions []Session, names []string, pid int) (Session, error) {
 		}
 		return Session{}, fmt.Errorf("%d runr sessions are running (pids %s); choose one with --session", len(match), strings.Join(pids, ", "))
 	case len(sessions) == 1:
-		return Session{}, fmt.Errorf("not in the running session: %s", strings.Join(missing(sessions[0].Status, names), ", "))
+		return Session{}, &NoMatchError{"not in the running session: " + strings.Join(missing(sessions[0].Status, names), ", ")}
 	default:
-		return Session{}, fmt.Errorf("no running session has %s", strings.Join(names, ", "))
+		return Session{}, &NoMatchError{"no running session has " + strings.Join(names, ", ")}
 	}
 }
 

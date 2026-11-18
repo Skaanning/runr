@@ -18,12 +18,34 @@ import (
 	"github.com/Skaanning/runr/internal/supervisor"
 )
 
-// fakeTarget is a session with fixed processes and a real log store.
+// fakeTarget is a session with fixed processes and a real log store. It
+// records starts, stops and restarts, and fails those of "broken".
 type fakeTarget struct {
 	mu    sync.Mutex
 	procs []supervisor.ProcessInfo
 	pids  map[string][]int
 	logs  *supervisor.Logs
+	calls []string
+}
+
+func (f *fakeTarget) record(call, name string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, call+" "+name)
+	if strings.Contains(name, "broken") {
+		return errors.New("it broke")
+	}
+	return nil
+}
+
+func (f *fakeTarget) Start(names ...string) error { return f.record("start", strings.Join(names, ",")) }
+func (f *fakeTarget) Stop(name string) error      { return f.record("stop", name) }
+func (f *fakeTarget) Restart(name string) error   { return f.record("restart", name) }
+
+func (f *fakeTarget) recorded() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
 }
 
 func (f *fakeTarget) Processes() []supervisor.ProcessInfo {
@@ -301,6 +323,77 @@ type stopError struct{}
 
 func (*stopError) Error() string { return "stop" }
 
+func TestActions(t *testing.T) {
+	target := newTarget()
+	target.procs = append(target.procs, supervisor.ProcessInfo{Name: "broken"})
+	s := listen(t, shortDir(t), target, 1)
+	for _, req := range []Request{
+		{Op: OpStart, Names: []string{"backend", "web"}}, // anything: the supervisor resolves names
+		{Op: OpStop, Names: []string{"db"}},
+		{Op: OpRestart, Names: []string{"api", "db"}},
+	} {
+		replies, err := collect(t, s.Path(), req)
+		if err != nil || len(replies) != 1 || replies[0].Status == nil || len(replies[0].Status.Processes) != 3 {
+			t.Errorf("%+v: %+v, %v", req, replies, err)
+		}
+	}
+	want := []string{"start backend,web", "stop db", "restart api", "restart db"}
+	if got := target.recorded(); !reflect.DeepEqual(got, want) {
+		t.Errorf("calls = %q", got)
+	}
+
+	errs := []struct {
+		req  Request
+		want string
+	}{
+		{Request{Op: OpStop, Names: []string{"db", "web"}}, "not in this session: web"},
+		{Request{Op: OpRestart}, "no projects to restart"},
+		{Request{Op: OpRestart, Names: []string{"broken"}}, "broken: it broke"},
+		{Request{Op: OpStart, Names: []string{"broken"}}, "it broke"},
+		{Request{Op: OpDown}, "this session can't be stopped from outside"},
+	}
+	for _, c := range errs {
+		if _, err := collect(t, s.Path(), c.req); err == nil || err.Error() != c.want {
+			t.Errorf("%+v: err = %v, want %q", c.req, err, c.want)
+		}
+	}
+}
+
+func TestDown(t *testing.T) {
+	quits := make(chan bool, 2)
+	s, err := Listen(shortDir(t), newTarget(), Info{Pid: 1, Quit: func(force bool) { quits <- force }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	acked := make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		result <- Do(s.Path(), Request{Op: OpDown, Force: true}, func(Reply) error {
+			close(acked)
+			return nil
+		})
+	}()
+	select {
+	case force := <-quits:
+		if !force {
+			t.Error("force not passed on")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Quit not called")
+	}
+	<-acked
+	select {
+	case err := <-result:
+		t.Fatalf("down returned before the session ended: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	s.Close() // the session ends
+	if err := <-result; err != nil {
+		t.Errorf("Do: %v", err)
+	}
+}
+
 func TestBadRequests(t *testing.T) {
 	s := listen(t, shortDir(t), newTarget(), 1)
 	if _, err := collect(t, s.Path(), Request{Op: "dance"}); err == nil || err.Error() != `unknown request "dance"` {
@@ -425,6 +518,10 @@ func TestPick(t *testing.T) {
 	}
 	for _, c := range cases {
 		s, err := Pick(c.sessions, c.names, c.pid)
+		var noMatch *NoMatchError
+		if errors.As(err, &noMatch) != (strings.HasPrefix(c.err, "not in") || strings.HasPrefix(c.err, "no running session has")) {
+			t.Errorf("Pick(%v, %d): %T", c.names, c.pid, err)
+		}
 		switch {
 		case c.err != "" && (err == nil || err.Error() != c.err):
 			t.Errorf("Pick(%v, %d) err = %v, want %q", c.names, c.pid, err, c.err)

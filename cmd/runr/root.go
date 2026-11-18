@@ -58,6 +58,10 @@ func newRootCmd() *cobra.Command {
 		newCleanupCmd(),
 		newStatusCmd(),
 		newLogsCmd(),
+		newActionCmd(actions[0]),
+		newActionCmd(actions[1]),
+		newActionCmd(actions[2]),
+		newDownCmd(),
 	)
 	return root
 }
@@ -104,7 +108,7 @@ func runLauncher(cmd *cobra.Command) error {
 			return nil, err
 		}
 		sup = sess.Supervisor
-		stopControl = serveControl(sess, s.cfg, names)
+		stopControl = serveControl(sess, s.cfg, names, sigs)
 		return sess, nil
 	}
 	// Forms edit a copy; once it validates and is written, the launcher

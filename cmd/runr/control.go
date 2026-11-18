@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"text/tabwriter"
 	"time"
 	"unicode/utf8"
@@ -18,6 +19,7 @@ import (
 	"github.com/Skaanning/runr/internal/config"
 	"github.com/Skaanning/runr/internal/control"
 	"github.com/Skaanning/runr/internal/logfile"
+	"github.com/Skaanning/runr/internal/supervisor"
 	"github.com/Skaanning/runr/internal/tui"
 )
 
@@ -32,9 +34,10 @@ func controlDir() string {
 }
 
 // serveControl lets runr commands in other terminals reach sess, which was
-// started with titles, until the returned function is called. Nothing
+// started with titles, until the returned function is called. `runr down`
+// sends a signal on sigs, as Ctrl+C does (force: a second one). Nothing
 // happens if the socket can't be created.
-func serveControl(sess recordingSession, cfg *config.Config, titles []string) (stop func()) {
+func serveControl(sess recordingSession, cfg *config.Config, titles []string, sigs chan<- os.Signal) (stop func()) {
 	dir := controlDir()
 	if dir == "" {
 		return func() {}
@@ -48,11 +51,36 @@ func serveControl(sess recordingSession, cfg *config.Config, titles []string) (s
 		Started: time.Now(),
 		Titles:  append([]string(nil), titles...),
 		Labels:  labels,
+		Quit:    quitter(sigs),
 	})
 	if err != nil {
 		return func() {}
 	}
 	return srv.Close
+}
+
+// quitter returns what stops the session for `runr down`: the first call
+// sends one signal on sigs (stop gracefully), a forced call makes it two
+// (kill). Repeating a call sends nothing more, so a second `runr down`
+// doesn't turn into a kill.
+func quitter(sigs chan<- os.Signal) func(force bool) {
+	var mu sync.Mutex
+	sent := 0
+	return func(force bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		want := 1
+		if force {
+			want = 2
+		}
+		for ; sent < want; sent++ {
+			select {
+			case sigs <- os.Interrupt:
+			default:
+				return // full: signals are on their way already
+			}
+		}
+	}
 }
 
 // sessionFlag adds --session, for choosing between several sessions.
@@ -249,4 +277,213 @@ func logLabels(st control.Status, names []string) map[string]string {
 		labels[name] = pad(l, width)
 	}
 	return labels
+}
+
+// action is what runr start, stop and restart do.
+type action struct {
+	op, verb string // e.g. "restart", "restarted"
+	short    string
+	long     string
+}
+
+var actions = []action{
+	{control.OpStart, "started", "Start projects in a running session",
+		"Start projects or groups, plus what they depend on, in a runr session running in\n" +
+			"another terminal; they don't have to be part of it yet."},
+	{control.OpStop, "stopped", "Stop projects in a running session",
+		"Stop projects or groups (their projects only) in a runr session running in\n" +
+			"another terminal, as s does there."},
+	{control.OpRestart, "restarted", "Restart projects in a running session",
+		"Restart projects or groups (their projects only) in a runr session running in\n" +
+			"another terminal, as r does there."},
+}
+
+// waitTail is how many of a project's last lines are printed when waiting
+// for it fails.
+const waitTail = 20
+
+// pollEvery is how often --wait asks for the states. A variable so tests
+// can shorten it.
+var pollEvery = 100 * time.Millisecond
+
+func newActionCmd(a action) *cobra.Command {
+	var wait bool
+	var timeout time.Duration
+	var pid int
+	cmd := &cobra.Command{
+		Use:   a.op + " <name...>",
+		Short: a.short,
+		Long: a.long + "\n\nWith --wait, runr waits until they are ready (stopped, for stop), and exits\n" +
+			"with an error, printing a project's last lines, if one crashes, is blocked or\n" +
+			"isn't done before --timeout.",
+		Args:              cobra.MinimumNArgs(1),
+		ValidArgsFunction: completeProjectsAndGroups,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			targets := expandGroups(args)
+			sessions := runningSessions(cmd.ErrOrStderr())
+			sess, err := control.Pick(sessions, targets, pid)
+			var noMatch *control.NoMatchError
+			if a.op == control.OpStart && errors.As(err, &noMatch) {
+				// Starting adds projects to a session.
+				if len(sessions) > 1 {
+					return fmt.Errorf("%w; choose one with --session", err)
+				}
+				sess, err = sessions[0], nil
+			}
+			if err != nil {
+				return err
+			}
+			names := targets
+			if a.op == control.OpStart {
+				names = args // groups too: the session pulls in dependencies
+			}
+			if err := control.Do(sess.Path, control.Request{Op: a.op, Names: names}, func(control.Reply) error { return nil }); err != nil {
+				return err
+			}
+			if !wait {
+				return nil
+			}
+			return waitFor(cmd.OutOrStdout(), sess.Path, a.op, targets, timeout)
+		},
+	}
+	cmd.Flags().BoolVar(&wait, "wait", false, "wait until they are ready (stop: stopped) and report how it went")
+	cmd.Flags().DurationVar(&timeout, "timeout", time.Minute, "with --wait, give up after this long")
+	sessionFlag(cmd, &pid)
+	return cmd
+}
+
+// outcome tells whether a process is done with what op asked of it, and
+// whether that went wrong.
+func outcome(op string, p control.Process) (done, failed bool) {
+	state := p.State
+	if op == control.OpStop {
+		switch state {
+		case supervisor.Starting.String(), supervisor.Running.String(), supervisor.Stopping.String(), supervisor.Waiting.String():
+			return false, false
+		}
+		return true, false
+	}
+	switch state {
+	case supervisor.Running.String(), supervisor.Exited.String():
+		return true, false
+	case supervisor.Crashed.String(), supervisor.Blocked.String(), supervisor.Stopped.String():
+		return true, true
+	}
+	return false, false
+}
+
+// describe says how a process is, e.g. "api running (pid 4130, :8080)" or
+// "api crashed (exit code 1)".
+func describe(p control.Process) string {
+	var details []string
+	if p.Pid != 0 {
+		details = append(details, "pid "+strconv.Itoa(p.Pid))
+	}
+	for _, port := range p.Ports {
+		details = append(details, ":"+strconv.Itoa(port))
+	}
+	if p.Exit != "" {
+		details = append(details, p.Exit)
+	}
+	s := p.Name + " " + p.State
+	if len(details) > 0 {
+		s += " (" + strings.Join(details, ", ") + ")"
+	}
+	return s
+}
+
+// waitFor reports each of names once op is done with it, until all are or
+// timeout passes. Each one that failed gets its last lines printed, and
+// makes the result an error.
+func waitFor(w io.Writer, path, op string, names []string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	pending := append([]string(nil), names...)
+	var failed []string
+	for {
+		var st control.Status
+		err := control.Do(path, control.Request{Op: control.OpStatus}, func(r control.Reply) error {
+			if r.Status != nil {
+				st = *r.Status
+			}
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("the session ended while waiting: %w", err)
+		}
+		var still []string
+		for _, name := range pending {
+			p, ok := findProcess(st, name)
+			if !ok {
+				return fmt.Errorf("%s is not in the session", name)
+			}
+			done, bad := outcome(op, p)
+			switch {
+			case !done && time.Now().After(deadline):
+				printTail(w, path, name)
+				failed = append(failed, fmt.Sprintf("%s still %s after %v", name, p.State, timeout))
+			case !done:
+				still = append(still, name)
+			case bad:
+				printTail(w, path, name)
+				failed = append(failed, describe(p))
+			default:
+				fmt.Fprintln(w, describe(p))
+			}
+		}
+		if pending = still; len(pending) == 0 {
+			break
+		}
+		time.Sleep(pollEvery)
+	}
+	if len(failed) > 0 {
+		return errors.New(strings.Join(failed, "; "))
+	}
+	return nil
+}
+
+func findProcess(st control.Status, name string) (control.Process, bool) {
+	for _, p := range st.Processes {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return control.Process{}, false
+}
+
+// printTail prints a project's last lines, after a heading.
+func printTail(w io.Writer, path, name string) {
+	fmt.Fprintf(w, "--- last lines of %s ---\n", name)
+	control.Do(path, control.Request{Op: control.OpLogs, Names: []string{name}, Tail: waitTail}, func(r control.Reply) error {
+		if l := r.Line; l != nil {
+			fmt.Fprintln(w, logfile.Format(l.Time.Local(), "", l.Runr, l.Text))
+		}
+		return nil
+	})
+}
+
+func newDownCmd() *cobra.Command {
+	var force bool
+	var pid int
+	cmd := &cobra.Command{
+		Use:   "down",
+		Short: "Stop a running session",
+		Long: "Stop a runr session running in another terminal, as q does there: everything\n" +
+			"stops in reverse dependency order, and runr waits until it has. --force kills\n" +
+			"the processes instead, like a second q.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sess, err := control.Pick(runningSessions(cmd.ErrOrStderr()), nil, pid)
+			if err != nil {
+				return err
+			}
+			if err := control.Do(sess.Path, control.Request{Op: control.OpDown, Force: force}, func(control.Reply) error { return nil }); err != nil {
+				return err
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "session %d stopped\n", sess.Status.Pid)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "kill the processes instead of stopping them gracefully")
+	sessionFlag(cmd, &pid)
+	return cmd
 }

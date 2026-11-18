@@ -1,11 +1,12 @@
 // Package control lets runr commands in other terminals talk to a running
-// session: ask for its processes and their logs. Each session listens on a
+// session: ask for its processes and their logs, start, stop and restart
+// projects, and stop the session. Each session listens on a
 // Unix domain socket (Windows has them since Windows 10 1803) named after
 // runr's pid in runr's state directory, which only the user can open.
 //
 // A client sends one JSON request per connection; the server answers with
 // one JSON reply per line and closes the connection, except while following
-// logs.
+// logs or stopping the session.
 package control
 
 import (
@@ -22,8 +23,12 @@ const Version = 1
 
 // Requests.
 const (
-	OpStatus = "status" // the session and its processes
-	OpLogs   = "logs"   // buffered log lines, then new ones if Follow is set
+	OpStatus  = "status"  // the session and its processes
+	OpLogs    = "logs"    // buffered log lines, then new ones if Follow is set
+	OpStart   = "start"   // start projects and groups, with their dependencies
+	OpStop    = "stop"    // stop projects
+	OpRestart = "restart" // restart projects
+	OpDown    = "down"    // stop the session, as q does; the reply ends when it has
 )
 
 // maxPath is the longest socket path that works everywhere: sun_path holds
@@ -52,6 +57,7 @@ type Request struct {
 	Tail   int      `json:"tail,omitempty"`   // logs: the last this many lines; 0: all buffered
 	Errors bool     `json:"errors,omitempty"` // logs: only error lines
 	Follow bool     `json:"follow,omitempty"` // logs: keep sending new lines
+	Force  bool     `json:"force,omitempty"`  // down: kill instead of stopping gracefully
 }
 
 // Reply is one line of a session's answer: an error, or one of the others.

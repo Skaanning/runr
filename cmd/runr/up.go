@@ -95,9 +95,9 @@ func newUpCmd() *cobra.Command {
 //
 // With left set, the projects start once the question about those
 // leftover processes is answered.
-func runTUI(stderr io.Writer, cfg *config.Config, opts supervisor.Options, names []string, args map[string]string, left *tui.Leftovers, sigs <-chan os.Signal) error {
+func runTUI(stderr io.Writer, cfg *config.Config, opts supervisor.Options, names []string, args map[string]string, left *tui.Leftovers, sigs chan os.Signal) error {
 	sess := newRecordingSession(cfg, opts)
-	stopControl := serveControl(sess, cfg, names)
+	stopControl := serveControl(sess, cfg, names, sigs)
 	var err error
 	if left == nil {
 		err = sess.begin(names, args)

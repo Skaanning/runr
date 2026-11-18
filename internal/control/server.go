@@ -23,6 +23,9 @@ type Target interface {
 	Processes() []supervisor.ProcessInfo
 	Logs() *supervisor.Logs
 	Pids() map[string][]int
+	Start(names ...string) error
+	Stop(name string) error
+	Restart(name string) error
 }
 
 // Info is what a Server says about its session besides the processes.
@@ -31,6 +34,7 @@ type Info struct {
 	Started time.Time
 	Titles  []string
 	Labels  map[string]string // display names by project; others show their name
+	Quit    func(force bool)  // stops the session, like q (force: like a second q); nil: can't
 }
 
 // Timing, variables so tests can shorten them.
@@ -166,9 +170,51 @@ func (s *Server) handle(c net.Conn) {
 			close(gone)
 		}()
 		s.logs(enc, req, gone)
+	case OpStart, OpStop, OpRestart:
+		if err := s.act(req); err != nil {
+			enc.Encode(Reply{Error: err.Error()})
+			return
+		}
+		// The states already show the change: the supervisor makes it
+		// before it returns.
+		st := s.status()
+		enc.Encode(Reply{Status: &st})
+	case OpDown:
+		if s.info.Quit == nil {
+			enc.Encode(Reply{Error: "this session can't be stopped from outside"})
+			return
+		}
+		s.info.Quit(req.Force)
+		enc.Encode(Reply{})
+		<-s.done // the connection ends with the session
 	default:
 		enc.Encode(Reply{Error: "unknown request " + strconv.Quote(req.Op)})
 	}
+}
+
+// act starts, stops or restarts the projects of req.
+func (s *Server) act(req Request) error {
+	if len(req.Names) == 0 {
+		return fmt.Errorf("no projects to %s", req.Op)
+	}
+	if req.Op == OpStart {
+		return s.target.Start(req.Names...) // also groups, and projects not in the session yet
+	}
+	if err := s.checkNames(req.Names); err != nil {
+		return err
+	}
+	for _, n := range req.Names {
+		var err error
+		if req.Op == OpStop {
+			err = s.target.Stop(n)
+		} else {
+			err = s.target.Restart(n)
+		}
+		if err != nil {
+			return fmt.Errorf("%s: %w", n, err)
+		}
+	}
+	return nil
 }
 
 // status describes the session now.

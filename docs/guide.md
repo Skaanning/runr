@@ -36,6 +36,8 @@ Everything about using runr. For a short introduction, see the [README](../READM
 | `runr theme [name]` | List the color themes (the current one marked with `*`), or set one |
 | `runr status [--json]` | Show the runr sessions running in other terminals and their processes (see [Talking to a running session](#talking-to-a-running-session)) |
 | `runr logs [name...] [-n N] [-f] [--errors]` | Print a running session's recent output, or keep following it |
+| `runr start\|stop\|restart <name...> [--wait]` | Start, stop or restart projects and groups in a running session; `--wait` reports how it went |
+| `runr down [--force]` | Stop a running session, as `q` does there |
 | `runr cleanup [--yes]` | Stop processes left running by a runr that was killed (Linux, macOS); asks first unless `--yes` |
 | `runr completion <shell>` | Shell completion script (bash, zsh, fish, powershell), completes project and group names |
 
@@ -416,9 +418,9 @@ Saved combined logs put the project's name before `│` / `»`; `»` marks runr'
 
 ## Talking to a running session
 
-Other terminals can ask a running session what it is doing: a second terminal, an editor
-task, a git hook, or a coding agent that should read a crash's output itself instead of
-having it pasted in. This works for every session — `runr up`, the launcher and plain
+Other terminals can ask a running session what it is doing, and tell it what to do: a
+second terminal, an editor task, a git hook, or a coding agent that should restart a service
+and read a crash's output itself instead of having it pasted in. This works for every session — `runr up`, the launcher and plain
 output (`runr up backend > /dev/null &`).
 
 ```bash
@@ -442,9 +444,36 @@ web   running                12m01s  48236  :3000   0       0
 several projects each line starts with the project's display name. It reads what the
 session still has in memory (`scrollback_lines` per project).
 
+```bash
+runr restart api --wait       # restart api; wait until it is ready again
+runr start worker             # add a project (and what it depends on) to the session
+runr stop web                 # stop one, as s does
+runr down                     # stop the whole session, as q does
+```
+
+`start`, `stop` and `restart` take projects and groups, like the keys in the running view:
+`start` also adds projects the session didn't run yet, with their dependencies; `stop` and
+`restart` act on a group's own projects only. They return at once. With `--wait` they wait
+until each project is ready (`api running (pid 4130, :8080)`), or for `stop` has stopped,
+and exit with an error if one crashes, is blocked or isn't done within `--timeout` (default
+1m), printing its last 20 lines first:
+
+```
+--- last lines of api ---
+10:58:12.031 » starting: go run ./cmd/server
+10:58:12.770 │ 2026/11/18 10:58:12 ERROR: cannot connect to database
+10:58:12.774 » crashed (exit code 1)
+runr: api crashed (exit code 1)
+```
+
+`runr down` stops everything in reverse dependency order and returns once the session has
+ended; `--force` kills instead, like a second `q`. A second plain `runr down` while it is
+stopping doesn't turn into a kill.
+
 When several sessions run, a command picks the one that has the projects you name; if
-that's still more than one (or you name none), choose with `--session <pid>`, the pid shown
-by `runr status`.
+that's still more than one (or you name none, as with `runr down`), choose with
+`--session <pid>`, the pid shown by `runr status`. `runr start` with projects no session has
+yet uses the only session, or asks for `--session`.
 
 Each session listens on a socket named after its pid in `control/` in runr's state directory
 (`~/.local/state/runr` on Linux, `~/Library/Caches/runr` on macOS, `%LocalAppData%\runr` on

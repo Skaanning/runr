@@ -24,8 +24,9 @@ Works on Linux, macOS and Windows.
   answer its prompts, e.g. a script that asks for a branch name.
 - **Shared configs:** write project directories as `$RUNR_ROOT/api`, so a team can share one
   config while everyone keeps their checkouts in a different place.
-- **From another terminal:** `runr status` and `runr logs api --errors` show what a running
-  session is doing, so scripts and coding agents can read a crash without copy-paste.
+- **From another terminal:** `runr status`, `runr logs api --errors` and
+  `runr restart api --wait` show and change what a running session is doing, so scripts and
+  coding agents can restart a service and read a crash without copy-paste.
 - **Git:** see each project's branch and changes, switch branches, fetch and pull all.
 - **Import** projects from a `Procfile` or a Docker Compose file.
 - **Logs** saved to files on demand or for every session, plain output when piped, and color
