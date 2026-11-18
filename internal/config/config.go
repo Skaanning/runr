@@ -116,7 +116,8 @@ type Project struct {
 	ReadyURL    string            `toml:"ready_url,omitempty"`
 	Color       string            `toml:"color,omitempty"`
 	DisplayName string            `toml:"display_name,omitempty"`
-	PTY         bool              `toml:"pty,omitempty"` // run on a pseudo-terminal instead of pipes
+	PTY         bool              `toml:"pty,omitempty"`      // run on a pseudo-terminal instead of pipes
+	StopCmd     string            `toml:"stop_cmd,omitempty"` // run after runr had to kill the project, e.g. "docker compose down"
 }
 
 // ReadyExit is the value of Project.Ready for one-shot tasks: the project is

@@ -616,10 +616,14 @@ type fakeTracker struct {
 	calls []string
 }
 
-func (f *fakeTracker) Spawned(project string, pid int, command string) {
+func (f *fakeTracker) Spawned(project string, pid int, command, dir, stopCmd string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, "spawned "+project+" "+command+" "+strconv.FormatBool(pid > 0))
+	call := "spawned " + project + " " + command + " " + strconv.FormatBool(pid > 0)
+	if stopCmd != "" {
+		call += " stop_cmd " + stopCmd + " in " + filepath.Base(dir)
+	}
+	f.calls = append(f.calls, call)
 }
 
 func (f *fakeTracker) Exited(project string) {

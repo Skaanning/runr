@@ -93,7 +93,8 @@ type projectValues struct {
 	readyPort string
 	readyURL  string
 	pty       []string // ptyOption when pty = true
-	env       string   // KEY=VALUE lines
+	stopCmd   string
+	env       string // KEY=VALUE lines
 	envFile   string
 	color     string
 	label     string // display name
@@ -124,7 +125,7 @@ func newProjectValues(cfg *config.Config, name string) *projectValues {
 	return &projectValues{
 		original: name, name: name, cmd: p.Cmd, dir: p.Dir, deps: slices.Clone(p.DependsOn),
 		oneShot: oneShot, readyLog: p.ReadyLog, readyPort: readyPort, readyURL: p.ReadyURL, env: strings.Join(env, "\n"), envFile: p.EnvFile,
-		color: p.Color, label: p.DisplayName, pty: pty,
+		color: p.Color, label: p.DisplayName, pty: pty, stopCmd: p.StopCmd,
 	}
 }
 
@@ -197,6 +198,7 @@ func (v *projectValues) candidate(cfg *config.Config) (*config.Config, error) {
 		Color:       strings.TrimSpace(v.color),
 		DisplayName: strings.TrimSpace(v.label),
 		PTY:         len(v.pty) > 0,
+		StopCmd:     strings.TrimSpace(v.stopCmd),
 	}
 	return c, nil
 }
@@ -618,8 +620,12 @@ func newProjectForm(st *styles, cfg *config.Config, name string, git GitReader) 
 	readyURL.check = check("ready_url")
 	startup.fields = append(startup.fields, readyLog, readyPort, readyURL)
 	pty := newChoiceField("pty", "Terminal", []formOption{{value: ptyOption}}, &v.pty)
-	pty.desc = "colors and line buffering as in a terminal; no input"
-	startup.fields = append(startup.fields, pty)
+	pty.desc = "as in a terminal: colors, line buffering, input (i)"
+	stopCmd := newInputField("stop_cmd", "Stop command", &v.stopCmd)
+	stopCmd.input.Placeholder = "e.g. docker compose down"
+	stopCmd.desc = "run after runr had to kill it, to clean up"
+	stopCmd.check = check("stop_cmd")
+	startup.fields = append(startup.fields, pty, stopCmd)
 
 	env := newTextField("env", "Variables", &v.env)
 	env.desc = "KEY=VALUE, one per line"

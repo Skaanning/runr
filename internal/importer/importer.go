@@ -32,6 +32,9 @@ type Service struct {
 	// arguments, which the caller quotes for the shell (compose).
 	Cmd  string
 	Args []string
+	// StopArgs stops the service's container (compose), for stop_cmd: the
+	// container outlives a killed `docker compose up`.
+	StopArgs []string
 	// DependsOn names other services of the same file.
 	DependsOn []string
 	// Port is the first TCP port published on the host, 0 if none or if

@@ -14,9 +14,9 @@ type Recorder struct{}
 // Open returns ErrUnsupported.
 func Open(string) (*Recorder, error) { return nil, ErrUnsupported }
 
-func (*Recorder) Spawned(string, int, string) {}
-func (*Recorder) Exited(string)               {}
-func (*Recorder) Close()                      {}
+func (*Recorder) Spawned(string, int, string, string, string) {}
+func (*Recorder) Exited(string)                               {}
+func (*Recorder) Close()                                      {}
 
 // Find finds nothing.
 func Find(string) ([]Orphan, error) { return nil, nil }

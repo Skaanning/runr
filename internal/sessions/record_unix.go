@@ -56,8 +56,8 @@ func Open(dir string) (*Recorder, error) {
 }
 
 // Spawned records a project's new process, the leader of its own process
-// group.
-func (r *Recorder) Spawned(project string, pid int, command string) {
+// group, started in dir; stopCmd is the project's stop_cmd.
+func (r *Recorder) Spawned(project string, pid int, command, dir, stopCmd string) {
 	if r == nil {
 		return
 	}
@@ -68,7 +68,7 @@ func (r *Recorder) Spawned(project string, pid int, command string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.state.Children = slices.DeleteFunc(r.state.Children, func(c Child) bool { return c.Project == project })
-	r.state.Children = append(r.state.Children, Child{Project: project, Pid: pid, Pgid: pid, Start: start, Command: command})
+	r.state.Children = append(r.state.Children, Child{Project: project, Pid: pid, Pgid: pid, Start: start, Command: command, Dir: dir, StopCmd: stopCmd})
 	r.write()
 }
 
@@ -116,9 +116,11 @@ func (r *Recorder) write() {
 }
 
 // Find returns the session files of runr processes that are gone and still
-// have live children. Files of gone sessions without live children, and
-// unreadable ones, are deleted; those of running runr processes are left
-// alone.
+// have live children, or children with a stop_cmd to run: those whose
+// process is gone too are marked Gone (their output pipes died with runr,
+// so they may not have cleaned up, e.g. docker compose its containers).
+// Files of gone sessions without such children, and unreadable ones, are
+// deleted; those of running runr processes are left alone.
 func Find(dir string) ([]Orphan, error) {
 	paths, err := filepath.Glob(filepath.Join(dir, "*.json"))
 	if err != nil {
@@ -140,7 +142,7 @@ func Find(dir string) ([]Orphan, error) {
 		}
 		var live []Child
 		for _, c := range s.Children {
-			if childAlive(c) {
+			if c.Gone = !childAlive(c); !c.Gone || c.StopCmd != "" {
 				live = append(live, c)
 			}
 		}
@@ -179,12 +181,13 @@ const pollEvery = 20 * time.Millisecond
 
 // Kill stops the orphans like a shutdown: SIGTERM to every process group,
 // then SIGKILL to those still running after timeout. It deletes their
-// files, and returns the children that had to be killed.
+// files, and returns the children that had to be killed. Running their
+// stop_cmds is up to the caller.
 func Kill(orphans []Orphan, timeout time.Duration) (forced []Child) {
 	var children []Child
 	for _, o := range orphans {
 		for _, c := range o.Children {
-			if childAlive(c) {
+			if !c.Gone && childAlive(c) {
 				syscall.Kill(-c.Pgid, syscall.SIGTERM)
 				children = append(children, c)
 			}

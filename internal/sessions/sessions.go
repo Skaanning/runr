@@ -29,6 +29,10 @@ type Child struct {
 	Pgid    int    `json:"pgid"`
 	Start   string `json:"start"` // guards against pid reuse
 	Command string `json:"command"`
+	Dir     string `json:"dir,omitempty"`      // where it was started
+	StopCmd string `json:"stop_cmd,omitempty"` // the project's stop_cmd, run after cleaning it up
+
+	Gone bool `json:"-"` // set by Find: its process is gone, only the stop_cmd is left to run
 }
 
 // Orphan is the session file of a runr process that is gone, with the
@@ -52,7 +56,11 @@ func Describe(orphans []Orphan) (what, which string) {
 	var names []string
 	for _, o := range orphans {
 		for _, c := range o.Children {
-			names = append(names, c.Project+" (pid "+strconv.Itoa(c.Pid)+")")
+			if c.Gone {
+				names = append(names, c.Project+" (gone; stop_cmd to run)")
+			} else {
+				names = append(names, c.Project+" (pid "+strconv.Itoa(c.Pid)+")")
+			}
 		}
 	}
 	noun := "processes"

@@ -96,11 +96,11 @@ func TestRecorder(t *testing.T) {
 	}
 
 	api := spawn(t, "sleep 30")
-	r.Spawned("api", api, "go run .")
-	r.Spawned("gone", gonePid(t), "true") // exited before it was recorded: skipped
+	r.Spawned("api", api, "go run .", "/code/api", "")
+	r.Spawned("gone", gonePid(t), "true", "", "") // exited before it was recorded: skipped
 	s := read()
 	if len(s.Children) != 1 || s.Children[0].Project != "api" || s.Children[0].Pid != api ||
-		s.Children[0].Pgid != api || s.Children[0].Command != "go run ." || s.Children[0].Start == "" {
+		s.Children[0].Pgid != api || s.Children[0].Command != "go run ." || s.Children[0].Start == "" || s.Children[0].Dir != "/code/api" {
 		t.Errorf("state = %+v", s)
 	}
 	// A live session is not an orphan, and its file stays.
@@ -119,7 +119,7 @@ func TestRecorder(t *testing.T) {
 		t.Error("file kept after Close")
 	}
 	var none *Recorder // nil records nothing
-	none.Spawned("x", 1, "y")
+	none.Spawned("x", 1, "y", "", "")
 	none.Exited("x")
 	none.Close()
 }
@@ -192,5 +192,34 @@ func TestForget(t *testing.T) {
 	Forget(orphans)
 	if exists(path) || !groupExists(api) {
 		t.Error("Forget should delete the file and leave the process")
+	}
+}
+
+func TestFindKeepsStopCmds(t *testing.T) {
+	dir := t.TempDir()
+	db := spawn(t, "sleep 30")
+	live := child(t, "db", db)
+	live.StopCmd = "docker compose down"
+	path := writeState(t, dir, State{Pid: gonePid(t), Start: "1", Children: []Child{
+		live,
+		{Project: "cache", Pid: gonePid(t), Pgid: 1 << 22, Start: "1", StopCmd: "docker compose stop cache", Dir: "/code/infra"},
+		{Project: "api", Pid: gonePid(t), Pgid: 1<<22 + 1, Start: "1"}, // gone, nothing to run: dropped
+	}})
+	orphans, err := Find(dir)
+	if err != nil || len(orphans) != 1 {
+		t.Fatalf("Find = %+v, %v", orphans, err)
+	}
+	cs := orphans[0].Children
+	if len(cs) != 2 || cs[0].Project != "db" || cs[0].Gone || cs[1].Project != "cache" || !cs[1].Gone || cs[1].Dir != "/code/infra" {
+		t.Fatalf("children = %+v", cs)
+	}
+	if got := Summary(orphans); got != "2 processes left over from a previous runr session: db (pid "+strconv.Itoa(db)+"), cache (gone; stop_cmd to run)" {
+		t.Errorf("Summary = %q", got)
+	}
+	if forced := Kill(orphans, time.Second); len(forced) != 0 {
+		t.Errorf("forced = %+v", forced)
+	}
+	if groupExists(db) || exists(path) {
+		t.Error("db still runs, or the file is kept")
 	}
 }

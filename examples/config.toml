@@ -24,6 +24,9 @@ theme_background = false  # paint the theme's background behind the UI (default 
 dir = "~/code/infra"
 cmd = "docker compose up postgres"
 ready_log = "listening on IPv4"
+# Run only when runr had to kill it (or after runr itself was killed): the
+# container outlives a killed `docker compose up`.
+stop_cmd = "docker compose stop postgres"
 
 # One-shot jobs are fine too: a dependency that exits with code 0 counts as ready.
 [projects.migrate]

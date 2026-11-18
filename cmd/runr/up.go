@@ -76,7 +76,7 @@ func newUpCmd() *cobra.Command {
 				}
 				return runPlain(cmd.OutOrStdout(), s.cfg, opts, args, extra, projects, sigs, colorsFor(cmd.OutOrStdout()))
 			}
-			return runTUI(cmd.ErrOrStderr(), s.cfg, opts, args, extra, leftoversFor(orphans, s.cfg.Settings.ShutdownTimeout()), sigs)
+			return runTUI(cmd.ErrOrStderr(), s.cfg, opts, args, extra, leftoversFor(orphans, s.cfg, s.cfg.Settings.ShutdownTimeout()), sigs)
 		},
 	}
 	cmd.Flags().BoolVar(&last, "last", false, "start what the last session started, with the same extra arguments")

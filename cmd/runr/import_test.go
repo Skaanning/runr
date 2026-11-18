@@ -42,10 +42,10 @@ func TestImportCompose(t *testing.T) {
 	c := loadConfig(t)
 	dir := filepath.Dir(path)
 	want := map[string]*config.Project{
-		"db":      {Dir: dir, Cmd: "docker compose up --no-deps --no-log-prefix db", ReadyPort: 47811},
-		"migrate": {Dir: dir, Cmd: "docker compose up --no-deps --no-log-prefix migrate", DependsOn: []string{"db"}, Ready: config.ReadyExit},
-		"api":     {Dir: dir, Cmd: "docker compose up --no-deps --no-log-prefix api", DependsOn: []string{"db", "migrate"}, ReadyPort: 47812},
-		"web":     {Dir: dir, Cmd: "docker compose up --no-deps --no-log-prefix web", DependsOn: []string{"api"}},
+		"db":      {Dir: dir, Cmd: "docker compose up --no-deps --no-log-prefix db", StopCmd: "docker compose stop db", ReadyPort: 47811},
+		"migrate": {Dir: dir, Cmd: "docker compose up --no-deps --no-log-prefix migrate", StopCmd: "docker compose stop migrate", DependsOn: []string{"db"}, Ready: config.ReadyExit},
+		"api":     {Dir: dir, Cmd: "docker compose up --no-deps --no-log-prefix api", StopCmd: "docker compose stop api", DependsOn: []string{"db", "migrate"}, ReadyPort: 47812},
+		"web":     {Dir: dir, Cmd: "docker compose up --no-deps --no-log-prefix web", StopCmd: "docker compose stop web", DependsOn: []string{"api"}},
 	}
 	if !reflect.DeepEqual(c.Projects, want) {
 		t.Fatalf("projects = %+v", c.Projects)
@@ -175,5 +175,8 @@ func TestImportArguments(t *testing.T) {
 	p := loadConfig(t).Projects["my_db-"]
 	if p == nil || p.Cmd != "docker compose -f services.yaml up --no-deps --no-log-prefix 'my_db!'" && p.Cmd != `docker compose -f services.yaml up --no-deps --no-log-prefix my_db!` {
 		t.Fatalf("project = %+v", p)
+	}
+	if !strings.HasPrefix(p.StopCmd, "docker compose -f services.yaml stop ") {
+		t.Errorf("stop_cmd = %q", p.StopCmd)
 	}
 }

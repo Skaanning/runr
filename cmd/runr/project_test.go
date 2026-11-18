@@ -305,6 +305,23 @@ func TestLs(t *testing.T) {
 	if loadConfig(t).Projects["web"].PTY {
 		t.Error("--pty=false not saved")
 	}
+
+	// stop_cmd: a STOP CMD column while one is set; --stop-cmd= clears it.
+	if strings.Contains(out, "STOP CMD") {
+		t.Errorf("a STOP CMD column without stop_cmds:\n%s", out)
+	}
+	mustRun(t, "edit", "web", "--stop-cmd", " docker compose down ")
+	if got := loadConfig(t).Projects["web"].StopCmd; got != "docker compose down" {
+		t.Fatalf("stop_cmd = %q", got)
+	}
+	withStop := strings.Split(mustRun(t, "ls"), "\n")
+	if !strings.HasSuffix(withStop[0], "  STOP CMD") || !strings.HasSuffix(withStop[5], "  docker compose down") {
+		t.Errorf("ls with stop_cmd:\n%s", strings.Join(withStop, "\n"))
+	}
+	mustRun(t, "edit", "web", "--stop-cmd=")
+	if got := loadConfig(t).Projects["web"].StopCmd; got != "" {
+		t.Errorf("--stop-cmd= left %q", got)
+	}
 	for i, want := range map[int]string{2: "port 6379", 3: "log: accepting", 4: "on exit (one-shot)", 5: "url http://localhost:5173/"} {
 		if !strings.HasSuffix(lines[i], want) {
 			t.Errorf("line %d = %q, want suffix %q", i, lines[i], want)

@@ -216,6 +216,9 @@ func importedProjects(file *importer.File, prefix string) (projects map[string]*
 	projects = map[string]*config.Project{}
 	for _, svc := range file.Services {
 		p := &config.Project{Dir: dir, Cmd: svc.Cmd, EnvFile: file.EnvFile, ReadyPort: svc.Port}
+		if svc.StopArgs != nil {
+			p.StopCmd = joinCommand(svc.StopArgs)
+		}
 		if svc.Args != nil {
 			p.Cmd = joinCommand(svc.Args)
 		}

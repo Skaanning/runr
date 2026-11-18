@@ -2,6 +2,7 @@ package importer
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -63,14 +64,15 @@ func parseCompose(data []byte, fileArg string) (name string, services []Service,
 			oneShot[dep] = true
 		}
 
-		args := []string{"docker", "compose"}
+		compose := []string{"docker", "compose"}
 		if fileArg != "" {
-			args = append(args, "-f", fileArg)
+			compose = append(compose, "-f", fileArg)
 		}
-		args = append(args, "up", "--no-deps", "--no-log-prefix", key.Value)
+		args := append(slices.Clone(compose), "up", "--no-deps", "--no-log-prefix", key.Value)
 		services = append(services, Service{
 			Name:      key.Value,
 			Args:      args,
+			StopArgs:  append(slices.Clone(compose), "stop", key.Value),
 			DependsOn: deps,
 			Port:      firstHostPort(svc.Ports),
 		})

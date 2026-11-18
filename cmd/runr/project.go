@@ -29,6 +29,7 @@ type projectFlags struct {
 	readyPort   string // a string so that --ready-port= can clear it
 	readyURL    string
 	pty         bool
+	stopCmd     string
 }
 
 func (f *projectFlags) register(cmd *cobra.Command) {
@@ -43,6 +44,7 @@ func (f *projectFlags) register(cmd *cobra.Command) {
 	fs.StringVar(&f.readyLog, "ready-log", "", "regex; project is ready once an output line matches")
 	fs.StringVar(&f.readyPort, "ready-port", "", "project is ready once this TCP port on localhost accepts connections")
 	fs.StringVar(&f.readyURL, "ready-url", "", "project is ready once a GET of this URL answers 2xx or 3xx")
+	fs.StringVar(&f.stopCmd, "stop-cmd", "", `command run after runr had to kill the project, e.g. "docker compose down"`)
 	fs.BoolVar(&f.pty, "pty", false, "run on a pseudo-terminal, so it behaves as in a terminal (colors, line buffering); --pty=false turns it off")
 
 	_ = cmd.RegisterFlagCompletionFunc("depends-on", completeProjects)
@@ -115,6 +117,9 @@ func (f *projectFlags) apply(cmd *cobra.Command, p *config.Project) error {
 	}
 	if changed("pty") {
 		p.PTY = f.pty
+	}
+	if changed("stop-cmd") {
+		p.StopCmd = strings.TrimSpace(f.stopCmd)
 	}
 	return nil
 }
@@ -316,13 +321,17 @@ func newLsCmd() *cobra.Command {
 				return nil
 			}
 
-			// The PTY column only when a project has pty = true.
+			// The PTY and STOP CMD columns only when a project uses them.
 			pty := slices.ContainsFunc(slices.Collect(maps.Values(s.cfg.Projects)), func(p *config.Project) bool { return p.PTY })
+			stopCmd := slices.ContainsFunc(slices.Collect(maps.Values(s.cfg.Projects)), func(p *config.Project) bool { return p.StopCmd != "" })
 			var table strings.Builder
 			tw := tabwriter.NewWriter(&table, 0, 0, 2, ' ', 0)
 			header := "PROJECT\tDIR\tCMD\tDEPENDS ON\tREADY"
 			if pty {
 				header += "\tPTY"
+			}
+			if stopCmd {
+				header += "\tSTOP CMD"
 			}
 			fmt.Fprintln(tw, header)
 			for _, name := range sortedNames(s.cfg.Projects) {
@@ -332,6 +341,9 @@ func newLsCmd() *cobra.Command {
 					row += "\tyes"
 				} else if pty {
 					row += "\t"
+				}
+				if stopCmd {
+					row += "\t" + p.StopCmd
 				}
 				fmt.Fprintln(tw, row)
 			}

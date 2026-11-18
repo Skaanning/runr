@@ -619,7 +619,7 @@ func TestProjectFormLayout(t *testing.T) {
 	}
 
 	// Narrow: one column, Environment after Startup.
-	m.Update(tea.WindowSizeMsg{Width: 60, Height: 46})
+	m.Update(tea.WindowSizeMsg{Width: 60, Height: 52})
 	text := screenText(m)
 	if strings.Contains(launcherScreen(m)[2], "Environment") ||
 		strings.Index(text, "Startup") > strings.Index(text, "Environment") {
@@ -749,10 +749,16 @@ func TestProjectFormSaveKey(t *testing.T) {
 		m.Update(key("shift+tab"))
 	}
 	typeInto(m, "run")
-	m.Update(key("tab"))
+	for f.focused().key != "stop_cmd" {
+		m.Update(key("tab"))
+	}
+	typeInto(m, "docker compose down ")
 	m.Update(key("ctrl+s"))
 	if m.form != nil || len(saved) != 1 || saved[0].Projects["jobs"].Cmd != "run" {
 		t.Fatalf("not saved: form open = %v, saved %d", m.form != nil, len(saved))
+	}
+	if got := saved[0].Projects["jobs"].StopCmd; got != "docker compose down" {
+		t.Errorf("stop_cmd = %q", got)
 	}
 	if m.notice != `saved project "jobs"` {
 		t.Fatalf("notice = %q", m.notice)

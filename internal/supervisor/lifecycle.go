@@ -19,7 +19,7 @@ func (s *Supervisor) spawn(m *managed) {
 		m.info.Restarts++
 	}
 	m.gen++
-	m.stopRequested = false
+	m.stopRequested, m.killed = false, false
 	m.restartPending = false
 	m.info.StartedAt = time.Now()
 	m.info.Exit = proc.ExitStatus{}
@@ -45,18 +45,13 @@ func (s *Supervisor) spawn(m *managed) {
 
 	m.info.Pid = m.proc.Pid()
 	if s.tracker != nil {
-		s.tracker.Spawned(m.name, m.info.Pid, command)
+		s.tracker.Spawned(m.name, m.info.Pid, command, spec.Dir, m.project.StopCmd)
 	}
 	gen, p := m.gen, m.proc
 	if ps := knownPorts(m); len(ps) > 0 {
 		s.checkPorts(m, gen, p, ps)
 	}
-	s.running.Add(1)
-	go func() {
-		<-p.Done()
-		s.post(func() { s.exited(m, gen, p.Status()) })
-		s.running.Done()
-	}()
+	s.watch(p, func() { s.exited(m, gen, p.Status()) })
 
 	s.unblockDependents(m)
 	// With a ready_log, the run becomes ready on a matching line, with
@@ -158,18 +153,40 @@ func (s *Supervisor) stop(m *managed) {
 	s.setState(m, Stopping)
 	if err := m.proc.Terminate(); err != nil {
 		s.systemError(m, "terminate failed (%v), killing", err)
+		m.killed = true
 		_ = m.proc.Kill()
 		return
 	}
 	gen := m.gen
 	m.killTimer = time.AfterFunc(s.timeout, func() {
 		s.post(func() {
-			if m.gen == gen && m.info.State == Stopping {
+			if m.gen == gen && m.info.State == Stopping && m.proc != nil {
 				s.systemError(m, "still running after %v, killing", s.timeout)
+				m.killed = true
 				_ = m.proc.Kill()
 			}
 		})
 	})
+}
+
+// watch calls exited on the loop once p has ended. Close waits for it: the
+// goroutine counts as running until exited has run, so that whatever exited
+// starts (a stop_cmd) is counted before it isn't.
+func (s *Supervisor) watch(p *proc.Process, exited func()) {
+	s.running.Add(1)
+	go func() {
+		defer s.running.Done()
+		<-p.Done()
+		done := make(chan struct{})
+		s.post(func() {
+			exited()
+			close(done)
+		})
+		select {
+		case <-done:
+		case <-s.closed:
+		}
+	}()
 }
 
 // kill force-kills m if it is alive, or cancels it if it is waiting. Blocked
@@ -187,7 +204,13 @@ func (s *Supervisor) kill(m *managed) {
 	if m.info.State != Stopping {
 		s.setState(m, Stopping)
 	}
-	_ = m.proc.Kill()
+	switch {
+	case m.proc != nil:
+		m.killed = true
+		_ = m.proc.Kill()
+	case m.stopProc != nil: // forcing: its stop_cmd too
+		_ = m.stopProc.Kill()
+	}
 }
 
 // exited handles the end of a run.
@@ -213,6 +236,16 @@ func (s *Supervisor) exited(m *managed, gen int, status proc.ExitStatus) {
 	if status.Leftovers && !m.stopRequested {
 		s.system(m, "stopped processes the command left running")
 	}
+	if m.killed && m.project.StopCmd != "" {
+		s.runStopCmd(m, status)
+		return
+	}
+	s.ended(m, status)
+}
+
+// ended sets the state of m after its run ended with status, and moves on:
+// a pending restart, waiting dependents, the shutdown.
+func (s *Supervisor) ended(m *managed, status proc.ExitStatus) {
 	switch {
 	case m.stopRequested:
 		s.system(m, "stopped (%s)", status)
@@ -233,12 +266,89 @@ func (s *Supervisor) exited(m *managed, gen int, status proc.ExitStatus) {
 	s.advanceShutdown()
 }
 
+// stopCmdTimeout is how long a stop_cmd may run before it is killed. A
+// variable so tests can shorten it.
+var stopCmdTimeout = time.Minute
+
+// runStopCmd runs the stop_cmd of m, whose killed run ended with status.
+// m stays Stopping meanwhile (a shutdown waits for it), and its output goes
+// to m's log; then the run's end is handled as usual.
+func (s *Supervisor) runStopCmd(m *managed, status proc.ExitStatus) {
+	if m.info.State != Stopping {
+		s.setState(m, Stopping)
+	}
+	s.system(m, "running stop_cmd: %s", m.project.StopCmd)
+	spec, err := StopSpec(m.project, "", s.baseEnv, s.timeout)
+	var p *proc.Process
+	if err == nil {
+		p, err = proc.Start(spec, s.stopCmdLines(m))
+	}
+	if err != nil {
+		s.failure(m, "stop_cmd failed to start: %v", err)
+		s.ended(m, status)
+		return
+	}
+	m.stopProc = p
+	timer := time.AfterFunc(stopCmdTimeout, func() {
+		s.post(func() {
+			if m.stopProc == p {
+				s.systemError(m, "stop_cmd still running after %v, killing it", stopCmdTimeout)
+				_ = p.Kill()
+			}
+		})
+	})
+	s.watch(p, func() {
+		timer.Stop()
+		m.stopProc = nil
+		if st := p.Status(); st.Success() {
+			s.system(m, "stop_cmd done (%s)", st)
+		} else {
+			s.failure(m, "stop_cmd failed (%s)", st)
+		}
+		s.ended(m, status)
+	})
+}
+
+// stopCmdLines returns the output callback of m's stop_cmd: its lines go
+// to m's log like the program's.
+func (s *Supervisor) stopCmdLines(m *managed) func(proc.Line) {
+	name := m.name
+	return func(l proc.Line) {
+		if l.Partial {
+			return
+		}
+		stream := Stdout
+		if l.Stream == proc.Stderr {
+			stream = Stderr
+		}
+		s.events.push(LineEvent{Line: s.logs.AppendLine(LogLine{Project: name, Stream: stream, Text: l.Text})})
+	}
+}
+
 // spec builds the process spec for a project running command: resolved dir
 // and the layered environment (base, runr defaults, env_file, env).
 func (s *Supervisor) spec(p *config.Project, command string) (proc.Spec, error) {
-	dir, err := p.ResolvedDir()
-	if err != nil {
-		return proc.Spec{}, err
+	spec, err := commandSpec(p, command, "", s.baseEnv, p.PTY, s.timeout)
+	spec.Cols, spec.Rows = s.cols, s.rows
+	return spec, err
+}
+
+// StopSpec is how a project's stop_cmd runs: like its command, without a
+// terminal, in dir (the project's if "") with the project's environment
+// on top of base. Processes it leaves behind get timeout to stop.
+func StopSpec(p *config.Project, dir string, base []string, timeout time.Duration) (proc.Spec, error) {
+	return commandSpec(p, p.StopCmd, dir, base, false, timeout)
+}
+
+// commandSpec builds the spec for running command for p: in dir (p's
+// resolved dir if ""), which must exist, with the layered environment
+// (base, runr defaults, TERM on a terminal, env_file, env).
+func commandSpec(p *config.Project, command, dir string, base []string, pty bool, timeout time.Duration) (proc.Spec, error) {
+	if dir == "" {
+		var err error
+		if dir, err = p.ResolvedDir(); err != nil {
+			return proc.Spec{}, err
+		}
 	}
 	// The dir is checked before starting (config.Validate), but it can
 	// disappear later, e.g. before a restart.
@@ -247,29 +357,29 @@ func (s *Supervisor) spec(p *config.Project, command string) (proc.Spec, error) 
 	} else if !fi.IsDir() {
 		return proc.Spec{}, fmt.Errorf("dir %s is not a directory", dir)
 	}
-	envFile, err := p.ResolvedEnvFile()
-	if err != nil {
-		return proc.Spec{}, err
-	}
 	var fileVars map[string]string
-	if envFile != "" {
-		if fileVars, err = proc.LoadEnvFile(envFile); err != nil {
+	if p.EnvFile != "" {
+		envFile, err := p.ResolvedEnvFile()
+		if err != nil {
 			return proc.Spec{}, err
+		}
+		if envFile != "" {
+			if fileVars, err = proc.LoadEnvFile(envFile); err != nil {
+				return proc.Spec{}, err
+			}
 		}
 	}
 	var termEnv map[string]string
-	if p.PTY {
+	if pty {
 		termEnv = map[string]string{"TERM": "xterm-256color"}
 	}
 	return proc.Spec{
 		Command: command,
 		Dir:     dir,
-		Env:     proc.BuildEnv(s.baseEnv, proc.DefaultEnv, termEnv, fileVars, p.Env),
-		PTY:     p.PTY,
-		Cols:    s.cols,
-		Rows:    s.rows,
+		Env:     proc.BuildEnv(base, proc.DefaultEnv, termEnv, fileVars, p.Env),
+		PTY:     pty,
 		// Processes left behind by the command get as long to stop as the
 		// command itself does.
-		LeftoverTimeout: s.timeout,
+		LeftoverTimeout: timeout,
 	}, nil
 }

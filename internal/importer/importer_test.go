@@ -148,13 +148,14 @@ func TestCompose(t *testing.T) {
 	up := func(svc string) []string {
 		return []string{"docker", "compose", "up", "--no-deps", "--no-log-prefix", svc}
 	}
+	stop := func(svc string) []string { return []string{"docker", "compose", "stop", svc} }
 	want := []Service{
-		{Name: "db", Args: up("db"), Port: 55432},
-		{Name: "cache", Args: up("cache"), Port: 16379},
-		{Name: "api", Args: up("api"), DependsOn: []string{"db", "cache"}, Port: 8080},
-		{Name: "web", Args: up("web"), DependsOn: []string{"api"}, Port: 3000},
-		{Name: "worker", Args: up("worker"), DependsOn: []string{"db", "migrate"}},
-		{Name: "migrate", Args: up("migrate"), OneShot: true}, // its port is dropped
+		{Name: "db", Args: up("db"), StopArgs: stop("db"), Port: 55432},
+		{Name: "cache", Args: up("cache"), StopArgs: stop("cache"), Port: 16379},
+		{Name: "api", Args: up("api"), StopArgs: stop("api"), DependsOn: []string{"db", "cache"}, Port: 8080},
+		{Name: "web", Args: up("web"), StopArgs: stop("web"), DependsOn: []string{"api"}, Port: 3000},
+		{Name: "worker", Args: up("worker"), StopArgs: stop("worker"), DependsOn: []string{"db", "migrate"}},
+		{Name: "migrate", Args: up("migrate"), StopArgs: stop("migrate"), OneShot: true}, // its port is dropped
 	}
 	if !reflect.DeepEqual(f.Services, want) {
 		t.Fatalf("services =\n%+v\nwant\n%+v", f.Services, want)

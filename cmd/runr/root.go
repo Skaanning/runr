@@ -87,7 +87,7 @@ func runLauncher(cmd *cobra.Command) error {
 	// Processes left over by a runr that was killed are offered to be
 	// stopped first; this session's are recorded for the same purpose.
 	sessDir := sessionsDir()
-	left := leftoversFor(findLeftovers(sessDir), s.cfg.Settings.ShutdownTimeout())
+	left := leftoversFor(findLeftovers(sessDir), s.cfg, s.cfg.Settings.ShutdownTimeout())
 	var opts supervisor.Options
 	rec := track(sessDir, &opts)
 

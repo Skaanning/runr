@@ -11,7 +11,7 @@ Everything about using runr. For a short introduction, see the [README](../READM
 - [Saving logs](#saving-logs)
 - [Talking to a running session](#talking-to-a-running-session)
 - [Git](#git)
-- [How processes are run](#how-processes-are-run)
+- [How processes are run](#how-processes-are-run): [cleaning up after a kill](#cleaning-up-after-a-kill)
 - [Troubleshooting](#troubleshooting)
 - [Building and releasing](#building-and-releasing)
 
@@ -38,7 +38,7 @@ Everything about using runr. For a short introduction, see the [README](../READM
 | `runr logs [name...] [-n N] [-f] [--errors]` | Print a running session's recent output, or keep following it |
 | `runr start\|stop\|restart <name...> [--wait]` | Start, stop or restart projects and groups in a running session; `--wait` reports how it went |
 | `runr down [--force]` | Stop a running session, as `q` does there |
-| `runr cleanup [--yes]` | Stop processes left running by a runr that was killed (Linux, macOS); asks first unless `--yes` |
+| `runr cleanup [--yes]` | Stop processes left running by a runr that was killed (Linux, macOS), then run their projects' `stop_cmd`; asks first unless `--yes` |
 | `runr completion <shell>` | Shell completion script (bash, zsh, fish, powershell), completes project and group names |
 
 Flags for `add` and `edit`:
@@ -189,6 +189,7 @@ times out after 1 s) for as long as the process runs; there is no overall time l
 | `color` | no | Color of the name in the TUI: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, their `bright-` variants (`bright-red`, …), an ANSI number `0`–`255`, or a hex code `#f80` / `#ff8800`. Projects without one get a color from a fixed palette, in name order, so a project has the same color in the launcher and every session. |
 | `display_name` | no | Label shown in the TUI instead of the project name |
 | `pty` | no | `true` runs the project on a pseudo-terminal, so it behaves as in a terminal: for programs that drop their colors or buffer their output otherwise. See [How processes are run](#how-processes-are-run). |
+| `stop_cmd` | no | A command that cleans up after the project when it didn't stop cleanly, e.g. `"docker compose down"`: run like `cmd` (same `dir` and environment) only after runr had to kill the project, or for a project left over by a runr that was killed. See [Cleaning up after a kill](#cleaning-up-after-a-kill). |
 
 Names of projects and groups may contain letters, digits, `.`, `_` and `-` (starting with a
 letter or digit), and share one namespace so `runr up <name>` is never ambiguous.
@@ -592,6 +593,38 @@ session's projects; in the launcher `F` covers all registered projects and `P` t
   just prints a warning. `runr cleanup` does the same from the command line. Process start
   times are checked, so a process that merely got the same pid is never touched. On
   Windows, programs end with runr anyway.
+
+### Cleaning up after a kill
+
+Some programs leave things running that runr can't see: `docker compose up` stops its
+containers when it is asked to stop, but when it is killed, or loses its output because
+runr was killed, the containers keep running (they belong to the Docker daemon). A
+project's `stop_cmd` cleans up after it:
+
+```toml
+[projects.db]
+dir = "~/code/infra"
+cmd = "docker compose up"
+stop_cmd = "docker compose down"
+```
+
+It runs in the project's `dir` with its environment, without a terminal, when:
+
+- **runr had to kill the project:** it was still running after `shutdown_timeout`, you
+  pressed `q` (or Ctrl+C) a second time, or ran `runr down --force`. The project stays
+  `stopping` until its `stop_cmd` has finished, so quitting waits for it; its output and
+  `stop_cmd done (exit code 0)` or `stop_cmd failed (…)` go to the project's log. A
+  `stop_cmd` still running after a minute is killed, as is one running when you force
+  quitting again.
+- **The project was left over by a runr that was killed** (Linux, macOS): `runr cleanup`,
+  or answering the question at start, stops its processes and then runs its `stop_cmd`,
+  also when its process is gone already (`db  gone  stop_cmd: docker compose down`).
+
+A project that stops on its own signal, exits or crashes doesn't run it. `runr import` of
+a compose file sets `stop_cmd = "docker compose stop <service>"` for each service.
+
+On Windows, runr's programs end with runr itself, so after runr was killed there is nothing
+left to run a `stop_cmd` for (but containers may still be running).
 - **Ports** shown in the `processes` pane are the TCP ports the project's processes listen
   on, including ones opened by programs it started (e.g. `npm run dev` → `node`). They are
   checked every 2 seconds. On macOS this needs `lsof` (installed by default). Press `o` to
@@ -611,6 +644,10 @@ session's projects; in the launcher `F` covers all registered projects and `P` t
   systems where `/bin/sh` is dash (Debian, Ubuntu): it doesn't replace itself with the
   command, and stops on SIGTERM before the program does. Harmless (the program still gets
   `shutdown_timeout`); start `cmd` with `exec` to see the program's own status.
+- **`still running after 5s, killing` for a Docker Compose project:** stopping a container
+  can take longer than the default `shutdown_timeout` (Postgres in Docker takes about 10 s).
+  Raise it, e.g. `shutdown_timeout = "15s"`, and set a `stop_cmd` (see
+  [Cleaning up after a kill](#cleaning-up-after-a-kill)) for when runr kills it anyway.
 - **npm prints an update notice when stopping:** add
   `--env NPM_CONFIG_UPDATE_NOTIFIER=false`.
 - **`theme_background = true` has no effect:** the terminal didn't answer runr's question

@@ -37,7 +37,9 @@ type Options struct {
 // Tracker records the session's live processes, so that a later runr can
 // find those left running if this one dies (see sessions.Recorder).
 type Tracker interface {
-	Spawned(project string, pid int, command string)
+	// Spawned records a new process, started in dir; stopCmd is the
+	// project's stop_cmd, for cleaning up after it if it is left over.
+	Spawned(project string, pid int, command, dir, stopCmd string)
 	Exited(project string)
 }
 
@@ -88,8 +90,10 @@ type managed struct {
 	outputErrors, failures int
 
 	proc           *proc.Process
-	gen            int // incremented on every start; stale messages are ignored
+	stopProc       *proc.Process // the stop_cmd running after the run was killed; nil if none
+	gen            int           // incremented on every start; stale messages are ignored
 	stopRequested  bool
+	killed         bool // runr killed the run's process (see config.Project.StopCmd)
 	restartPending bool
 	killTimer      *time.Timer
 	cancelProbe    context.CancelFunc // stops the current run's probe; nil if none
