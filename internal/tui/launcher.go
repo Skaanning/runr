@@ -58,6 +58,11 @@ type launcherModel struct {
 	lastArgs map[string]string      // extra arguments typed last, by project (R)
 	last     *runrstate.LastSession // the last session, which l starts; nil if none
 
+	bg           *backgroundTracker // sessions running elsewhere; nil: not shown
+	sessCursor   int                // index into the running sessions; -1: the cursor is in items
+	sessPid      int                // the session under the cursor, kept across refreshes
+	stoppingSess map[int]bool       // sessions being stopped (x), by pid
+
 	git      *gitTracker // nil: git is not installed
 	gitOps   *gitActions
 	gitStale bool // the config or a repository changed; refresh the git state
@@ -68,7 +73,7 @@ type launcherModel struct {
 }
 
 func newLauncherModel(cfg *config.Config, save SaveFunc, st *styles) *launcherModel {
-	m := &launcherModel{cfg: cfg, st: st, save: save, selected: map[string]bool{}, now: time.Now}
+	m := &launcherModel{cfg: cfg, st: st, save: save, selected: map[string]bool{}, now: time.Now, sessCursor: -1, stoppingSess: map[int]bool{}}
 	m.gitOps = newGitActions(launcherGit{m}, st, cfg)
 	m.reload()
 	return m
@@ -99,7 +104,7 @@ func (m *launcherModel) reload() {
 }
 
 func (m *launcherModel) Init() tea.Cmd {
-	return tea.Batch(m.git.refresh(m.gitDirs()), tea.RequestBackgroundColor, clockTick(m, m.now()))
+	return tea.Batch(m.git.refresh(m.gitDirs()), m.bg.refresh(), tea.RequestBackgroundColor, clockTick(m, m.now()))
 }
 
 func (m *launcherModel) gitDirs() map[string]string {
@@ -110,6 +115,10 @@ func (m *launcherModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg.(type) {
 	case gitMsg, gitTickMsg:
 		return m, m.git.update(msg, m.gitDirs)
+	}
+	if cmd, ok := m.bg.update(msg); ok {
+		m.setSessions()
+		return m, cmd
 	}
 	_, cmd := m.update(msg)
 	if m.gitStale {
@@ -140,6 +149,11 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case leftoversMsg:
 		if msg.owner == m {
 			m.notice, m.cleaning = msg.report, false
+		}
+		return m, nil
+	case stoppedSessionMsg:
+		if msg.owner == m {
+			return m, m.stoppedSession(msg)
 		}
 		return m, nil
 	}
@@ -186,6 +200,17 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		m.notice = ""
+		if s, ok := m.currentSession(); ok {
+			switch msg.String() {
+			case "enter":
+				return m, m.attachSession(s)
+			case "x":
+				m.confirmStopSession()
+				return m, nil
+			case "space", "R", "shift+enter", "c":
+				return m, nil // about groups and projects
+			}
+		}
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
@@ -193,8 +218,12 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.move(msg.String())
 		case "home":
 			m.cursor = 0
+			if len(m.bg.sessions()) > 0 {
+				m.selectSession(0)
+			}
 		case "end":
 			m.cursor = max(len(m.items)-1, 0)
+			m.selectSession(-1)
 		case "space":
 			m.toggle()
 		case "enter":
@@ -204,7 +233,7 @@ func (m *launcherModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "l":
 			return m, m.startLast()
 		case "/":
-			m.jump = len(m.items) > 0
+			m.jump = len(m.items) > 0 || len(m.bg.sessions()) > 0
 		case "n":
 			return m, m.openForm(newProjectForm(m.st, m.cfg, "", m.gitReader()))
 		case "e":
@@ -252,6 +281,9 @@ func (m *launcherModel) startSelection() tea.Cmd {
 // toStart returns what enter starts: the selection, or the item under the
 // cursor when nothing is selected.
 func (m *launcherModel) toStart() []string {
+	if m.sessCursor >= 0 {
+		return nil
+	}
 	names := m.selection()
 	if len(names) == 0 && m.cursor < len(m.items) {
 		names = []string{m.items[m.cursor].name}
@@ -362,6 +394,13 @@ func (m *launcherModel) updateJump(key string) tea.Cmd {
 		m.jump = false
 		return m.startSelection()
 	}
+	if len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
+		if i := int(key[0] - '1'); i < len(m.bg.sessions()) {
+			m.jump = false
+			return m.attachSession(m.bg.sessions()[i])
+		}
+		return nil
+	}
 	i := jumpIndex(key)
 	if i < 0 || i >= len(m.items) {
 		return nil
@@ -371,6 +410,7 @@ func (m *launcherModel) updateJump(key string) tea.Cmd {
 		return m.start([]string{it.name}, nil)
 	}
 	m.cursor = i
+	m.selectSession(-1)
 	m.toggle()
 	return nil
 }
@@ -500,9 +540,10 @@ func (m *launcherModel) updatePicker(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
-// current returns the item under the cursor.
+// current returns the item under the cursor; none while it's on a running
+// session.
 func (m *launcherModel) current() (launcherItem, bool) {
-	if m.cursor < len(m.items) {
+	if m.sessCursor < 0 && m.cursor < len(m.items) {
 		return m.items[m.cursor], true
 	}
 	return launcherItem{}, false
@@ -649,7 +690,7 @@ func (m *launcherModel) members(it launcherItem) []string {
 // toggle selects the item under the cursor, or unselects it if all of its
 // projects are already selected.
 func (m *launcherModel) toggle() {
-	if m.cursor >= len(m.items) {
+	if m.sessCursor >= 0 || m.cursor >= len(m.items) {
 		return
 	}
 	members := m.members(m.items[m.cursor])
@@ -702,4 +743,9 @@ func count(n int, noun string) string {
 		return fmt.Sprintf("%d %ses", n, noun)
 	}
 	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// isCursor reports whether the cursor is on the item at index i.
+func (m *launcherModel) isCursor(i int) bool {
+	return m.sessCursor < 0 && i == m.cursor
 }

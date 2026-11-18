@@ -72,7 +72,7 @@ func newRootCmd() *cobra.Command {
 
 // runLauncher opens the launcher. What the user starts from it runs in a
 // session host, shown by the same program (in this program where there
-// are no hosts).
+// are no hosts); sessions running elsewhere are listed to attach to.
 func runLauncher(cmd *cobra.Command) error {
 	if !isTerminal(cmd.InOrStdin()) || !isTerminal(cmd.OutOrStdout()) {
 		return errors.New("the launcher needs a terminal; use runr up <name> instead")
@@ -94,7 +94,6 @@ func runLauncher(cmd *cobra.Command) error {
 	sessDir := sessionsDir()
 	left := leftoversFor(findLeftovers(sessDir), s.cfg, s.cfg.Settings.ShutdownTimeout())
 
-	var remote *control.Remote
 	var sup *supervisor.Supervisor
 	var rec *sessions.Recorder
 	stopControl := func() {}
@@ -111,11 +110,12 @@ func runLauncher(cmd *cobra.Command) error {
 			if err != nil {
 				return nil, err
 			}
-			if remote, err = control.Attach(h.path); err != nil {
+			r, err := control.Attach(h.path)
+			if err != nil {
 				h.down()
 				return nil, err
 			}
-			return remote, nil
+			return r, nil
 		}
 		// In this process: its processes are recorded for runr cleanup,
 		// in case runr is killed.
@@ -137,11 +137,12 @@ func runLauncher(cmd *cobra.Command) error {
 		_, err := (&store{path: s.path, cfg: c}).save()
 		return err
 	}
-	err = tui.RunLauncher(s.cfg, start, save, gitReader(), loadLast(), left, sigs)
-	if remote != nil {
-		final := remote.Processes()
-		remote.Close()
-		return attachedEnd(cmd.ErrOrStderr(), remote.Snapshot().Pid, final, err)
+	shown, err := tui.RunLauncher(s.cfg, start, save, gitReader(), loadLast(), left, newBackground(), sigs)
+	if r, ok := shown.(*control.Remote); ok {
+		// The session runr was quit from, in another process.
+		final := r.Processes()
+		r.Close()
+		return attachedEnd(cmd.ErrOrStderr(), r.Snapshot().Pid, final, err)
 	}
 	if sup != nil {
 		finish(cmd.ErrOrStderr(), sup)

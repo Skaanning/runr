@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -265,5 +266,37 @@ func TestHostKilledLeavesLeftovers(t *testing.T) {
 	startTestHost(t, []string{"api"}, hostOptions{hold: true})
 	if _, err := os.Stat(h.log); !os.IsNotExist(err) {
 		t.Errorf("the killed host's log is still there: %v", err)
+	}
+}
+
+func TestBackground(t *testing.T) {
+	hostEnv(t, map[string]*config.Project{"api": {Cmd: "exec sleep 30"}})
+	h := startTestHost(t, []string{"api"}, hostOptions{})
+	waitState(t, h, "api", supervisor.Running)
+	bg := newBackground()
+	list := bg.List()
+	if len(list) != 1 || list[0].Pid != h.pid || !list[0].Host || list[0].Attached != 0 ||
+		!slices.Equal(list[0].Titles, []string{"api"}) || !slices.Equal(list[0].States, []string{"running"}) {
+		t.Fatalf("list = %+v", list)
+	}
+	att, err := bg.Attach(h.pid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(att.Titles, []string{"api"}) || att.Config.Projects["api"] == nil {
+		t.Errorf("attached: %+v", att)
+	}
+	if bg.List()[0].Attached != 1 {
+		t.Error("the view isn't counted")
+	}
+	if err := att.Session.(*control.Remote).Detach(); err != nil {
+		t.Fatal(err)
+	}
+	if err := bg.Down(h.pid); err != nil {
+		t.Fatal(err)
+	}
+	waitExited(t, h)
+	if list := bg.List(); len(list) != 0 {
+		t.Errorf("after down: %+v", list)
 	}
 }

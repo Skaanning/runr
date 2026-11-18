@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -121,6 +122,9 @@ func (m *launcherModel) statusBar() string {
 	if n := len(m.selected); n > 0 {
 		b.info += m.st.faint.Render(" · ") + fmt.Sprintf("%d selected", n)
 	}
+	if sess, ok := m.currentSession(); ok {
+		b.project = m.st.bold.Render("session " + strconv.Itoa(sess.Pid))
+	}
 	if it, ok := m.current(); ok && !it.group {
 		b.project = m.st.bold.Foreground(m.st.color(m.cfg.ColorOf(it.name))).Render(it.name)
 		if g, ok := m.git.get(it.name); ok {
@@ -134,6 +138,26 @@ func (m *launcherModel) statusBar() string {
 // and returns the first and last row to keep in view for the cursor: its
 // card or row, and the heading above it if it's the first in its section.
 func (m *launcherModel) rows() (rows []string, first, last int) {
+	// The running sessions come first.
+	rows, cursor := m.sessionRows()
+	if cursor >= 0 {
+		first, last = cursor, cursor
+		if cursor == 1 {
+			first = 0 // its heading
+		}
+	}
+	items, itemFirst, itemLast := m.itemRows()
+	if m.sessCursor < 0 {
+		first, last = len(rows)+itemFirst, len(rows)+itemLast
+		if itemFirst == 0 {
+			first = 0 // the sessions' heading, when the cursor is at the top
+		}
+	}
+	return append(rows, items...), first, last
+}
+
+// itemRows renders the group cards and the project list (see rows).
+func (m *launcherModel) itemRows() (rows []string, first, last int) {
 	if len(m.items) == 0 {
 		return []string{
 			"",
@@ -180,7 +204,7 @@ func (m *launcherModel) rows() (rows []string, first, last int) {
 				first = heading
 			}
 		}
-		rows = append(rows, m.projectRow(it.name, m.jumpLabelAt(groups+i), groups+i == m.cursor, nameWidth, dirWidth, gitCol))
+		rows = append(rows, m.projectRow(it.name, m.jumpLabelAt(groups+i), m.isCursor(groups+i), nameWidth, dirWidth, gitCol))
 	}
 	return rows, first, last
 }
@@ -292,11 +316,22 @@ func (m *launcherModel) help() string {
 	}
 	if m.jump {
 		keys := [][2]string{{"letter", "start group · select project"}, {"enter", "start selected"}, {"esc", "done"}}
+		if len(m.bg.sessions()) > 0 {
+			keys = slices.Insert(keys, 1, [2]string{"digit", "attach"})
+		}
 		return ansi.Truncate(" "+m.st.hintList(keys), m.width, "…")
 	}
 	move := "↑↓"
 	if m.groupCount() > 1 {
 		move = "↑↓←→"
+	}
+	if _, ok := m.currentSession(); ok && m.form == nil && m.confirm == nil {
+		keys := [][2]string{{"↑↓", "move"}, {"enter", "attach"}, {"x", "stop"}, {"n", "new"}, {"t", "theme"}, {"/", "jump"}, {"q", "quit"}}
+		parts := make([]string, len(keys))
+		for i, k := range keys {
+			parts[i] = m.st.hint(k[0], k[1])
+		}
+		return m.st.fitHints(parts, m.width)
 	}
 	keys := [][2]string{
 		{move, "move"}, {"space", "select"}, {"enter", "start"},

@@ -84,6 +84,22 @@ func (m *launcherModel) cardsPerRow() int {
 // project list with up and down, between the cards of a row with left and
 // right.
 func (m *launcherModel) move(key string) {
+	if sessions := len(m.bg.sessions()); m.sessCursor >= 0 {
+		// The running sessions, one per row above the groups.
+		switch {
+		case key == "up":
+			m.selectSession(max(m.sessCursor-1, 0))
+		case key == "down" && m.sessCursor < sessions-1:
+			m.selectSession(m.sessCursor + 1)
+		case key == "down" && len(m.items) > 0:
+			m.selectSession(-1)
+			m.cursor = 0
+		}
+		return
+	} else if key == "up" && sessions > 0 && m.cursor < max(min(m.cardsPerRow(), m.groupCount()), 1) {
+		m.selectSession(sessions - 1) // from the top row of cards, or the first project
+		return
+	}
 	groups, per := m.groupCount(), m.cardsPerRow()
 	onCard := m.cursor < groups
 	switch key {
@@ -138,10 +154,10 @@ func (m *launcherModel) cardRows() (rows []string, first, last int) {
 		var cards [][]string
 		for k, lines := range contents {
 			i := start + k
-			if i == m.cursor {
+			if m.isCursor(i) {
 				first, last = len(rows), len(rows)+height+1
 			}
-			cards = append(cards, m.card(m.items[i], m.jumpLabelAt(i), i == m.cursor, width, lines, height))
+			cards = append(cards, m.card(m.items[i], m.jumpLabelAt(i), m.isCursor(i), width, lines, height))
 		}
 		for line := range height + 2 {
 			parts := make([]string, len(cards))
