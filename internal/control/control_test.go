@@ -360,6 +360,9 @@ func TestActions(t *testing.T) {
 }
 
 func TestDown(t *testing.T) {
+	old := replyTimeout
+	replyTimeout = 10 * time.Millisecond // a shutdown may take longer: down waits anyway
+	t.Cleanup(func() { replyTimeout = old })
 	quits := make(chan bool, 2)
 	s, err := Listen(shortDir(t), newTarget(), Info{Pid: 1, Quit: func(force bool) { quits <- force }})
 	if err != nil {
@@ -386,7 +389,7 @@ func TestDown(t *testing.T) {
 	select {
 	case err := <-result:
 		t.Fatalf("down returned before the session ended: %v", err)
-	case <-time.After(20 * time.Millisecond):
+	case <-time.After(50 * time.Millisecond): // past replyTimeout
 	}
 	s.Close() // the session ends
 	if err := <-result; err != nil {

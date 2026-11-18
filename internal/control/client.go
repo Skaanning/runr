@@ -105,7 +105,8 @@ func (e *dialError) Unwrap() error { return e.err }
 
 // Do sends req (with the current Version) to the session at path and calls
 // each with every reply, until the session closes the connection, each
-// returns an error, or a reply is an error. Without req.Follow the whole
+// returns an error, or a reply is an error. Except for following logs and
+// stopping the session (which takes as long as the shutdown), the whole
 // answer must arrive within a few seconds.
 func Do(path string, req Request, each func(Reply) error) error {
 	c, err := net.DialTimeout("unix", path, dialTimeout)
@@ -113,7 +114,7 @@ func Do(path string, req Request, each func(Reply) error) error {
 		return &dialError{err}
 	}
 	defer c.Close()
-	if !req.Follow {
+	if !req.Follow && req.Op != OpDown {
 		c.SetDeadline(time.Now().Add(replyTimeout))
 	}
 	req.V = Version
