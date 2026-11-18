@@ -12,6 +12,7 @@ package control
 import (
 	"errors"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/Skaanning/runr/internal/state"
@@ -38,6 +39,16 @@ const maxPath = 103
 // ErrPathTooLong is returned by Listen when the socket's path doesn't fit
 // in a socket address.
 var ErrPathTooLong = errors.New("control socket path is too long")
+
+// SocketPath is where the session of runr's pid listens in dir, or
+// ErrPathTooLong.
+func SocketPath(dir string, pid int) (string, error) {
+	path := filepath.Join(dir, strconv.Itoa(pid)+".sock")
+	if len(path) > maxPath {
+		return "", ErrPathTooLong
+	}
+	return path, nil
+}
 
 // Dir is where sessions put their sockets: control in runr's state
 // directory.
@@ -69,9 +80,11 @@ type Reply struct {
 
 // Status describes a session.
 type Status struct {
-	Pid       int       `json:"pid"`     // of runr
-	Started   time.Time `json:"started"` // when the session began
-	Titles    []string  `json:"titles"`  // the groups and projects it was started with
+	Pid       int       `json:"pid"`            // of runr
+	Started   time.Time `json:"started"`        // when the session began
+	Titles    []string  `json:"titles"`         // the groups and projects it was started with
+	Host      bool      `json:"host,omitempty"` // runs in the background, shown by attached views
+	Attached  int       `json:"attached"`       // views attached now (runr attach)
 	Processes []Process `json:"processes"`
 }
 

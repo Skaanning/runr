@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/control"
 	"github.com/Skaanning/runr/internal/gitinfo"
 	"github.com/Skaanning/runr/internal/sessions"
 	"github.com/Skaanning/runr/internal/supervisor"
@@ -20,12 +21,15 @@ import (
 )
 
 func newUpCmd() *cobra.Command {
-	var plain, last bool
+	var plain, last, detach, inProcess bool
 	var logDirFlag string
 	cmd := &cobra.Command{
 		Use:   "up <name...>",
 		Short: "Start groups and/or projects",
-		Long: "Start the given groups and/or projects, plus everything they depend on.\n\n" +
+		Long: "Start the given groups and/or projects, plus everything they depend on, and show\n" +
+			"the running view. d there leaves the session running in the background (runr\n" +
+			"attach shows it again); closing the terminal without d stops it, as q does.\n\n" +
+			"With -d, start the session in the background without showing it.\n" +
 			"With --last, start what the last session started, with the same extra arguments.",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if last {
@@ -38,6 +42,12 @@ func newUpCmd() *cobra.Command {
 		},
 		ValidArgsFunction: completeProjectsAndGroups,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if detach && (plain || inProcess) {
+				return errors.New("-d runs the session in the background; leave out --plain and --in-process")
+			}
+			if detach && !hostSupported {
+				return errors.New("-d isn't supported on this system yet")
+			}
 			s, err := loadStore()
 			if err != nil {
 				return err
@@ -56,36 +66,74 @@ func newUpCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			opts := supervisor.Options{LogDir: dir}
 			// Processes left over by a runr that was killed are offered to
-			// be stopped first; this session's are recorded for the same
-			// purpose.
+			// be stopped first.
 			sessDir := sessionsDir()
 			orphans := findLeftovers(sessDir)
+			stderr := cmd.ErrOrStderr()
+			// The TUI needs a terminal for both keys and drawing; otherwise
+			// (e.g. piped to a file) behave like --plain.
+			tty := isTerminal(cmd.InOrStdin()) && isTerminal(cmd.OutOrStdout())
+			if detach || plain || !tty {
+				if len(orphans) > 0 {
+					fmt.Fprintf(stderr, "runr: %s; left running (runr cleanup stops them)\n", sessions.Summary(orphans))
+				}
+			}
+			left := leftoversFor(orphans, s.cfg, s.cfg.Settings.ShutdownTimeout())
+			switch {
+			case detach:
+				h, err := startHost(args, hostOptions{logDir: dir, args: extra})
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "started session %d · runr attach to watch it\n", h.pid)
+				return nil
+			case !plain && tty && !inProcess && hostSupported:
+				return upHosted(stderr, args, hostOptions{logDir: dir, args: extra, hold: left != nil, forView: true}, left)
+			}
+
+			// In this process: this session's processes are recorded for
+			// runr cleanup, in case runr is killed.
+			opts := supervisor.Options{LogDir: dir}
 			rec := track(sessDir, &opts)
 			defer rec.Close() // runs after everything has stopped
-
 			sigs := make(chan os.Signal, 2)
 			signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 			defer signal.Stop(sigs)
-			// The TUI needs a terminal for both keys and drawing; otherwise
-			// (e.g. piped to a file) behave like --plain.
-			if plain || !isTerminal(cmd.InOrStdin()) || !isTerminal(cmd.OutOrStdout()) {
-				if len(orphans) > 0 {
-					fmt.Fprintf(cmd.ErrOrStderr(), "runr: %s; left running (runr cleanup stops them)\n", sessions.Summary(orphans))
-				}
+			if plain || !tty {
 				return runPlain(cmd.OutOrStdout(), s.cfg, opts, args, extra, projects, sigs, colorsFor(cmd.OutOrStdout()))
 			}
-			return runTUI(cmd.ErrOrStderr(), s.cfg, opts, args, extra, leftoversFor(orphans, s.cfg, s.cfg.Settings.ShutdownTimeout()), sigs)
+			return runTUI(stderr, s.cfg, opts, args, extra, left, sigs)
 		},
 	}
 	cmd.Flags().BoolVar(&last, "last", false, "start what the last session started, with the same extra arguments")
+	cmd.Flags().BoolVarP(&detach, "detach", "d", false, "start the session in the background (runr attach shows it)")
 	cmd.Flags().StringVar(&logDirFlag, "log-dir", "", "append each project's output to <dir>/<project>.log (overrides settings.log_dir)")
 	_ = cmd.MarkFlagDirname("log-dir")
 	// Plain interleaved output, for debugging and non-interactive use.
 	cmd.Flags().BoolVar(&plain, "plain", false, "print interleaved output instead of opening the TUI")
 	_ = cmd.Flags().MarkHidden("plain")
+	// The session inside this runr, not detachable (as before T59): for
+	// debugging.
+	cmd.Flags().BoolVar(&inProcess, "in-process", false, "run the session inside this runr (not detachable)")
+	_ = cmd.Flags().MarkHidden("in-process")
 	return cmd
+}
+
+// upHosted starts names in a session host and shows its running view. With
+// left set, the host waits: the view asks about the leftover processes,
+// then starts the projects.
+func upHosted(stderr io.Writer, names []string, o hostOptions, left *tui.Leftovers) error {
+	h, err := startHost(names, o)
+	if err != nil {
+		return err
+	}
+	r, err := control.Attach(h.path)
+	if err != nil {
+		h.down()
+		return err
+	}
+	return runAttached(stderr, r, left)
 }
 
 // runTUI starts the projects, with extra arguments by project, and shows

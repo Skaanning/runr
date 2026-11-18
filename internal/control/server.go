@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -37,6 +36,13 @@ type Info struct {
 	Labels  map[string]string // display names by project; others show their name
 	Quit    func(force bool)  // stops the session, like q (force: like a second q); nil: can't
 	Config  *config.Config    // as the session was started, for attached views; never changed
+
+	// Host marks a session that runs in the background (runr host), shown
+	// only by attached views. Dropped, if set, is called when the last
+	// attached view went away without detaching: its terminal was closed,
+	// or it died. A view that fell too far behind counts as detached.
+	Host    bool
+	Dropped func()
 }
 
 // Timing, variables so tests can shorten them.
@@ -59,14 +65,16 @@ type Server struct {
 	mu     sync.Mutex
 	conns  map[net.Conn]bool
 	closed bool
+	views  int  // attached now
+	viewed bool // a view has attached
 	wg     sync.WaitGroup
 }
 
 // Listen starts serving target on <dir>/<info.Pid>.sock, creating dir.
 func Listen(dir string, target Target, info Info) (*Server, error) {
-	path := filepath.Join(dir, strconv.Itoa(info.Pid)+".sock")
-	if len(path) > maxPath {
-		return nil, ErrPathTooLong
+	path, err := SocketPath(dir, info.Pid)
+	if err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
@@ -93,6 +101,33 @@ func Listen(dir string, target Target, info Info) (*Server, error) {
 
 // Path is the socket's path.
 func (s *Server) Path() string { return s.path }
+
+// Viewed reports whether a view has attached to the session.
+func (s *Server) Viewed() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.viewed
+}
+
+// viewJoined counts an attached view.
+func (s *Server) viewJoined() {
+	s.mu.Lock()
+	s.views++
+	s.viewed = true
+	s.mu.Unlock()
+}
+
+// viewLeft counts a view that is gone, and calls Info.Dropped if it was
+// the last one and didn't detach, unless the server is closing.
+func (s *Server) viewLeft(detached bool) {
+	s.mu.Lock()
+	s.views--
+	last := s.views == 0 && !detached && !s.closed
+	s.mu.Unlock()
+	if last && s.info.Dropped != nil {
+		s.info.Dropped()
+	}
+}
 
 // Close stops listening and ends every connection: followers send the lines
 // that arrived since their last batch, within a second. It waits for the
@@ -225,7 +260,10 @@ func (s *Server) act(req Request) error {
 func (s *Server) status() Status {
 	infos := s.target.Processes()
 	listening := s.ports(s.target.Pids())
-	st := Status{Pid: s.info.Pid, Started: s.info.Started, Titles: s.info.Titles, Processes: []Process{}}
+	s.mu.Lock()
+	views := s.views
+	s.mu.Unlock()
+	st := Status{Pid: s.info.Pid, Started: s.info.Started, Titles: s.info.Titles, Host: s.info.Host, Attached: views, Processes: []Process{}}
 	for _, in := range infos {
 		p := Process{
 			Name:      in.Name,

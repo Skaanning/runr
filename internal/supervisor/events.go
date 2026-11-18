@@ -84,12 +84,21 @@ func (q *eventQueue) close() {
 	}
 }
 
+// pumpChunk is how many events the pump takes from the queue at a time:
+// the rest stays in items, where size counts it and compact can thin it.
+const pumpChunk = 1024
+
 func (q *eventQueue) pump() {
 	for range q.notify {
 		for {
 			q.mu.Lock()
-			items, closed := q.items, q.closed
-			q.items = nil
+			n := min(len(q.items), pumpChunk)
+			items, closed := q.items[:n:n], q.closed
+			if n == len(q.items) {
+				q.items = nil
+			} else {
+				q.items = q.items[n:]
+			}
 			q.mu.Unlock()
 
 			for _, e := range items {
@@ -104,6 +113,47 @@ func (q *eventQueue) pump() {
 			}
 		}
 	}
+}
+
+// compact thins out the undelivered events to what a view keeps anyway:
+// the newest perProject lines of each project, or the newest total lines
+// of all (the combined log), the newest pending line of a project, and the
+// last of a project's state events in a row with the same state (e.g.
+// error counts going up). It returns how many events are left.
+func (q *eventQueue) compact(perProject, total int) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	items := q.items
+	drop := make([]bool, len(items))
+	lines := 0
+	byProject := map[string]int{}
+	pending := map[string]bool{}
+	states := map[string]State{} // the state of a project's next state event
+	for i := len(items) - 1; i >= 0; i-- {
+		switch e := items[i].(type) {
+		case LineEvent:
+			p := e.Line.Project
+			drop[i] = lines >= total && byProject[p] >= perProject
+			lines++
+			byProject[p]++
+		case PendingEvent:
+			drop[i] = pending[e.Project]
+			pending[e.Project] = true
+		case StateEvent:
+			next, ok := states[e.Info.Name]
+			drop[i] = ok && next == e.Info.State
+			states[e.Info.Name] = e.Info.State
+		}
+	}
+	kept := items[:0]
+	for i, e := range items {
+		if !drop[i] {
+			kept = append(kept, e)
+		}
+	}
+	clear(items[len(kept):]) // for the garbage collector
+	q.items = kept
+	return len(kept)
 }
 
 // discard drops the undelivered events and closes out.
@@ -124,24 +174,40 @@ func (q *eventQueue) size() int {
 	return len(q.items)
 }
 
-// maxLag is how many events a subscriber may fall behind before it is
-// dropped. A variable so tests can shorten it.
-var maxLag = 1 << 22
+// Subscribers that fall behind: a variable so tests can shorten them.
+var (
+	// compactAt is how many events a subscriber may fall behind before
+	// its backlog is compacted (eventQueue.compact).
+	compactAt = 1 << 16
+	// maxLag is how many events a subscriber may still be behind after
+	// that before it is dropped.
+	maxLag = 1 << 22
+)
 
 // eventHub delivers every event to the session's consumer (Events) and to
 // its subscribers (Subscribe), each through its own queue, in the same
-// order. It remembers the pending lines for new subscribers.
+// order. It remembers the pending lines for new subscribers. A subscriber
+// that falls behind gets its backlog compacted to what a view keeps of the
+// logs: scrollback lines per project (see Settings.ScrollbackLines).
 type eventHub struct {
-	main *eventQueue
+	main       *eventQueue
+	scrollback int
 
-	mu      sync.Mutex
-	subs    map[*Subscription]bool
-	pending map[string]string // the latest PendingEvent text by project
-	closed  bool
+	mu       sync.Mutex
+	subs     map[*Subscription]bool
+	pending  map[string]string // the latest PendingEvent text by project
+	projects map[string]bool   // that had events
+	closed   bool
 }
 
-func newEventHub() *eventHub {
-	return &eventHub{main: newEventQueue(), subs: map[*Subscription]bool{}, pending: map[string]string{}}
+func newEventHub(scrollback int) *eventHub {
+	return &eventHub{
+		main:       newEventQueue(),
+		scrollback: scrollback,
+		subs:       map[*Subscription]bool{},
+		pending:    map[string]string{},
+		projects:   map[string]bool{},
+	}
 }
 
 func (h *eventHub) push(e Event) {
@@ -155,14 +221,26 @@ func (h *eventHub) push(e Event) {
 			h.pending[p.Project] = p.Text
 		}
 	}
+	switch e := e.(type) {
+	case StateEvent:
+		h.projects[e.Info.Name] = true
+	case LineEvent:
+		h.projects[e.Line.Project] = true
+	}
 	for sub := range h.subs {
-		if sub.q.size() >= maxLag {
+		sub.q.push(e)
+		n := sub.q.size()
+		if n < max(sub.compactAt, compactAt) {
+			continue
+		}
+		// The combined log keeps scrollback lines per project in all.
+		n = sub.q.compact(h.scrollback, h.scrollback*len(h.projects))
+		sub.compactAt = 2 * n // so that compacting stays cheap
+		if n >= maxLag {
 			sub.lagged.Store(true)
 			sub.q.discard()
 			delete(h.subs, sub)
-			continue
 		}
-		sub.q.push(e)
 	}
 }
 
@@ -180,18 +258,21 @@ func (h *eventHub) close() {
 // Subscription is a stream of a session's events besides Events, e.g. for
 // a view attached from another terminal (see Supervisor.Subscribe).
 type Subscription struct {
-	q      *eventQueue
-	hub    *eventHub
-	lagged atomic.Bool
+	q         *eventQueue
+	hub       *eventHub
+	lagged    atomic.Bool
+	compactAt int // the backlog to compact at next, if more than compactAt
 }
 
-// Events delivers every event after the subscription began. It is closed
-// by Close, when the supervisor closes, and when the subscriber fell too
-// far behind (see Lagged).
+// Events delivers every event after the subscription began, except that a
+// subscriber more than compactAt events behind skips what a view wouldn't
+// keep (older lines beyond the scrollback, superseded pending lines and
+// states). It is closed by Close, when the supervisor closes, and when the
+// subscriber fell too far behind even so (see Lagged).
 func (s *Subscription) Events() <-chan Event { return s.q.out }
 
 // Lagged reports whether the subscription was dropped for falling too far
-// behind.
+// behind: its backlog didn't fit in maxLag events even after compacting.
 func (s *Subscription) Lagged() bool { return s.lagged.Load() }
 
 // Close ends the subscription; undelivered events are dropped.

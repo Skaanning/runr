@@ -124,7 +124,7 @@ func New(cfg *config.Config, opts Options) *Supervisor {
 		timeout: cfg.Settings.ShutdownTimeout(),
 		msgs:    make(chan func(), 64),
 		closed:  make(chan struct{}),
-		events:  newEventHub(),
+		events:  newEventHub(cfg.Settings.ScrollbackLines()),
 		procs:   map[string]*managed{},
 		args:    map[string]string{},
 		cols:    proc.DefaultCols,

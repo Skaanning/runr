@@ -9,6 +9,7 @@ import (
 	"net"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Skaanning/runr/internal/config"
@@ -228,6 +229,11 @@ func (s *Server) attach(c net.Conn, dec *json.Decoder) {
 	if w.write(Frame{Snapshot: &snap}, true) != nil {
 		return
 	}
+	// A view that leaves without detaching (its terminal was closed, or
+	// it died) may stop the session (Info.Dropped).
+	var detached atomic.Bool
+	s.viewJoined()
+	defer func() { s.viewLeft(detached.Load()) }()
 
 	gone := make(chan struct{}) // the view left (or detached)
 	go func() {
@@ -238,6 +244,7 @@ func (s *Server) attach(c net.Conn, dec *json.Decoder) {
 				return
 			}
 			if cmd.Op == CmdDetach {
+				detached.Store(true)
 				w.write(Frame{Reply: &CommandReply{ID: cmd.ID}}, true)
 				return
 			}
@@ -254,31 +261,52 @@ func (s *Server) attach(c net.Conn, dec *json.Decoder) {
 		case e, ok := <-events:
 			if !ok {
 				if sub.Lagged() {
+					detached.Store(true) // it can attach again
 					w.write(Frame{Error: ErrLagged.Error()}, true)
 				}
 				return
 			}
-			// Everything queued goes out in one write.
-			for ok {
-				ev := wireEvent(e)
-				if w.write(Frame{Event: &ev}, false) != nil {
-					return
-				}
-				select {
-				case e, ok = <-events:
-				default:
-					ok = false
-				}
-			}
-			if w.flush() != nil {
+			if !sendEvents(w, e, events) {
 				return
 			}
 		case <-gone:
 			return
 		case <-s.done:
-			return
+			// The session has ended: its last events (e.g. the final
+			// states) are still on their way, until the subscription
+			// closes with the supervisor.
+			timeout := time.After(closeGrace)
+			for {
+				select {
+				case e, ok := <-events:
+					if !ok || !sendEvents(w, e, events) {
+						return
+					}
+				case <-gone:
+					return
+				case <-timeout:
+					return
+				}
+			}
 		}
 	}
+}
+
+// sendEvents writes e and everything queued after it in one write,
+// reporting false once writing fails.
+func sendEvents(w *frameWriter, e supervisor.Event, events <-chan supervisor.Event) bool {
+	for ok := true; ok; {
+		ev := wireEvent(e)
+		if w.write(Frame{Event: &ev}, false) != nil {
+			return false
+		}
+		select {
+		case e, ok = <-events:
+		default:
+			ok = false
+		}
+	}
+	return w.flush() == nil
 }
 
 // command carries out a view's command.

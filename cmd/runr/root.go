@@ -11,6 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Skaanning/runr/internal/config"
+	"github.com/Skaanning/runr/internal/control"
+	"github.com/Skaanning/runr/internal/sessions"
 	"github.com/Skaanning/runr/internal/supervisor"
 	"github.com/Skaanning/runr/internal/tui"
 )
@@ -63,12 +65,14 @@ func newRootCmd() *cobra.Command {
 		newActionCmd(actions[2]),
 		newDownCmd(),
 		newAttachCmd(),
+		newHostCmd(),
 	)
 	return root
 }
 
-// runLauncher opens the launcher; whatever the user starts from it runs in
-// the same program.
+// runLauncher opens the launcher. What the user starts from it runs in a
+// session host, shown by the same program (in this program where there
+// are no hosts).
 func runLauncher(cmd *cobra.Command) error {
 	if !isTerminal(cmd.InOrStdin()) || !isTerminal(cmd.OutOrStdout()) {
 		return errors.New("the launcher needs a terminal; use runr up <name> instead")
@@ -86,13 +90,13 @@ func runLauncher(cmd *cobra.Command) error {
 	defer signal.Stop(sigs)
 
 	// Processes left over by a runr that was killed are offered to be
-	// stopped first; this session's are recorded for the same purpose.
+	// stopped first.
 	sessDir := sessionsDir()
 	left := leftoversFor(findLeftovers(sessDir), s.cfg, s.cfg.Settings.ShutdownTimeout())
-	var opts supervisor.Options
-	rec := track(sessDir, &opts)
 
+	var remote *control.Remote
 	var sup *supervisor.Supervisor
+	var rec *sessions.Recorder
 	stopControl := func() {}
 	start := func(names []string, args map[string]string) (tui.Session, error) {
 		if _, err := prepareUp(s.cfg, names, io.Discard); err != nil {
@@ -102,10 +106,25 @@ func runLauncher(cmd *cobra.Command) error {
 		if err != nil {
 			return nil, err
 		}
-		opts.LogDir = dir
+		if hostSupported {
+			h, err := startHost(names, hostOptions{logDir: dir, args: args, forView: true})
+			if err != nil {
+				return nil, err
+			}
+			if remote, err = control.Attach(h.path); err != nil {
+				h.down()
+				return nil, err
+			}
+			return remote, nil
+		}
+		// In this process: its processes are recorded for runr cleanup,
+		// in case runr is killed.
+		opts := supervisor.Options{LogDir: dir}
+		rec = track(sessDir, &opts)
 		sess := newRecordingSession(s.cfg, opts)
 		if err := sess.begin(names, args); err != nil {
 			sess.Close()
+			rec.Close()
 			return nil, err
 		}
 		sup = sess.Supervisor
@@ -119,6 +138,11 @@ func runLauncher(cmd *cobra.Command) error {
 		return err
 	}
 	err = tui.RunLauncher(s.cfg, start, save, gitReader(), loadLast(), left, sigs)
+	if remote != nil {
+		final := remote.Processes()
+		remote.Close()
+		return attachedEnd(cmd.ErrOrStderr(), remote.Snapshot().Pid, final, err)
+	}
 	if sup != nil {
 		finish(cmd.ErrOrStderr(), sup)
 	}

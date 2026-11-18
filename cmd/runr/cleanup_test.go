@@ -23,7 +23,15 @@ import (
 // killed.
 const recordEnv = "RUNR_TEST_RECORD"
 
+// mainEnv makes the test binary act like runr itself, e.g. as a session
+// host started by the code under test (os.Executable).
+const mainEnv = "RUNR_TEST_MAIN"
+
 func TestMain(m *testing.M) {
+	if os.Getenv(mainEnv) != "" {
+		main()
+		os.Exit(0)
+	}
 	if os.Getenv(fakeDockerEnv) != "" {
 		fakeDocker()
 	}

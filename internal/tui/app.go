@@ -62,7 +62,8 @@ func (a *appModel) View() tea.View {
 // written with save. git reads the projects' git state; nil hides it. last,
 // if set, is the last session, which l starts again. If left is set, the
 // launcher first asks whether to kill those processes. Signals received on
-// sigs are handled like Ctrl+C.
+// sigs are handled like Ctrl+C. It returns what Run does about how the
+// running view ended.
 func RunLauncher(cfg *config.Config, start StartFunc, save SaveFunc, git GitReader, last *runrstate.LastSession, left *Leftovers, sigs <-chan os.Signal) error {
 	launcher := newLauncherModel(cfg, save, settingsStyles(cfg.Settings))
 	launcher.git = newGitTracker(git)
@@ -70,7 +71,14 @@ func RunLauncher(cfg *config.Config, start StartFunc, save SaveFunc, git GitRead
 	if left != nil {
 		launcher.askLeftovers(left)
 	}
-	return run(&appModel{cfg: cfg, start: start, launcher: launcher}, sigs)
+	a := &appModel{cfg: cfg, start: start, launcher: launcher}
+	if err := run(a, sigs); err != nil {
+		return err
+	}
+	if a.running != nil {
+		return a.running.ended()
+	}
+	return nil
 }
 
 // Run shows the running view until the user quits and every process has
@@ -91,6 +99,13 @@ func Run(sess Session, cfg *config.Config, names []string, git GitReader, left *
 	if err := run(m, sigs); err != nil {
 		return err
 	}
+	return m.ended()
+}
+
+// ended is how the running view ended: ErrDetached when the user left the
+// session running, the session's Lost error when it ended on its own, nil
+// when the user stopped it.
+func (m *runningModel) ended() error {
 	switch {
 	case m.detached:
 		return ErrDetached

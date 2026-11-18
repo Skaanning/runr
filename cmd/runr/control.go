@@ -40,26 +40,38 @@ func controlDir() string {
 // sends a signal on sigs, as Ctrl+C does (force: a second one). Nothing
 // happens if the socket can't be created.
 func serveControl(sess recordingSession, cfg *config.Config, titles []string, sigs chan<- os.Signal) (stop func()) {
-	dir := controlDir()
-	if dir == "" {
+	srv, err := listenControl(sess, cfg, titles, quitter(sigs), false)
+	if err != nil {
 		return func() {}
+	}
+	return srv.Close
+}
+
+// listenControl serves sess, which was started with titles, on its control
+// socket. quit stops the session. A host's session also stops when the
+// last view attached to it goes away without detaching.
+func listenControl(sess recordingSession, cfg *config.Config, titles []string, quit func(force bool), host bool) (*control.Server, error) {
+	dir, err := control.Dir()
+	if err != nil {
+		return nil, err
 	}
 	labels := map[string]string{} // copied: the launcher's forms change cfg
 	for name, p := range cfg.Projects {
 		labels[name] = p.Label(name)
 	}
-	srv, err := control.Listen(dir, sess, control.Info{
+	info := control.Info{
 		Pid:     os.Getpid(),
 		Started: time.Now(),
 		Titles:  append([]string(nil), titles...),
 		Labels:  labels,
-		Quit:    quitter(sigs),
+		Quit:    quit,
 		Config:  copyConfig(cfg),
-	})
-	if err != nil {
-		return func() {}
+		Host:    host,
 	}
-	return srv.Close
+	if host {
+		info.Dropped = func() { quit(false) }
+	}
+	return control.Listen(dir, sess, info)
 }
 
 // copyConfig returns a deep copy of cfg, for attached views: the
@@ -193,7 +205,7 @@ func printStatus(w io.Writer, sessions []control.Session, now time.Time) {
 		if len(st.Titles) > 0 {
 			header += " · " + strings.Join(st.Titles, ", ")
 		}
-		fmt.Fprintf(w, "%s · started %s\n", header, startedAt(st.Started.Local(), now))
+		fmt.Fprintf(w, "%s · started %s · attached: %d\n", header, startedAt(st.Started.Local(), now), st.Attached)
 		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(tw, "NAME\tSTATE\tUPTIME\tPID\tPORTS\tERRORS\tRESTARTS")
 		for _, p := range st.Processes {
@@ -523,7 +535,7 @@ func newAttachCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return runAttached(cmd.ErrOrStderr(), r)
+			return runAttached(cmd.ErrOrStderr(), r, nil)
 		},
 	}
 	sessionFlag(cmd, &pid)
@@ -531,8 +543,10 @@ func newAttachCmd() *cobra.Command {
 }
 
 // runAttached shows the running view of an attached session until the
-// user detaches or stops it, or it ends.
-func runAttached(stderr io.Writer, r *control.Remote) error {
+// user detaches or stops it, or it ends. With left set, the session hasn't
+// started its projects yet: the view asks about those leftover processes
+// first, then starts them.
+func runAttached(stderr io.Writer, r *control.Remote, left *tui.Leftovers) error {
 	snap := r.Snapshot()
 	// SIGINT is handled like q. A closed terminal (SIGHUP) or SIGTERM only
 	// ends this view: whether the session goes on is up to the session.
@@ -551,12 +565,19 @@ func runAttached(stderr io.Writer, r *control.Remote) error {
 		case <-done:
 		}
 	}()
-	err := tui.Run(r, snap.Config, snap.Titles, gitReader(), nil, sigs)
+	err := tui.Run(r, snap.Config, snap.Titles, gitReader(), left, sigs)
 	final := r.Processes()
 	r.Close()
+	return attachedEnd(stderr, snap.Pid, final, err)
+}
+
+// attachedEnd reports how a view of the session with pid ended: detached,
+// or the session ended with final processes (crashed and blocked ones are
+// listed).
+func attachedEnd(stderr io.Writer, pid int, final []supervisor.ProcessInfo, err error) error {
 	switch {
 	case errors.Is(err, tui.ErrDetached):
-		fmt.Fprintf(stderr, "runr: detached from session %d; runr attach to come back\n", snap.Pid)
+		fmt.Fprintf(stderr, "runr: detached from session %d; runr attach to come back\n", pid)
 		return nil
 	case err != nil:
 		return err

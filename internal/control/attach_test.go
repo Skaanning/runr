@@ -20,6 +20,12 @@ import (
 // is the session's way of stopping.
 func liveSession(t *testing.T, projects map[string]string, quit func(bool)) (*supervisor.Supervisor, *Server) {
 	t.Helper()
+	return liveSessionWith(t, projects, Info{Quit: quit})
+}
+
+// liveSessionWith is liveSession with more of the Info.
+func liveSessionWith(t *testing.T, projects map[string]string, info Info) (*supervisor.Supervisor, *Server) {
+	t.Helper()
 	cfg := config.New()
 	cfg.Settings.ShutdownTimeoutValue.Duration = 2 * time.Second
 	dir := t.TempDir()
@@ -39,7 +45,8 @@ func liveSession(t *testing.T, projects map[string]string, quit func(bool)) (*su
 	if err := sup.Start(names...); err != nil {
 		t.Fatal(err)
 	}
-	srv, err := Listen(shortDir(t), sup, Info{Pid: 42, Titles: names, Config: cfg, Quit: quit})
+	info.Pid, info.Titles, info.Config = 42, names, cfg
+	srv, err := Listen(shortDir(t), sup, info)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,4 +296,96 @@ func TestAttachDrop(t *testing.T) {
 	if sup.Processes()[0].State != supervisor.Running {
 		t.Errorf("api = %+v", sup.Processes()[0])
 	}
+}
+
+// waitAttached waits until the session's status counts n views.
+func waitAttached(t *testing.T, srv *Server, n int) Status {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		replies, err := collect(t, srv.Path(), Request{Op: OpStatus})
+		if err != nil {
+			t.Fatal(err)
+		}
+		st := *replies[0].Status
+		if st.Attached == n {
+			return st
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("attached = %d, want %d", st.Attached, n)
+		}
+	}
+}
+
+func TestAttachHostDisconnectRule(t *testing.T) {
+	dropped := make(chan struct{}, 4)
+	_, srv := liveSessionWith(t, map[string]string{"api": "exec sleep 30"}, Info{
+		Host:    true,
+		Dropped: func() { dropped <- struct{}{} },
+	})
+	attach := func() *Remote {
+		t.Helper()
+		r, err := Attach(srv.Path())
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	noDrop := func(what string) {
+		t.Helper()
+		select {
+		case <-dropped:
+			t.Errorf("%s stopped the session", what)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	if srv.Viewed() {
+		t.Error("viewed before any view attached")
+	}
+
+	a, b := attach(), attach()
+	if st := waitAttached(t, srv, 2); !st.Host {
+		t.Error("status doesn't say it's a host")
+	}
+	if !srv.Viewed() {
+		t.Error("not viewed with two views")
+	}
+	a.Drop(errors.New("closed"))
+	waitAttached(t, srv, 1)
+	noDrop("dropping one of two views")
+	if err := b.Detach(); err != nil {
+		t.Fatal(err)
+	}
+	waitAttached(t, srv, 0)
+	noDrop("detaching the last view")
+
+	c := attach()
+	waitAttached(t, srv, 1)
+	c.Close() // as when its terminal is closed
+	select {
+	case <-dropped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the last view went away without detaching, and the session went on")
+	}
+
+	attach()
+	waitAttached(t, srv, 1)
+	srv.Close() // the session ends: its views go with it
+	noDrop("the session ending")
+}
+
+func TestAttachSessionEndsWithItsLastEvents(t *testing.T) {
+	sup, srv := liveSession(t, map[string]string{"api": "exec sleep 30"}, nil)
+	r, err := Attach(srv.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(r.Close)
+	// As a session ends: the supervisor closes, then the server.
+	<-sup.StopAll()
+	sup.Close()
+	srv.Close()
+	waitFor(t, r, "the final state", func(e supervisor.Event) bool {
+		s, ok := e.(supervisor.StateEvent)
+		return ok && s.Info.State == supervisor.Stopped
+	})
 }
