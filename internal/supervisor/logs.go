@@ -78,6 +78,28 @@ func (l *Logs) AppendLine(line LogLine) LogLine {
 	return line
 }
 
+// Insert stores a line that already has its sequence number and time, e.g.
+// one of another process's session (a view's copy of its log). Lines of a
+// project must be inserted in order.
+func (l *Logs) Insert(line LogLine) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.seq = max(l.seq, line.Seq)
+	buf := l.buffers[line.Project]
+	if buf == nil {
+		buf = &ring{capacity: l.capacity}
+		l.buffers[line.Project] = buf
+	}
+	buf.push(line)
+	if l.onAppend != nil {
+		l.onAppend(line)
+	}
+	if l.changed != nil {
+		close(l.changed)
+		l.changed = nil
+	}
+}
+
 // Changed returns a channel that is closed when the next line is stored,
 // for followers that read the new lines with Since.
 func (l *Logs) Changed() <-chan struct{} {

@@ -79,14 +79,25 @@ func RunLauncher(cfg *config.Config, start StartFunc, save SaveFunc, git GitRead
 // on sigs are handled like Ctrl+C.
 //
 // If left is set, sess has not been started yet: the view first asks
-// whether to kill those processes, and then starts names.
+// whether to kill those processes, and then starts names. Run returns
+// ErrDetached when the user left the session running (d, for a Detacher),
+// and the session's Lost error when it ended without the view stopping it.
 func Run(sess Session, cfg *config.Config, names []string, git GitReader, left *Leftovers, sigs <-chan os.Signal) error {
 	m := newRunningModel(sess, cfg, names, settingsStyles(cfg.Settings))
 	m.git = newGitTracker(git)
 	if left != nil {
 		m.askLeftovers(left)
 	}
-	return run(m, sigs)
+	if err := run(m, sigs); err != nil {
+		return err
+	}
+	switch {
+	case m.detached:
+		return ErrDetached
+	case m.lost != nil:
+		return m.lost
+	}
+	return nil
 }
 
 // settingsStyles returns the styles for the theme settings.

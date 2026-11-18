@@ -16,6 +16,21 @@ import (
 	"github.com/Skaanning/runr/internal/supervisor"
 )
 
+// Detacher is a session the view can leave running (d): one in another
+// process, attached over its socket.
+type Detacher interface {
+	Detach() error
+}
+
+// ErrDetached is returned by Run when the user detached from the session.
+var ErrDetached = errors.New("detached from the session")
+
+// lostSession reports why a session ended without the view stopping it, or
+// nil; its Events are closed by then.
+type lostSession interface {
+	Lost() error
+}
+
 // Session is the part of the supervisor the running view uses.
 type Session interface {
 	Processes() []supervisor.ProcessInfo
@@ -131,6 +146,8 @@ type runningModel struct {
 
 	stopping bool
 	forced   bool
+	detached bool  // the user left the session running (d)
+	lost     error // the session ended without the view stopping it
 }
 
 func newRunningModel(sess Session, cfg *config.Config, names []string, st *styles) *runningModel {
@@ -443,6 +460,11 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 		if !msg.closed {
 			return tea.Batch(cmd, m.waitEvents())
 		}
+		if l, ok := m.sess.(lostSession); ok && !m.stopping && !m.detached {
+			if m.lost = l.Lost(); m.lost != nil {
+				return tea.Quit // the session is gone: nothing left to show
+			}
+		}
 		return cmd
 	case toastMsg: // expired toasts are pruned in Update
 	case gitMsg:
@@ -600,6 +622,15 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "q":
 		if !m.stopping {
 			return m.interrupt()
+		}
+	case "d":
+		if d, ok := m.sess.(Detacher); ok && !m.stopping {
+			if err := d.Detach(); err != nil {
+				m.notice = "can't detach: " + err.Error()
+				return nil
+			}
+			m.detached = true
+			return tea.Quit
 		}
 	case "!": // select the project of the newest toast
 		if len(toasts) > 0 {

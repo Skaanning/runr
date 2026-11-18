@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Skaanning/runr/internal/config"
 	"github.com/Skaanning/runr/internal/ports"
 	"github.com/Skaanning/runr/internal/supervisor"
 )
@@ -35,6 +36,7 @@ type Info struct {
 	Titles  []string
 	Labels  map[string]string // display names by project; others show their name
 	Quit    func(force bool)  // stops the session, like q (force: like a second q); nil: can't
+	Config  *config.Config    // as the session was started, for attached views; never changed
 }
 
 // Timing, variables so tests can shorten them.
@@ -179,6 +181,8 @@ func (s *Server) handle(c net.Conn) {
 		// before it returns.
 		st := s.status()
 		enc.Encode(Reply{Status: &st})
+	case OpAttach:
+		s.attach(c, dec)
 	case OpDown:
 		if s.info.Quit == nil {
 			enc.Encode(Reply{Error: "this session can't be stopped from outside"})

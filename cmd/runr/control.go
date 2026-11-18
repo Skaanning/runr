@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"text/tabwriter"
 	"time"
 	"unicode/utf8"
@@ -52,11 +54,23 @@ func serveControl(sess recordingSession, cfg *config.Config, titles []string, si
 		Titles:  append([]string(nil), titles...),
 		Labels:  labels,
 		Quit:    quitter(sigs),
+		Config:  copyConfig(cfg),
 	})
 	if err != nil {
 		return func() {}
 	}
 	return srv.Close
+}
+
+// copyConfig returns a deep copy of cfg, for attached views: the
+// launcher's forms change cfg later.
+func copyConfig(cfg *config.Config) *config.Config {
+	b, err := json.Marshal(cfg)
+	out := config.New()
+	if err == nil {
+		json.Unmarshal(b, out)
+	}
+	return out
 }
 
 // quitter returns what stops the session for `runr down`: the first call
@@ -486,4 +500,69 @@ func newDownCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&force, "force", false, "kill the processes instead of stopping them gracefully")
 	sessionFlag(cmd, &pid)
 	return cmd
+}
+
+func newAttachCmd() *cobra.Command {
+	var pid int
+	cmd := &cobra.Command{
+		Use:   "attach",
+		Short: "Open the running view of a session running elsewhere",
+		Long: "Open the running view of a runr session running in another terminal or in the\n" +
+			"background. q stops the session, as in its own terminal; d detaches and leaves it\n" +
+			"running.",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if !isTerminal(cmd.InOrStdin()) || !isTerminal(cmd.OutOrStdout()) {
+				return errors.New("attach needs a terminal; use runr status and runr logs instead")
+			}
+			sess, err := control.Pick(runningSessions(cmd.ErrOrStderr()), nil, pid)
+			if err != nil {
+				return err
+			}
+			r, err := control.Attach(sess.Path)
+			if err != nil {
+				return err
+			}
+			return runAttached(cmd.ErrOrStderr(), r)
+		},
+	}
+	sessionFlag(cmd, &pid)
+	return cmd
+}
+
+// runAttached shows the running view of an attached session until the
+// user detaches or stops it, or it ends.
+func runAttached(stderr io.Writer, r *control.Remote) error {
+	snap := r.Snapshot()
+	// SIGINT is handled like q. A closed terminal (SIGHUP) or SIGTERM only
+	// ends this view: whether the session goes on is up to the session.
+	sigs := make(chan os.Signal, 2)
+	signal.Notify(sigs, os.Interrupt)
+	defer signal.Stop(sigs)
+	gone := make(chan os.Signal, 1)
+	signal.Notify(gone, syscall.SIGHUP, syscall.SIGTERM)
+	defer signal.Stop(gone)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case sig := <-gone:
+			r.Drop(fmt.Errorf("the view got %v and closed", sig))
+		case <-done:
+		}
+	}()
+	err := tui.Run(r, snap.Config, snap.Titles, gitReader(), nil, sigs)
+	final := r.Processes()
+	r.Close()
+	switch {
+	case errors.Is(err, tui.ErrDetached):
+		fmt.Fprintf(stderr, "runr: detached from session %d; runr attach to come back\n", snap.Pid)
+		return nil
+	case err != nil:
+		return err
+	}
+	if s := summarize(final); s != "" {
+		fmt.Fprintf(stderr, "runr: %s\n", s)
+	}
+	return nil
 }

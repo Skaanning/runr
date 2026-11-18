@@ -9,7 +9,7 @@ Everything about using runr. For a short introduction, see the [README](../READM
 - [The launcher](#the-launcher)
 - [The running view](#the-running-view): [errors](#errors), [typing into a program](#typing-into-a-program)
 - [Saving logs](#saving-logs)
-- [Talking to a running session](#talking-to-a-running-session)
+- [Talking to a running session](#talking-to-a-running-session): [attaching](#attaching-to-a-session)
 - [Using runr from an AI coding agent](#using-runr-from-an-ai-coding-agent)
 - [Git](#git)
 - [How processes are run](#how-processes-are-run): [cleaning up after a kill](#cleaning-up-after-a-kill)
@@ -39,6 +39,7 @@ Everything about using runr. For a short introduction, see the [README](../READM
 | `runr logs [name...] [-n N] [-f] [--errors]` | Print a running session's recent output, or keep following it |
 | `runr start\|stop\|restart <name...> [--wait]` | Start, stop or restart projects and groups in a running session; `--wait` reports how it went |
 | `runr down [--force]` | Stop a running session, as `q` does there |
+| `runr attach` | Open the running view of a session running in another terminal or in the background (see [Attaching to a session](#attaching-to-a-session)) |
 | `runr cleanup [--yes]` | Stop processes left running by a runr that was killed (Linux, macOS), then run their projects' `stop_cmd`; asks first unless `--yes` |
 | `runr completion <shell>` | Shell completion script (bash, zsh, fish, powershell), completes project and group names |
 
@@ -357,6 +358,7 @@ so for 5 seconds.
 | `w` | Save the output on screen (all of it, or the selected process's) to a file in the current directory (see [Saving logs](#saving-logs)) |
 | `c` | Copy the command line that starts the selected project the way runr does (with its extra arguments, if it has any): `cd` to its directory, runr's default variables, its `env_file` and `env`, then the command, e.g. `cd ~/code/api && env FORCE_COLOR=1 … PORT=8080 /bin/sh -c 'go run .'` (`cmd.exe` syntax on Windows). It goes to the clipboard through the terminal (OSC 52; in tmux, `set-clipboard on`) and is shown on the bottom line |
 | `q`, `Ctrl+C` | Stop everything and quit; a second `Ctrl+C` kills everything immediately |
+| `d` | In a view opened with `runr attach`: leave, and let the session run on (see [Attaching to a session](#attaching-to-a-session)) |
 
 Search is plain text (no regex) and smart-case: an all-lowercase query ignores case, any
 uppercase letter makes it case-sensitive.
@@ -488,6 +490,22 @@ Windows, or `$RUNR_STATE_DIR`). Only your user can open it. The socket goes away
 session ends; one left by a runr that was killed is removed by the next `runr status` or
 `runr logs`. Socket paths are limited to about 100 characters, so a very long
 `$RUNR_STATE_DIR` turns this off (`runr status` says so).
+
+### Attaching to a session
+
+`runr attach` opens the running view of a session that runs elsewhere: one in another
+terminal, or one started in the background (`runr up backend > /tmp/runr.log 2>&1 &`). It
+shows everything the session still has in memory and follows it live, with the usual keys:
+restart, stop, start, search, git, typing into `pty = true` projects.
+
+- **`d` detaches:** the view closes and the session runs on; `runr attach` again later.
+- **`q` stops the session**, as `q` does in its own terminal: a session in another
+  terminal quits there too, a background one ends.
+- **Closing the view's terminal** only closes the view; the session runs on.
+- Several views can watch one session at the same time. With several sessions running,
+  choose one with `--session <pid>`.
+
+The view uses the session's own config, as it was when the session started.
 
 ## Using runr from an AI coding agent
 

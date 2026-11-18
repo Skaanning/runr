@@ -209,3 +209,22 @@ func TestLogsChanged(t *testing.T) {
 	}
 	l.Append("api", Stdout, "nobody waits") // no channel to close
 }
+
+func TestLogsInsert(t *testing.T) {
+	l := NewLogs(2)
+	at := time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)
+	l.Insert(LogLine{Seq: 7, Project: "api", Text: "a", Time: at})
+	l.Insert(LogLine{Seq: 9, Project: "db", Text: "d"})
+	l.Insert(LogLine{Seq: 12, Project: "api", Text: "b"})
+	l.Insert(LogLine{Seq: 13, Project: "api", Text: "c"}) // a drops out
+	if got := texts(l.Combined()); !reflect.DeepEqual(got, []string{"d", "b", "c"}) {
+		t.Errorf("Combined = %q", got)
+	}
+	if got := l.Lines("db"); got[0].Seq != 9 {
+		t.Errorf("db = %+v", got)
+	}
+	// New lines continue after the highest sequence number.
+	if line := l.Append("api", Stdout, "next"); line.Seq != 14 {
+		t.Errorf("seq after Insert = %d", line.Seq)
+	}
+}

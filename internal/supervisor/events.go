@@ -1,6 +1,9 @@
 package supervisor
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
 
 // Event is sent on Supervisor.Events: a StateEvent, LineEvent,
 // PendingEvent or WarningEvent.
@@ -100,5 +103,103 @@ func (q *eventQueue) pump() {
 				break
 			}
 		}
+	}
+}
+
+// discard drops the undelivered events and closes out.
+func (q *eventQueue) discard() {
+	q.mu.Lock()
+	q.items, q.closed = nil, true
+	q.mu.Unlock()
+	select {
+	case q.notify <- struct{}{}:
+	default:
+	}
+}
+
+// size is the number of undelivered events.
+func (q *eventQueue) size() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.items)
+}
+
+// maxLag is how many events a subscriber may fall behind before it is
+// dropped. A variable so tests can shorten it.
+var maxLag = 1 << 22
+
+// eventHub delivers every event to the session's consumer (Events) and to
+// its subscribers (Subscribe), each through its own queue, in the same
+// order. It remembers the pending lines for new subscribers.
+type eventHub struct {
+	main *eventQueue
+
+	mu      sync.Mutex
+	subs    map[*Subscription]bool
+	pending map[string]string // the latest PendingEvent text by project
+	closed  bool
+}
+
+func newEventHub() *eventHub {
+	return &eventHub{main: newEventQueue(), subs: map[*Subscription]bool{}, pending: map[string]string{}}
+}
+
+func (h *eventHub) push(e Event) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.main.push(e)
+	if p, ok := e.(PendingEvent); ok {
+		if p.Text == "" {
+			delete(h.pending, p.Project)
+		} else {
+			h.pending[p.Project] = p.Text
+		}
+	}
+	for sub := range h.subs {
+		if sub.q.size() >= maxLag {
+			sub.lagged.Store(true)
+			sub.q.discard()
+			delete(h.subs, sub)
+			continue
+		}
+		sub.q.push(e)
+	}
+}
+
+func (h *eventHub) close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.closed = true
+	h.main.close()
+	for sub := range h.subs {
+		sub.q.close()
+		delete(h.subs, sub)
+	}
+}
+
+// Subscription is a stream of a session's events besides Events, e.g. for
+// a view attached from another terminal (see Supervisor.Subscribe).
+type Subscription struct {
+	q      *eventQueue
+	hub    *eventHub
+	lagged atomic.Bool
+}
+
+// Events delivers every event after the subscription began. It is closed
+// by Close, when the supervisor closes, and when the subscriber fell too
+// far behind (see Lagged).
+func (s *Subscription) Events() <-chan Event { return s.q.out }
+
+// Lagged reports whether the subscription was dropped for falling too far
+// behind.
+func (s *Subscription) Lagged() bool { return s.lagged.Load() }
+
+// Close ends the subscription; undelivered events are dropped.
+func (s *Subscription) Close() {
+	s.hub.mu.Lock()
+	defer s.hub.mu.Unlock()
+	if s.hub.subs[s] {
+		delete(s.hub.subs, s)
+		s.q.discard()
 	}
 }

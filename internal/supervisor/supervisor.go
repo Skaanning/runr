@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"regexp"
 	"strings"
@@ -63,7 +64,7 @@ type Supervisor struct {
 	tracker   Tracker         // Options.Tracker; nil if none
 	cancel    context.CancelFunc
 	closeOnce sync.Once
-	events    *eventQueue
+	events    *eventHub
 	running   sync.WaitGroup // live processes, for Close
 
 	// Owned by the loop goroutine.
@@ -123,7 +124,7 @@ func New(cfg *config.Config, opts Options) *Supervisor {
 		timeout: cfg.Settings.ShutdownTimeout(),
 		msgs:    make(chan func(), 64),
 		closed:  make(chan struct{}),
-		events:  newEventQueue(),
+		events:  newEventHub(),
 		procs:   map[string]*managed{},
 		args:    map[string]string{},
 		cols:    proc.DefaultCols,
@@ -153,7 +154,27 @@ func (s *Supervisor) logFileFailed(project, path string, err error) {
 
 // Events delivers state changes and log lines in order. It is closed after Close.
 func (s *Supervisor) Events() <-chan Event {
-	return s.events.out
+	return s.events.main.out
+}
+
+// Subscribe returns a stream of every event from now on, for another
+// consumer than the one of Events (a view attached from another terminal),
+// and the pending lines now (by project, see PendingEvent): together with
+// Processes and Logs, what a new view needs. Lines stored just before the
+// subscription may be both in Logs and in its events. The subscriber must
+// keep reading, or Close it.
+func (s *Supervisor) Subscribe() (*Subscription, map[string]string) {
+	h := s.events
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	sub := &Subscription{q: newEventQueue(), hub: h}
+	pending := maps.Clone(h.pending)
+	if h.closed {
+		sub.q.close()
+	} else {
+		h.subs[sub] = true
+	}
+	return sub, pending
 }
 
 // Logs returns the store holding every project's recent output.

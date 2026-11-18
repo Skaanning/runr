@@ -62,6 +62,7 @@ func newRootCmd() *cobra.Command {
 		newActionCmd(actions[1]),
 		newActionCmd(actions[2]),
 		newDownCmd(),
+		newAttachCmd(),
 	)
 	return root
 }

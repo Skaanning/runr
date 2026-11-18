@@ -732,6 +732,10 @@ func (m *runningModel) help() string {
 	for _, k := range keys {
 		parts = append(parts, m.st.hint(k[0], k[1]))
 	}
+	// Kept with q when hints are dropped for room.
+	if _, ok := m.sess.(Detacher); ok && !m.stopping && len(parts) > 0 {
+		parts[len(parts)-1] = m.st.hint("d", "detach") + m.st.hintGap + parts[len(parts)-1]
+	}
 	return m.st.fitHints(parts, m.width)
 }
 
