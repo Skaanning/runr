@@ -24,6 +24,8 @@ Works on Linux, macOS and Windows.
   answer its prompts, e.g. a script that asks for a branch name.
 - **Shared configs:** write project directories as `$RUNR_ROOT/api`, so a team can share one
   config while everyone keeps their checkouts in a different place.
+- **From another terminal:** `runr status` and `runr logs api --errors` show what a running
+  session is doing, so scripts and coding agents can read a crash without copy-paste.
 - **Git:** see each project's branch and changes, switch branches, fetch and pull all.
 - **Import** projects from a `Procfile` or a Docker Compose file.
 - **Logs** saved to files on demand or for every session, plain output when piped, and color
@@ -101,7 +103,8 @@ The [guide](docs/guide.md) covers everything else:
   [sharing a config](docs/guide.md#sharing-a-config)
 - [The launcher](docs/guide.md#the-launcher) and [the running view](docs/guide.md#the-running-view), with all their keys,
   and [typing into a program](docs/guide.md#typing-into-a-program)
-- [Saving logs](docs/guide.md#saving-logs) and [Git](docs/guide.md#git)
+- [Saving logs](docs/guide.md#saving-logs), [talking to a running session](docs/guide.md#talking-to-a-running-session)
+  and [Git](docs/guide.md#git)
 - [How processes are run](docs/guide.md#how-processes-are-run) and
   [Troubleshooting](docs/guide.md#troubleshooting)
 

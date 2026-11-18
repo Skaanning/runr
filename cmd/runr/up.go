@@ -97,6 +97,7 @@ func newUpCmd() *cobra.Command {
 // leftover processes is answered.
 func runTUI(stderr io.Writer, cfg *config.Config, opts supervisor.Options, names []string, args map[string]string, left *tui.Leftovers, sigs <-chan os.Signal) error {
 	sess := newRecordingSession(cfg, opts)
+	stopControl := serveControl(sess, cfg, names)
 	var err error
 	if left == nil {
 		err = sess.begin(names, args)
@@ -111,6 +112,7 @@ func runTUI(stderr io.Writer, cfg *config.Config, opts supervisor.Options, names
 		err = tui.Run(sess, cfg, names, gitReader(), left, sigs)
 	}
 	finish(stderr, sess.Supervisor)
+	stopControl() // after the last lines, for followers
 	return err
 }
 

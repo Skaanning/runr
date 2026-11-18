@@ -161,3 +161,51 @@ func BenchmarkCombined(b *testing.B) {
 		_ = l.Combined()
 	}
 }
+
+func TestLogsSince(t *testing.T) {
+	l := NewLogs(3)
+	for i := range 5 { // api keeps 3 of its lines: a2 (seq 5), a3 (7), a4 (9)
+		l.Append("api", Stdout, "a"+strconv.Itoa(i))
+		l.Append("db", Stdout, "d"+strconv.Itoa(i))
+	}
+	cases := []struct {
+		seq      uint64
+		projects []string
+		want     []string
+	}{
+		{0, nil, []string{"a2", "d2", "a3", "d3", "a4", "d4"}},
+		{6, nil, []string{"a3", "d3", "a4", "d4"}},
+		{6, []string{"api"}, []string{"a3", "a4"}},
+		{9, []string{"db"}, []string{"d4"}},
+		{10, nil, []string{}},
+		{0, []string{"nope"}, []string{}},
+	}
+	for _, c := range cases {
+		if got := texts(l.Since(c.seq, c.projects...)); !reflect.DeepEqual(got, c.want) {
+			t.Errorf("Since(%d, %v) = %v, want %v", c.seq, c.projects, got, c.want)
+		}
+	}
+}
+
+func TestLogsChanged(t *testing.T) {
+	l := NewLogs(10)
+	ch := l.Changed()
+	if l.Changed() != ch {
+		t.Error("Changed returned a new channel before a line arrived")
+	}
+	select {
+	case <-ch:
+		t.Fatal("closed before a line arrived")
+	default:
+	}
+	l.Append("api", Stdout, "hello")
+	select {
+	case <-ch:
+	default:
+		t.Fatal("not closed after a line arrived")
+	}
+	if next := l.Changed(); next == ch {
+		t.Error("Changed returned the closed channel")
+	}
+	l.Append("api", Stdout, "nobody waits") // no channel to close
+}

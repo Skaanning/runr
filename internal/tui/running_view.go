@@ -184,14 +184,14 @@ func statusText(info supervisor.ProcessInfo, oneShot bool, now time.Time) (text 
 		return "blocked", true
 	case supervisor.Starting, supervisor.Running, supervisor.Stopping:
 		if !info.StartedAt.IsZero() {
-			return uptime(now.Sub(info.StartedAt)), false
+			return Uptime(now.Sub(info.StartedAt)), false
 		}
 	}
 	return "", false
 }
 
-// uptime formats a duration in at most two units: 45s, 4m02s, 1h12m, 3d04h.
-func uptime(d time.Duration) string {
+// Uptime formats a duration in at most two units: 45s, 4m02s, 1h12m, 3d04h.
+func Uptime(d time.Duration) string {
 	s := int(max(d, 0) / time.Second)
 	switch {
 	case s < 60:

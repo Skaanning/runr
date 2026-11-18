@@ -56,6 +56,8 @@ func newRootCmd() *cobra.Command {
 		newGroupCmd(),
 		newThemeCmd(),
 		newCleanupCmd(),
+		newStatusCmd(),
+		newLogsCmd(),
 	)
 	return root
 }
@@ -86,6 +88,7 @@ func runLauncher(cmd *cobra.Command) error {
 	rec := track(sessDir, &opts)
 
 	var sup *supervisor.Supervisor
+	stopControl := func() {}
 	start := func(names []string, args map[string]string) (tui.Session, error) {
 		if _, err := prepareUp(s.cfg, names, io.Discard); err != nil {
 			return nil, err
@@ -101,6 +104,7 @@ func runLauncher(cmd *cobra.Command) error {
 			return nil, err
 		}
 		sup = sess.Supervisor
+		stopControl = serveControl(sess, s.cfg, names)
 		return sess, nil
 	}
 	// Forms edit a copy; once it validates and is written, the launcher
@@ -113,6 +117,7 @@ func runLauncher(cmd *cobra.Command) error {
 	if sup != nil {
 		finish(cmd.ErrOrStderr(), sup)
 	}
-	rec.Close() // everything has stopped
+	stopControl() // after the last lines, for followers
+	rec.Close()   // everything has stopped
 	return err
 }

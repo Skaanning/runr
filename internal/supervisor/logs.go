@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"slices"
 	"sync"
 	"time"
 )
@@ -37,6 +38,7 @@ type Logs struct {
 	buffers  map[string]*ring
 	now      func() time.Time
 	onAppend func(LogLine) // called with every line, in order, under mu; nil: none
+	changed  chan struct{} // closed by the next Append; nil until Changed asks
 }
 
 // NewLogs returns a store keeping at most capacity lines per project.
@@ -69,7 +71,38 @@ func (l *Logs) AppendLine(line LogLine) LogLine {
 	if l.onAppend != nil {
 		l.onAppend(line)
 	}
+	if l.changed != nil {
+		close(l.changed)
+		l.changed = nil
+	}
 	return line
+}
+
+// Changed returns a channel that is closed when the next line is stored,
+// for followers that read the new lines with Since.
+func (l *Logs) Changed() <-chan struct{} {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.changed == nil {
+		l.changed = make(chan struct{})
+	}
+	return l.changed
+}
+
+// Since returns the buffered lines after sequence number seq of the given
+// projects (all projects if none are given), interleaved in arrival order.
+func (l *Logs) Since(seq uint64, projects ...string) []LogLine {
+	l.mu.Lock()
+	var parts [][]LogLine
+	for name, buf := range l.buffers {
+		if len(projects) == 0 || slices.Contains(projects, name) {
+			if p := buf.after(seq); len(p) > 0 {
+				parts = append(parts, p)
+			}
+		}
+	}
+	l.mu.Unlock()
+	return merge(parts)
 }
 
 // Lines returns a copy of a project's buffered lines, oldest first.
@@ -87,24 +120,29 @@ func (l *Logs) Lines(project string) []LogLine {
 func (l *Logs) Combined(projects ...string) []LogLine {
 	l.mu.Lock()
 	var parts [][]LogLine
-	total := 0
 	if len(projects) == 0 {
 		for _, buf := range l.buffers {
 			parts = append(parts, buf.snapshot())
-			total += buf.n
 		}
 	} else {
 		for _, name := range projects {
 			if buf := l.buffers[name]; buf != nil {
 				parts = append(parts, buf.snapshot())
-				total += buf.n
 			}
 		}
 	}
 	l.mu.Unlock()
+	return merge(parts)
+}
 
-	// Each part is already sorted by Seq; merge by repeatedly taking the
-	// smallest head. The number of projects is small, so a linear scan is fine.
+// merge interleaves parts, each sorted by Seq, into one slice sorted by Seq.
+func merge(parts [][]LogLine) []LogLine {
+	total := 0
+	for _, p := range parts {
+		total += len(p)
+	}
+	// Repeatedly take the smallest head. The number of projects is small, so
+	// a linear scan is fine.
 	out := make([]LogLine, 0, total)
 	for len(out) < total {
 		best := -1
@@ -136,6 +174,20 @@ func (r *ring) push(line LogLine) {
 	}
 	r.lines[r.start] = line
 	r.start = (r.start + 1) % r.capacity
+}
+
+// after returns a copy of the lines with a sequence number above seq,
+// oldest first.
+func (r *ring) after(seq uint64) []LogLine {
+	k := 0 // lines after seq, counted from the newest
+	for k < r.n && r.lines[(r.start+r.n-1-k)%r.capacity].Seq > seq {
+		k++
+	}
+	out := make([]LogLine, k)
+	for i := range k {
+		out[i] = r.lines[(r.start+r.n-k+i)%r.capacity]
+	}
+	return out
 }
 
 func (r *ring) snapshot() []LogLine {

@@ -9,6 +9,7 @@ Everything about using runr. For a short introduction, see the [README](../READM
 - [The launcher](#the-launcher)
 - [The running view](#the-running-view): [errors](#errors)
 - [Saving logs](#saving-logs)
+- [Talking to a running session](#talking-to-a-running-session)
 - [Git](#git)
 - [How processes are run](#how-processes-are-run)
 - [Troubleshooting](#troubleshooting)
@@ -33,6 +34,8 @@ Everything about using runr. For a short introduction, see the [README](../READM
 | `runr group delete <group>` | Delete a group (its projects are kept) |
 | `runr group ls` | List groups |
 | `runr theme [name]` | List the color themes (the current one marked with `*`), or set one |
+| `runr status [--json]` | Show the runr sessions running in other terminals and their processes (see [Talking to a running session](#talking-to-a-running-session)) |
+| `runr logs [name...] [-n N] [-f] [--errors]` | Print a running session's recent output, or keep following it |
 | `runr cleanup [--yes]` | Stop processes left running by a runr that was killed (Linux, macOS); asks first unless `--yes` |
 | `runr completion <shell>` | Shell completion script (bash, zsh, fish, powershell), completes project and group names |
 
@@ -410,6 +413,45 @@ Both are plain text without colors, one line per output line:
 ```
 
 Saved combined logs put the project's name before `│` / `»`; `»` marks runr's own lines.
+
+## Talking to a running session
+
+Other terminals can ask a running session what it is doing: a second terminal, an editor
+task, a git hook, or a coding agent that should read a crash's output itself instead of
+having it pasted in. This works for every session — `runr up`, the launcher and plain
+output (`runr up backend > /dev/null &`).
+
+```bash
+runr status                   # every running session and its processes
+runr status --json            # the same as JSON, for scripts
+runr logs api                 # api's last 100 lines
+runr logs backend -n 0        # everything runr still has of the group's projects
+runr logs --errors            # only error lines (settings.error_pattern) and crashes
+runr logs -f api web          # keep printing new lines until Ctrl+C or the session ends
+```
+
+```
+session 48211 · backend, web · started 10:42
+NAME  STATE                  UPTIME  PID    PORTS   ERRORS  RESTARTS
+db    running                12m03s  48230  :55432  0       0
+api   crashed (exit code 1)  -       -      -       3       1
+web   running                12m01s  48236  :3000   0       0
+```
+
+`runr logs` prints lines in the [saved logs' format](#saving-logs), without colors; with
+several projects each line starts with the project's display name. It reads what the
+session still has in memory (`scrollback_lines` per project).
+
+When several sessions run, a command picks the one that has the projects you name; if
+that's still more than one (or you name none), choose with `--session <pid>`, the pid shown
+by `runr status`.
+
+Each session listens on a socket named after its pid in `control/` in runr's state directory
+(`~/.local/state/runr` on Linux, `~/Library/Caches/runr` on macOS, `%LocalAppData%\runr` on
+Windows, or `$RUNR_STATE_DIR`). Only your user can open it. The socket goes away when the
+session ends; one left by a runr that was killed is removed by the next `runr status` or
+`runr logs`. Socket paths are limited to about 100 characters, so a very long
+`$RUNR_STATE_DIR` turns this off (`runr status` says so).
 
 ## Git
 

@@ -20,8 +20,8 @@ func TestUptime(t *testing.T) {
 		3*24*time.Hour + 4*time.Hour + 5*time.Minute: "3d04h",
 		-time.Second: "0s", // clock skew
 	} {
-		if got := uptime(d); got != want {
-			t.Errorf("uptime(%v) = %q, want %q", d, got, want)
+		if got := Uptime(d); got != want {
+			t.Errorf("Uptime(%v) = %q, want %q", d, got, want)
 		}
 	}
 }

@@ -37,6 +37,7 @@ func runPlain(out io.Writer, cfg *config.Config, opts supervisor.Options, names 
 		sup.Close()
 		return err
 	}
+	stopControl := serveControl(sess, cfg, names)
 
 	latest := map[string]supervisor.ProcessInfo{}
 	events := sup.Events()
@@ -69,6 +70,7 @@ loop:
 	}
 
 	sup.Close()
+	stopControl()           // after the last lines, for followers
 	for e := range events { // remaining events, e.g. final "stopped" lines
 		pr.event(e)
 		if se, ok := e.(supervisor.StateEvent); ok {
