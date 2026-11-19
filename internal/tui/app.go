@@ -46,8 +46,16 @@ func (a *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, cmd
 		}
 		_, cmd := a.running.Update(msg)
-		if a.running.detached || a.running.lost != nil {
+		m := a.running
+		switch {
+		case m.lost != nil, (m.detached || m.finished) && m.toLauncher:
 			return a, a.backToLauncher()
+		case m.detached: // d: exit runr, the session running on
+			if p, ok := m.sess.(pider); ok {
+				a.detached = append(a.detached, p.Pid())
+			}
+			a.running = nil
+			return a, tea.Quit
 		}
 		return a, cmd
 	}
@@ -110,6 +118,7 @@ func (a *appModel) show(sess Session, cfg *config.Config, names []string, notice
 	a.running = newRunningModel(sess, cfg, names, a.launcher.st)
 	a.running.git = a.launcher.git // already has the git state
 	a.running.notice = notice
+	a.running.hasLauncher = true
 	if a.size.Width > 0 {
 		a.running.Update(a.size)
 	}
@@ -126,9 +135,13 @@ func (a *appModel) backToLauncher() tea.Cmd {
 		c.Close()
 	}
 	l := a.launcher
-	l.notice = "detached: the session goes on running"
-	if m.lost != nil {
+	switch {
+	case m.lost != nil:
 		l.notice = oneLine(m.lost.Error())
+	case m.finished:
+		l.notice = "stopped the session"
+	default:
+		l.notice = "detached: the session goes on running"
 	}
 	if p, ok := m.sess.(pider); ok && m.detached {
 		a.detached = append(a.detached, p.Pid())

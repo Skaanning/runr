@@ -147,8 +147,13 @@ type runningModel struct {
 
 	stopping bool
 	forced   bool
-	detached bool  // the user left the session running (d)
-	lost     error // the session ended without the view stopping it
+	detached bool // the user left the session running (d, D)
+	finished bool // the session stopped (q, Q, Ctrl+C)
+	// toLauncher: after detaching or stopping, show the launcher instead
+	// of exiting runr (D, Q). Only with hasLauncher (the app).
+	toLauncher  bool
+	hasLauncher bool
+	lost        error // the session ended without the view stopping it
 }
 
 func newRunningModel(sess Session, cfg *config.Config, names []string, st *styles) *runningModel {
@@ -513,6 +518,7 @@ func (m *runningModel) update(msg tea.Msg) tea.Cmd {
 	case interruptMsg:
 		return m.interrupt()
 	case stoppedMsg:
+		m.finished = true
 		return tea.Quit
 	default:
 		var cmd tea.Cmd
@@ -620,17 +626,24 @@ func (m *runningModel) handleKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
 	case "ctrl+c":
 		return m.interrupt()
-	case "q":
+	case "q", "Q":
+		if msg.String() == "Q" && !m.hasLauncher {
+			return nil
+		}
+		m.toLauncher = msg.String() == "Q" // the last key decides, also while stopping
 		if !m.stopping {
 			return m.interrupt()
 		}
-	case "d":
+	case "d", "D":
+		if msg.String() == "D" && !m.hasLauncher {
+			return nil
+		}
 		if d, ok := m.sess.(Detacher); ok && !m.stopping {
 			if err := d.Detach(); err != nil {
 				m.notice = "can't detach: " + err.Error()
 				return nil
 			}
-			m.detached = true
+			m.detached, m.toLauncher = true, msg.String() == "D"
 			return tea.Quit
 		}
 	case "!": // select the project of the newest toast

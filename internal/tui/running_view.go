@@ -736,6 +736,13 @@ func (m *runningModel) help() string {
 	if _, ok := m.sess.(Detacher); ok && !m.stopping && len(parts) > 0 {
 		parts[len(parts)-1] = m.st.hint("d", "detach") + m.st.hintGap + parts[len(parts)-1]
 	}
+	if m.hasLauncher && !m.stopping && len(parts) > 0 {
+		keys := "Q"
+		if _, ok := m.sess.(Detacher); ok {
+			keys = "D/Q"
+		}
+		parts[len(parts)-1] += m.st.hintGap + m.st.hint(keys, "…to launcher")
+	}
 	return m.st.fitHints(parts, m.width)
 }
 

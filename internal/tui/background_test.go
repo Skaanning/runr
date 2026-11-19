@@ -237,9 +237,9 @@ func TestAppAttachDetach(t *testing.T) {
 		t.Error("the list was refreshed behind the running view")
 	}
 
-	app.Update(key("d"))
+	app.Update(key("D"))
 	if app.running != nil || sess.detached != 1 {
-		t.Fatalf("d: running = %v, detached = %d", app.running != nil, sess.detached)
+		t.Fatalf("D: running = %v, detached = %d", app.running != nil, sess.detached)
 	}
 	if !strings.Contains(app.launcher.notice, "detached") {
 		t.Errorf("notice = %q", app.launcher.notice)
@@ -271,9 +271,9 @@ func TestAppDetachFromStartedSession(t *testing.T) {
 	if app.running == nil {
 		t.Fatal("not started")
 	}
-	app.Update(key("d"))
+	app.Update(key("D"))
 	if app.running != nil {
-		t.Error("d didn't return to the launcher")
+		t.Error("D didn't return to the launcher")
 	}
 }
 
@@ -300,9 +300,13 @@ func newFirstApp(t *testing.T, bg *fakeBackground, sess Session, left *Leftovers
 	return app
 }
 
+func newPidRemote(pid int) *pidRemote {
+	return &pidRemote{remoteSession: &remoteSession{fakeSession: newFakeSession("db", "api")}, pid: pid}
+}
+
 func TestFirstViewDetachesToLauncher(t *testing.T) {
 	bg := &fakeBackground{list: twoSessions()}
-	sess := &pidRemote{remoteSession: &remoteSession{fakeSession: newFakeSession("db", "api")}, pid: 4200}
+	sess := newPidRemote(4200)
 	bg.attach = map[int]Attached{4200: {Session: sess, Config: testConfig(), Titles: []string{"backend"}}}
 	app := newFirstApp(t, bg, sess, nil)
 	if app.running == nil || !strings.HasPrefix(statusRow(app.running), "  FOLLOW  backend ") {
@@ -311,10 +315,13 @@ func TestFirstViewDetachesToLauncher(t *testing.T) {
 	if app.Init() == nil {
 		t.Error("no Init for the first view")
 	}
+	if help := screen(app.running)[15]; !strings.HasSuffix(help, "d  detach  q  quit  D/Q  …to launcher") {
+		t.Errorf("help = %q", help)
+	}
 
-	app.Update(key("d"))
+	app.Update(key("D"))
 	if app.running != nil || sess.detached != 1 || !slices.Equal(app.detached, []int{4200}) {
-		t.Fatalf("d: running = %v, detached = %d, app.detached = %v", app.running != nil, sess.detached, app.detached)
+		t.Fatalf("D: running = %v, detached = %d, app.detached = %v", app.running != nil, sess.detached, app.detached)
 	}
 	app.Update(backgroundMsg{owner: app.launcher.bg, list: bg.List()}) // the refresh resume started
 	if s, ok := app.launcher.currentSession(); !ok || s.Pid != 4200 {
@@ -327,14 +334,70 @@ func TestFirstViewDetachesToLauncher(t *testing.T) {
 	if app.running == nil || app.running.sess != Session(sess) {
 		t.Fatal("enter didn't attach again")
 	}
-	app.Update(key("d"))
+	app.Update(key("D"))
 	if _, cmd := app.Update(key("q")); !quits(cmd) || sess.stopAll != 0 {
 		t.Errorf("q in the launcher: quit = %v, stopAll = %d", quits(cmd), sess.stopAll)
 	}
 }
 
+func TestDetachExits(t *testing.T) {
+	sess := newPidRemote(4200)
+	app := newFirstApp(t, &fakeBackground{}, sess, nil)
+	_, cmd := app.Update(key("d"))
+	if !quits(cmd) || app.running != nil || sess.detached != 1 || !slices.Equal(app.detached, []int{4200}) {
+		t.Fatalf("d: quit = %v, detached = %d, app.detached = %v", quits(cmd), sess.detached, app.detached)
+	}
+}
+
+func TestQuitKeys(t *testing.T) {
+	// q stops the session, then runr exits.
+	sess := newPidRemote(4200)
+	app := newFirstApp(t, &fakeBackground{}, sess, nil)
+	app.Update(key("q"))
+	if sess.stopAll != 1 {
+		t.Fatalf("q: stopAll = %d", sess.stopAll)
+	}
+	if _, cmd := app.Update(stoppedMsg{}); !quits(cmd) || app.running == nil {
+		t.Errorf("after q's stop: quit = %v, running = %v", quits(cmd), app.running != nil)
+	}
+
+	// Q stops it, then shows the launcher.
+	sess = newPidRemote(4200)
+	app = newFirstApp(t, &fakeBackground{}, sess, nil)
+	app.Update(key("Q"))
+	if sess.stopAll != 1 || app.running == nil {
+		t.Fatalf("Q: stopAll = %d, running = %v", sess.stopAll, app.running != nil)
+	}
+	app.Update(stoppedMsg{})
+	if app.running != nil || app.launcher.notice != "stopped the session" || len(app.detached) > 0 {
+		t.Errorf("after Q's stop: running = %v, notice = %q", app.running != nil, app.launcher.notice)
+	}
+
+	// The last key decides: Q, then q while stopping, exits.
+	sess = newPidRemote(4200)
+	app = newFirstApp(t, &fakeBackground{}, sess, nil)
+	app.Update(key("Q"))
+	app.Update(key("q"))
+	if _, cmd := app.Update(stoppedMsg{}); !quits(cmd) || sess.stopAll != 1 {
+		t.Errorf("Q then q: quit = %v, stopAll = %d", quits(cmd), sess.stopAll)
+	}
+}
+
+func TestNoLauncherKeysAlone(t *testing.T) {
+	m, sess := newRemoteModel(t) // tui.Run: no launcher
+	if _, cmd := m.Update(key("D")); cmd != nil || sess.detached != 0 {
+		t.Error("D did something without a launcher")
+	}
+	if m.Update(key("Q")); sess.stopAll != 0 {
+		t.Error("Q stopped the session without a launcher")
+	}
+	if help := screen(m)[11]; strings.Contains(help, "launcher") {
+		t.Errorf("help = %q", help)
+	}
+}
+
 func TestFirstViewAsksLeftovers(t *testing.T) {
-	sess := &pidRemote{remoteSession: &remoteSession{fakeSession: newFakeSession("db", "api")}, pid: 4200}
+	sess := newPidRemote(4200)
 	left := &Leftovers{What: "1 process left over", Which: "db (pid 1)", Kill: func() string { return "killed" }, Forget: func() {}}
 	app := newFirstApp(t, &fakeBackground{}, sess, left)
 	if app.running.confirm == nil || app.launcher.ask != nil {

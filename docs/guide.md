@@ -270,7 +270,7 @@ branch. On terminals shorter than 20 rows the `runr` mark makes room for the lis
 | `↑` `↓`, `home` `end` | Move: through the running sessions, the group cards row by row, then down the project list |
 | `←` `→` | Move between the group cards in a row |
 | `space` | Select / unselect; on a group, selects all its projects (or unselects them if all are selected) |
-| `enter` | Start the selection, or the item under the cursor if nothing is selected. On a running session: open its running view (`d` there comes back to the launcher) |
+| `enter` | Start the selection, or the item under the cursor if nothing is selected. On a running session: open its running view (`D` or `Q` there comes back to the launcher) |
 | `x` | On a running session: stop it, after confirming, as `runr down` does |
 | `l` | Start the last session again, like `runr up --last`. Under the `runr` mark the launcher shows what that is: `l  last session: backend, web` |
 | `R` | Start with extra arguments: like `enter`, but first a form with a field per project that will start, dependencies included. What you type is added to the end of the project's command, e.g. `--port 3001` makes `go run .` run as `go run . --port 3001`. The fields start with what you typed last, also in an earlier session. `shift+enter` does the same in terminals that report it (kitty, ghostty, WezTerm, foot, recent Windows Terminal) |
@@ -363,7 +363,9 @@ so for 5 seconds.
 | `w` | Save the output on screen (all of it, or the selected process's) to a file in the current directory (see [Saving logs](#saving-logs)) |
 | `c` | Copy the command line that starts the selected project the way runr does (with its extra arguments, if it has any): `cd` to its directory, runr's default variables, its `env_file` and `env`, then the command, e.g. `cd ~/code/api && env FORCE_COLOR=1 … PORT=8080 /bin/sh -c 'go run .'` (`cmd.exe` syntax on Windows). It goes to the clipboard through the terminal (OSC 52; in tmux, `set-clipboard on`) and is shown on the bottom line |
 | `q`, `Ctrl+C` | Stop everything and quit; a second `Ctrl+C` kills everything immediately |
-| `d` | Detach: the session runs on in the background and the launcher opens, with the session under **Running**; `q` there takes you back to the shell (see [Detaching](#detaching)) |
+| `Q` | Stop everything, then show the launcher |
+| `d` | Detach: quit, and let the session run on in the background (see [Detaching](#detaching)) |
+| `D` | Detach and show the launcher, with the session under **Running** |
 
 Search is plain text (no regex) and smart-case: an all-lowercase query ignores case, any
 uppercase letter makes it case-sensitive.
@@ -433,14 +435,16 @@ Saved combined logs put the project's name before `│` / `»`; `»` marks runr'
 ## Detaching
 
 Every session started in a terminal (`runr up`, or from the launcher) can be left running:
-press `d` in the running view, and the launcher opens while the projects run on in the
-background. The session is listed under **Running**, with the cursor on it: `enter` shows it
-again, `q` quits to the shell and leaves it running. Come back later with `runr attach`, or
-from the launcher's **Running** section.
+press `d` in the running view, and runr quits while the projects run on in the background.
+Come back with `runr attach`, or from the launcher's **Running** section. `D` detaches too,
+but shows the launcher, with the session under **Running** and the cursor on it: `enter`
+shows it again, `q` quits to the shell. In the same way, `q` stops the session and quits,
+and `Q` stops it and shows the launcher. (`D` and `Q` aren't there when runr can't read its
+config, or with `--in-process`.)
 
 ```
 $ runr up backend
-  …                                   # d, then q in the launcher
+  …                                   # d
 runr: detached from session 48211; runr attach to come back
 $ runr attach
 ```
@@ -470,7 +474,7 @@ started with `runr up -d`, or one running in another terminal. It shows everythi
 session still has in memory and follows it live, with the usual keys: restart, stop, start,
 search, git, typing into `pty = true` projects.
 
-- **`d` detaches** again (to the launcher); **`q` stops the session**, as in its own
+- **`d` detaches** again (`D`: to the launcher); **`q` stops the session**, as in its own
   terminal (a session in another terminal quits there too).
 - **Closing the view's terminal** stops a background session when it was its last view; a
   session in another terminal runs on.
