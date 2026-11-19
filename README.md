@@ -2,15 +2,35 @@
 
 [![CI](https://github.com/Skaanning/runr/actions/workflows/ci.yml/badge.svg)](https://github.com/Skaanning/runr/actions/workflows/ci.yml)
 
-Run several local programs at once — a database, a few services, a frontend — and watch
-all their output in one terminal UI.
+**Your whole dev stack in one terminal.** runr starts the programs you work on (a
+database, a few services, a frontend) in the right order, and shows all their output in one
+view.
 
-You register each project once (directory + command), optionally put projects into named
-groups, and then start any combination with one command. runr starts dependencies first,
-waits until they are ready, interleaves everyone's output, and shuts everything down in
-reverse order when you quit.
+Say your app is Postgres in Docker, an API, a background worker and a web frontend, spread
+over three repositories. Without runr that's four terminals and remembering what to start
+first. With runr, once you've registered them and put them in two groups
+([Quick start](#quick-start)), one command does it:
+
+```console
+$ runr up backend frontend
+```
+
+runr starts Postgres and waits until it's listening, then the API and the worker, then the
+frontend once the API is up, and shows them side by side:
 
 ![runr's running view: four processes with their ports and git branches, their combined logs, and a toast for a crash](docs/images/running.png)
+
+Here the worker has just crashed, and a toast says so: select it and press `tab` for its
+output, `r` to restart it. `/` searches all the logs, `b` switches a project's git branch.
+Press `d` to get your terminal back while everything keeps running, and `runr attach` to
+return. `q` stops everything, in reverse order.
+
+From another terminal, or from your coding agent:
+
+```console
+$ runr restart api --wait     # returns once api is ready again, or shows why it crashed
+$ runr logs worker --errors   # just the error lines and crashes
+```
 
 Works on Linux, macOS and Windows.
 
@@ -111,21 +131,23 @@ is the command.
 ```bash
 runr add db --dir ~/code/infra --ready-log 'listening on IPv4' -- docker compose up postgres
 runr add api --dir ~/code/api --depends-on db --env PORT=8080 -- go run ./cmd/server
+runr add worker --dir ~/code/api --depends-on db -- go run ./cmd/worker
 cd ~/code/web && runr add web --depends-on api -- npm run dev
 ```
 
 Group them, if you like:
 
 ```bash
-runr group create backend db api
+runr group create backend db api worker
+runr group create frontend web
 ```
 
 Then start what you need:
 
 ```bash
-runr up backend        # db first, api once db printed "listening on IPv4"
-runr up web            # pulls in api and db automatically
-runr                   # or pick from a list in the launcher
+runr up backend frontend   # everything: db first, api and worker once db is listening
+runr up web                # just web, plus what it needs: api and db
+runr                       # or pick from a list in the launcher
 ```
 
 Press `q` to stop everything, or `d` to leave it running in the background and come back
