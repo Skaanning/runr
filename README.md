@@ -32,6 +32,17 @@ $ runr restart api --wait     # returns once api is ready again, or shows why it
 $ runr logs worker --errors   # just the error lines and crashes
 ```
 
+It isn't only for servers. A migration, seeding a database, `npm install` or a test run is a
+project too: mark it as a one-shot task (`--ready exit`), and whatever depends on it waits
+until it has finished. End-to-end tests that need the database migrated and the API up, for
+example:
+
+```bash
+runr add migrate --dir ~/code/api --depends-on db --ready exit -- go run ./cmd/migrate up
+runr add e2e --dir ~/code/web --depends-on api,migrate -- npm run test:e2e
+runr up e2e    # db, then the migration and api, then the tests; r runs them again
+```
+
 Works on Linux, macOS and Windows.
 
 ## Features
