@@ -363,7 +363,7 @@ so for 5 seconds.
 | `w` | Save the output on screen (all of it, or the selected process's) to a file in the current directory (see [Saving logs](#saving-logs)) |
 | `c` | Copy the command line that starts the selected project the way runr does (with its extra arguments, if it has any): `cd` to its directory, runr's default variables, its `env_file` and `env`, then the command, e.g. `cd ~/code/api && env FORCE_COLOR=1 … PORT=8080 /bin/sh -c 'go run .'` (`cmd.exe` syntax on Windows). It goes to the clipboard through the terminal (OSC 52; in tmux, `set-clipboard on`) and is shown on the bottom line |
 | `q`, `Ctrl+C` | Stop everything and quit; a second `Ctrl+C` kills everything immediately |
-| `d` | Detach: close the view and let the session run on in the background (see [Detaching](#detaching)); in a view opened from the launcher, back to the launcher |
+| `d` | Detach: the session runs on in the background and the launcher opens, with the session under **Running**; `q` there takes you back to the shell (see [Detaching](#detaching)) |
 
 Search is plain text (no regex) and smart-case: an all-lowercase query ignores case, any
 uppercase letter makes it case-sensitive.
@@ -433,12 +433,14 @@ Saved combined logs put the project's name before `│` / `»`; `»` marks runr'
 ## Detaching
 
 Every session started in a terminal (`runr up`, or from the launcher) can be left running:
-press `d` in the running view, and the view closes while the projects run on in the
-background. Come back to it with `runr attach`, or from the launcher's **Running** section.
+press `d` in the running view, and the launcher opens while the projects run on in the
+background. The session is listed under **Running**, with the cursor on it: `enter` shows it
+again, `q` quits to the shell and leaves it running. Come back later with `runr attach`, or
+from the launcher's **Running** section.
 
 ```
 $ runr up backend
-  …                                   # d
+  …                                   # d, then q in the launcher
 runr: detached from session 48211; runr attach to come back
 $ runr attach
 ```
@@ -468,8 +470,8 @@ started with `runr up -d`, or one running in another terminal. It shows everythi
 session still has in memory and follows it live, with the usual keys: restart, stop, start,
 search, git, typing into `pty = true` projects.
 
-- **`d` detaches** again; **`q` stops the session**, as in its own terminal (a session in
-  another terminal quits there too).
+- **`d` detaches** again (to the launcher); **`q` stops the session**, as in its own
+  terminal (a session in another terminal quits there too).
 - **Closing the view's terminal** stops a background session when it was its last view; a
   session in another terminal runs on.
 - Several views can watch one session at the same time. With several sessions running,

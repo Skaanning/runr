@@ -543,10 +543,18 @@ func newAttachCmd() *cobra.Command {
 }
 
 // runAttached shows the running view of an attached session until the
-// user detaches or stops it, or it ends. With left set, the session hasn't
+// user stops it or it ends, and the launcher once the user detaches. With left set, the session hasn't
 // started its projects yet: the view asks about those leftover processes
 // first, then starts them.
+//
+// d shows the launcher, which needs the config: if it can't be read, the
+// view is shown alone, and d ends runr.
 func runAttached(stderr io.Writer, r *control.Remote, left *tui.Leftovers) error {
+	if s, err := loadStore(); err == nil {
+		if _, err := s.cfg.Validate(); err == nil {
+			return runLauncherWith(stderr, s, r, left)
+		}
+	}
 	snap := r.Snapshot()
 	// SIGINT is handled like q. A closed terminal (SIGHUP) or SIGTERM only
 	// ends this view: whether the session goes on is up to the session.

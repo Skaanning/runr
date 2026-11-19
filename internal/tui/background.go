@@ -187,6 +187,17 @@ func (m *launcherModel) currentSession() (RunningSession, bool) {
 	return RunningSession{}, false
 }
 
+// preselectSession puts the cursor on the session of pid once the list
+// has it (the next refresh): back from its view.
+func (m *launcherModel) preselectSession(pid int) {
+	m.sessCursor, m.sessPid = 0, pid
+	for i, s := range m.bg.sessions() {
+		if s.Pid == pid {
+			m.sessCursor = i
+		}
+	}
+}
+
 // selectSession puts the cursor on the session at index i.
 func (m *launcherModel) selectSession(i int) {
 	m.sessCursor = i

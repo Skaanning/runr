@@ -440,6 +440,9 @@ func Attach(path string) (*Remote, error) {
 	return r, nil
 }
 
+// Pid is the pid of the session's runr.
+func (r *Remote) Pid() int { return r.snap.Pid }
+
 // Snapshot is what the session sent when the view attached (its config,
 // titles and pid).
 func (r *Remote) Snapshot() Snapshot { return r.snap }

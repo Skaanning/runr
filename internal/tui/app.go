@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"os"
 
 	tea "charm.land/bubbletea/v2"
@@ -23,13 +24,22 @@ type appModel struct {
 	launcher *launcherModel
 	running  *runningModel
 	size     tea.WindowSizeMsg
+	detached []int // sessions detached from (d), by pid
 }
 
-func (a *appModel) Init() tea.Cmd { return a.launcher.Init() }
+func (a *appModel) Init() tea.Cmd {
+	if a.running != nil { // a session runr up or runr attach showed first
+		return a.running.Init()
+	}
+	return a.launcher.Init()
+}
 
 func (a *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if size, ok := msg.(tea.WindowSizeMsg); ok {
 		a.size = size
+	}
+	if _, ok := msg.(hangupMsg); ok {
+		return a, a.hangup()
 	}
 	if a.running != nil {
 		if cmd, ok := a.launcher.bg.update(msg); ok { // paused meanwhile
@@ -62,6 +72,32 @@ func (a *appModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, cmd
 }
 
+// hangup handles the terminal going away (SIGHUP, SIGTERM): a session in
+// another process only loses this view, whether it goes on is up to it;
+// one in this process stops, as with Ctrl+C.
+func (a *appModel) hangup() tea.Cmd {
+	if a.running == nil {
+		return tea.Quit
+	}
+	if d, ok := a.running.sess.(dropper); ok {
+		d.Drop(errors.New("the view's terminal closed"))
+		return tea.Quit
+	}
+	_, cmd := a.running.Update(interruptMsg{})
+	return cmd
+}
+
+// dropper is a session in another process whose view can go away without
+// detaching (control.Remote).
+type dropper interface {
+	Drop(reason error)
+}
+
+// pider is a session that knows its pid (control.Remote).
+type pider interface {
+	Pid() int
+}
+
 func (a *appModel) View() tea.View {
 	if a.running != nil {
 		return a.running.View()
@@ -74,7 +110,9 @@ func (a *appModel) show(sess Session, cfg *config.Config, names []string, notice
 	a.running = newRunningModel(sess, cfg, names, a.launcher.st)
 	a.running.git = a.launcher.git // already has the git state
 	a.running.notice = notice
-	a.running.Update(a.size)
+	if a.size.Width > 0 {
+		a.running.Update(a.size)
+	}
 	a.launcher.bg.pause()
 	return a.running.Init()
 }
@@ -92,37 +130,75 @@ func (a *appModel) backToLauncher() tea.Cmd {
 	if m.lost != nil {
 		l.notice = oneLine(m.lost.Error())
 	}
+	if p, ok := m.sess.(pider); ok && m.detached {
+		a.detached = append(a.detached, p.Pid())
+		l.preselectSession(p.Pid())
+	}
+	l.gitStale = true // the running view refreshed only its own projects
 	l.Update(a.size)
-	return tea.Batch(l.bg.resume(), clockTick(l, l.now()))
+	return tea.Batch(l.bg.resume(), clockTick(l, l.now()), tea.RequestBackgroundColor)
+}
+
+// LauncherSetup is what RunLauncher shows.
+type LauncherSetup struct {
+	Config *config.Config
+	Start  StartFunc
+	Save   SaveFunc  // writes changes made in the forms; nil: kept in memory
+	Git    GitReader // reads the projects' git state; nil hides it
+	Last   *runrstate.LastSession
+	// Left, if set, are processes a killed runr left: the launcher (or the
+	// first view, which then starts its titles) asks whether to kill them.
+	Left       *Leftovers
+	Background Background // lists the sessions running elsewhere; nil: none
+	// First, if set, is shown before the launcher: the running view of a
+	// session runr up started or runr attach attached to.
+	First *Attached
+}
+
+// LauncherResult is how RunLauncher ended.
+type LauncherResult struct {
+	Shown    Session // the running view's session when the user quit; nil: quit in the launcher
+	Detached []int   // the sessions detached from (d) meanwhile, by pid
 }
 
 // RunLauncher shows the launcher, and the running view once the user starts
-// something, until the user quits. Changes made in the launcher's forms are
-// written with save. git reads the projects' git state; nil hides it. last,
-// if set, is the last session, which l starts again. If left is set, the
-// launcher first asks whether to kill those processes. bg, if set, lists
-// the sessions running elsewhere, to attach to and stop. Signals received
-// on sigs are handled like Ctrl+C.
+// something, until the user quits; with s.First, its running view first.
+// d in a running view returns to the launcher. Signals on sigs are handled
+// like Ctrl+C; on hangups (the terminal closed) a view of a session in
+// another process just goes away, as does runr.
 //
-// It returns the session the running view showed when the user quit (nil
-// if that was in the launcher), and what Run does about how the view ended.
-func RunLauncher(cfg *config.Config, start StartFunc, save SaveFunc, git GitReader, last *runrstate.LastSession, left *Leftovers, bg Background, sigs <-chan os.Signal) (Session, error) {
-	launcher := newLauncherModel(cfg, save, settingsStyles(cfg.Settings))
-	launcher.git = newGitTracker(git)
-	launcher.bg = newBackgroundTracker(bg)
-	launcher.setLast(last)
-	if left != nil {
-		launcher.askLeftovers(left)
-	}
-	a := &appModel{cfg: cfg, start: start, bg: bg, launcher: launcher}
-	err := run(a, sigs)
+// The error is what Run returns about how the last running view ended.
+func RunLauncher(s LauncherSetup, sigs, hangups <-chan os.Signal) (LauncherResult, error) {
+	a := newAppModel(s, settingsStyles(s.Config.Settings))
+	err := run(a, sigs, hangups)
+	res := LauncherResult{Detached: a.detached}
 	if a.running == nil {
-		return nil, err
+		return res, err
 	}
+	res.Shown = a.running.sess
 	if err != nil {
-		return a.running.sess, err
+		return res, err
 	}
-	return a.running.sess, a.running.ended()
+	return res, a.running.ended()
+}
+
+// newAppModel returns the app RunLauncher runs.
+func newAppModel(s LauncherSetup, st *styles) *appModel {
+	launcher := newLauncherModel(s.Config, s.Save, st)
+	launcher.git = newGitTracker(s.Git)
+	launcher.bg = newBackgroundTracker(s.Background)
+	launcher.setLast(s.Last)
+	a := &appModel{cfg: s.Config, start: s.Start, bg: s.Background, launcher: launcher}
+	switch {
+	case s.First != nil:
+		a.show(s.First.Session, s.First.Config, s.First.Titles, "")
+		if s.Left != nil {
+			a.running.askLeftovers(s.Left)
+		}
+	case s.Left != nil:
+		launcher.askLeftovers(s.Left)
+	}
+	return a
 }
 
 // Run shows the running view until the user quits and every process has
@@ -140,7 +216,7 @@ func Run(sess Session, cfg *config.Config, names []string, git GitReader, left *
 	if left != nil {
 		m.askLeftovers(left)
 	}
-	if err := run(m, sigs); err != nil {
+	if err := run(m, sigs, nil); err != nil {
 		return err
 	}
 	return m.ended()
@@ -166,7 +242,9 @@ func settingsStyles(s config.Settings) *styles {
 	return st
 }
 
-func run(model tea.Model, sigs <-chan os.Signal) error {
+// run runs model until it quits. Signals on sigs arrive as interruptMsg,
+// on hangups as hangupMsg.
+func run(model tea.Model, sigs, hangups <-chan os.Signal) error {
 	p := tea.NewProgram(model, tea.WithoutSignalHandler())
 	done := make(chan struct{})
 	defer close(done)
@@ -175,6 +253,8 @@ func run(model tea.Model, sigs <-chan os.Signal) error {
 			select {
 			case <-sigs:
 				p.Send(interruptMsg{})
+			case <-hangups:
+				p.Send(hangupMsg{})
 			case <-done:
 				return
 			}

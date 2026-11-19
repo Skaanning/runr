@@ -276,3 +276,91 @@ func TestAppDetachFromStartedSession(t *testing.T) {
 		t.Error("d didn't return to the launcher")
 	}
 }
+
+// pidRemote is a remoteSession that knows its pid and can be dropped.
+type pidRemote struct {
+	*remoteSession
+	pid     int
+	dropped error
+}
+
+func (r *pidRemote) Pid() int          { return r.pid }
+func (r *pidRemote) Drop(reason error) { r.dropped = reason }
+
+// newFirstApp returns the app of runr up or runr attach: sess's running
+// view first.
+func newFirstApp(t *testing.T, bg *fakeBackground, sess Session, left *Leftovers) *appModel {
+	t.Helper()
+	app := newAppModel(LauncherSetup{
+		Config: launcherConfig(t), Background: bg, Left: left,
+		First: &Attached{Session: sess, Config: testConfig(), Titles: []string{"backend"}},
+	}, newStyles(terminalTheme))
+	app.launcher.now = func() time.Time { return time.Date(2026, 10, 25, 14, 32, 10, 0, time.Local) }
+	app.Update(tea.WindowSizeMsg{Width: 120, Height: 16})
+	return app
+}
+
+func TestFirstViewDetachesToLauncher(t *testing.T) {
+	bg := &fakeBackground{list: twoSessions()}
+	sess := &pidRemote{remoteSession: &remoteSession{fakeSession: newFakeSession("db", "api")}, pid: 4200}
+	bg.attach = map[int]Attached{4200: {Session: sess, Config: testConfig(), Titles: []string{"backend"}}}
+	app := newFirstApp(t, bg, sess, nil)
+	if app.running == nil || !strings.HasPrefix(statusRow(app.running), "  FOLLOW  backend ") {
+		t.Fatal("the session's view isn't shown first")
+	}
+	if app.Init() == nil {
+		t.Error("no Init for the first view")
+	}
+
+	app.Update(key("d"))
+	if app.running != nil || sess.detached != 1 || !slices.Equal(app.detached, []int{4200}) {
+		t.Fatalf("d: running = %v, detached = %d, app.detached = %v", app.running != nil, sess.detached, app.detached)
+	}
+	app.Update(backgroundMsg{owner: app.launcher.bg, list: bg.List()}) // the refresh resume started
+	if s, ok := app.launcher.currentSession(); !ok || s.Pid != 4200 {
+		t.Errorf("cursor: %+v %v", s, ok)
+	}
+
+	// enter shows it again; q in the launcher leaves it running.
+	_, cmd := app.Update(key("enter"))
+	app.Update(cmd())
+	if app.running == nil || app.running.sess != Session(sess) {
+		t.Fatal("enter didn't attach again")
+	}
+	app.Update(key("d"))
+	if _, cmd := app.Update(key("q")); !quits(cmd) || sess.stopAll != 0 {
+		t.Errorf("q in the launcher: quit = %v, stopAll = %d", quits(cmd), sess.stopAll)
+	}
+}
+
+func TestFirstViewAsksLeftovers(t *testing.T) {
+	sess := &pidRemote{remoteSession: &remoteSession{fakeSession: newFakeSession("db", "api")}, pid: 4200}
+	left := &Leftovers{What: "1 process left over", Which: "db (pid 1)", Kill: func() string { return "killed" }, Forget: func() {}}
+	app := newFirstApp(t, &fakeBackground{}, sess, left)
+	if app.running.confirm == nil || app.launcher.ask != nil {
+		t.Error("the question isn't in the first view")
+	}
+}
+
+func TestHangup(t *testing.T) {
+	// A view of a session elsewhere goes away; runr quits.
+	sess := &pidRemote{remoteSession: &remoteSession{fakeSession: newFakeSession("db")}, pid: 4200}
+	app := newFirstApp(t, &fakeBackground{}, sess, nil)
+	if _, cmd := app.Update(hangupMsg{}); !quits(cmd) || sess.dropped == nil || sess.stopAll != 0 {
+		t.Errorf("hangup: quit = %v, dropped = %v, stopAll = %d", quits(cmd), sess.dropped, sess.stopAll)
+	}
+
+	// A session in this process stops, as with Ctrl+C.
+	own := newFakeSession("db")
+	app = newFirstApp(t, &fakeBackground{}, own, nil)
+	app.Update(hangupMsg{})
+	if own.stopAll != 1 {
+		t.Errorf("own session: stopAll = %d", own.stopAll)
+	}
+
+	// In the launcher: quit.
+	app = newBackgroundApp(t, &fakeBackground{})
+	if _, cmd := app.Update(hangupMsg{}); !quits(cmd) {
+		t.Error("hangup in the launcher didn't quit")
+	}
+}

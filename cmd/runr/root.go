@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/signal"
@@ -71,8 +72,8 @@ func newRootCmd() *cobra.Command {
 }
 
 // runLauncher opens the launcher. What the user starts from it runs in a
-// session host, shown by the same program (in this program where there
-// are no hosts); sessions running elsewhere are listed to attach to.
+// session host, shown by the same program; sessions running elsewhere are
+// listed to attach to.
 func runLauncher(cmd *cobra.Command) error {
 	if !isTerminal(cmd.InOrStdin()) || !isTerminal(cmd.OutOrStdout()) {
 		return errors.New("the launcher needs a terminal; use runr up <name> instead")
@@ -84,15 +85,26 @@ func runLauncher(cmd *cobra.Command) error {
 	if _, err := s.cfg.Validate(); err != nil {
 		return err
 	}
-
-	sigs := make(chan os.Signal, 2)
-	signal.Notify(sigs, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	defer signal.Stop(sigs)
-
 	// Processes left over by a runr that was killed are offered to be
 	// stopped first.
-	sessDir := sessionsDir()
-	left := leftoversFor(findLeftovers(sessDir), s.cfg, s.cfg.Settings.ShutdownTimeout())
+	left := leftoversFor(findLeftovers(sessionsDir()), s.cfg, s.cfg.Settings.ShutdownTimeout())
+	return runLauncherWith(cmd.ErrOrStderr(), s, nil, left)
+}
+
+// runLauncherWith runs the launcher on the config of s. With first set,
+// that session's running view comes first (runr up, runr attach): d there
+// shows the launcher, and left is asked about in the view, which then
+// starts its projects; otherwise in the launcher.
+func runLauncherWith(stderr io.Writer, s *store, first *control.Remote, left *tui.Leftovers) error {
+	// Ctrl+C is q. A closed terminal (SIGHUP) or SIGTERM only ends the
+	// view of a session in another process: whether it goes on is up to
+	// the session (a host stops when its last view went away like that).
+	sigs := make(chan os.Signal, 2)
+	signal.Notify(sigs, os.Interrupt)
+	defer signal.Stop(sigs)
+	hangups := make(chan os.Signal, 2)
+	signal.Notify(hangups, syscall.SIGHUP, syscall.SIGTERM)
+	defer signal.Stop(hangups)
 
 	var sup *supervisor.Supervisor
 	var rec *sessions.Recorder
@@ -120,7 +132,7 @@ func runLauncher(cmd *cobra.Command) error {
 		// In this process: its processes are recorded for runr cleanup,
 		// in case runr is killed.
 		opts := supervisor.Options{LogDir: dir}
-		rec = track(sessDir, &opts)
+		rec = track(sessionsDir(), &opts)
 		sess := newRecordingSession(s.cfg, opts)
 		if err := sess.begin(names, args); err != nil {
 			sess.Close()
@@ -137,17 +149,46 @@ func runLauncher(cmd *cobra.Command) error {
 		_, err := (&store{path: s.path, cfg: c}).save()
 		return err
 	}
-	shown, err := tui.RunLauncher(s.cfg, start, save, gitReader(), loadLast(), left, newBackground(), sigs)
-	if r, ok := shown.(*control.Remote); ok {
+	setup := tui.LauncherSetup{
+		Config: s.cfg, Start: start, Save: save, Git: gitReader(), Last: loadLast(),
+		Left: left, Background: newBackground(),
+	}
+	if first != nil {
+		snap := first.Snapshot()
+		setup.First = &tui.Attached{Session: first, Config: snap.Config, Titles: snap.Titles}
+	}
+	res, err := tui.RunLauncher(setup, sigs, hangups)
+	defer reportDetached(stderr, res.Detached)
+	if r, ok := res.Shown.(*control.Remote); ok {
 		// The session runr was quit from, in another process.
 		final := r.Processes()
 		r.Close()
-		return attachedEnd(cmd.ErrOrStderr(), r.Snapshot().Pid, final, err)
+		return attachedEnd(stderr, r.Pid(), final, err)
 	}
 	if sup != nil {
-		finish(cmd.ErrOrStderr(), sup)
+		finish(stderr, sup)
 	}
 	stopControl() // after the last lines, for followers
 	rec.Close()   // everything has stopped
 	return err
+}
+
+// reportDetached says how to come back to the sessions the user detached
+// from that still run.
+func reportDetached(stderr io.Writer, pids []int) {
+	if len(pids) == 0 {
+		return
+	}
+	running := map[int]bool{}
+	found, _ := control.Sessions(controlDir())
+	for _, s := range found {
+		running[s.Status.Pid] = true
+	}
+	reported := map[int]bool{}
+	for _, pid := range pids {
+		if running[pid] && !reported[pid] {
+			reported[pid] = true
+			fmt.Fprintf(stderr, "runr: detached from session %d; runr attach to come back\n", pid)
+		}
+	}
 }

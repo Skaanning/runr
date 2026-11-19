@@ -67,6 +67,7 @@ type (
 	}
 	stoppedMsg   struct{}          // StopAll finished
 	interruptMsg struct{}          // a signal, treated like Ctrl+C
+	hangupMsg    struct{}          // the terminal went away (SIGHUP, SIGTERM)
 	uiTickMsg    struct{ gen int } // time to redraw spinners and uptimes
 )
 
