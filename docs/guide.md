@@ -259,7 +259,7 @@ running (in the background or in other terminals) are listed above the groups, u
 cards with a colored dot per member, side by side as far as the terminal is wide; projects
 are listed below them with their color, directory, branch, command and dependencies.
 
-![The launcher with the backend group selected](images/launcher.png)
+![The launcher, with a detached session under Running](images/launcher.png)
 
 The bottom line is the status bar: what the launcher is doing (`SELECT`, `NEW PROJECT`,
 `SWITCH`, …), how much is registered and selected, and the project under the cursor with its
@@ -306,7 +306,7 @@ as is.
 
 ## The running view
 
-![The running view: four processes, combined logs and a crash toast](images/running.png)
+![The running view: four processes with their ports and git branches, combined logs, and a toast for a crash](images/running.png)
 
 The `processes` pane gives each process two lines: its state, how long it's been running
 (or `exit 1` in red once it crashed) and a sparkline of its output over the last 32 seconds,
@@ -388,7 +388,7 @@ To match something else, set `error_pattern` in `[settings]`, e.g.
 lines, `crashed (…)` and `failed to start: …` always count, whatever the pattern; the others
 (`starting: …`, `blocked: …`) never do.
 
-![Searching the combined logs for POST](images/search.png)
+![Searching the combined logs for GET](images/search.png)
 
 runr adds its own lines to each process's log, such as `starting: <cmd>`,
 `waiting for db`, `ready` and `crashed (exit code 1)`, so you can see what happened when.
@@ -408,6 +408,8 @@ log files, search, error counts and `ready_log` only see finished lines. What yo
 appears because the program's terminal echoes it; input a program reads without echo
 (`Read-Host -AsSecureString`, passwords) doesn't appear in the log. Projects without
 `pty = true` get no input.
+
+![Answering a deploy script's prompts: the token was typed but isn't echoed](images/typing.png)
 
 ## Saving logs
 
@@ -602,6 +604,11 @@ the developer is watching. Don't start your own servers on the same ports.
 
 Replace `backend` with your group and the project names with yours (`runr ls` lists them).
 
+What the agent sees: the session's processes, a restart that worked, and one that failed,
+with the lines that say why:
+
+![runr status and runr restart --wait in a shell](images/cli.png)
+
 ## Git
 
 When `git` is installed, the sidebar (on each process's second line) and the launcher show
@@ -627,7 +634,7 @@ the branch of the repository each project's `dir` is in, with markers:
 Projects outside a repository show nothing. The state is read every 5 seconds and after
 each action; runr never fetches on its own — press `F` to update `↑n` / `↓n`.
 
-![The branch picker for api](images/branch-picker.png)
+![The branch picker for web](images/branch-picker.png)
 
 `b` (switch branch) and `p` (pull) work in the launcher and the running view. They act on the
 selected project's repository, and only in the simple cases — anything that needs a decision

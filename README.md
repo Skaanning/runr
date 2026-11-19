@@ -1,5 +1,7 @@
 # runr
 
+[![CI](https://github.com/Skaanning/runr/actions/workflows/ci.yml/badge.svg)](https://github.com/Skaanning/runr/actions/workflows/ci.yml)
+
 Run several local programs at once — a database, a few services, a frontend — and watch
 all their output in one terminal UI.
 
@@ -8,7 +10,7 @@ groups, and then start any combination with one command. runr starts dependencie
 waits until they are ready, interleaves everyone's output, and shuts everything down in
 reverse order when you quit.
 
-![runr's running view: four processes, their combined logs and a crash toast](docs/images/running.png)
+![runr's running view: four processes with their ports and git branches, their combined logs, and a toast for a crash](docs/images/running.png)
 
 Works on Linux, macOS and Windows.
 
@@ -41,9 +43,10 @@ Works on Linux, macOS and Windows.
 
 ## Screenshots
 
-The launcher, where you pick what to start and manage projects and groups:
+The launcher, where you pick what to start and manage projects and groups. Sessions
+running in the background are listed on top, to open again or stop:
 
-![The launcher](docs/images/launcher.png)
+![The launcher, with a detached session under Running](docs/images/launcher.png)
 
 Adding a project: the form checks the directory and env file as you type and previews the
 project's row:
@@ -57,6 +60,39 @@ Switching a project's git branch from the running view:
 Searching the logs:
 
 ![Search](docs/images/search.png)
+
+Typing into a script that asks for input (`i` attaches, `ctrl+q` gives the keys back):
+
+![Answering a deploy script's prompts](docs/images/typing.png)
+
+From another terminal, or an AI coding agent: what runs, and a restart that waits and shows
+why it failed:
+
+![runr status and runr restart --wait in a shell](docs/images/cli.png)
+
+## How it compares
+
+runr is for running your own programs as they are on your machine (`go run`, `npm run dev`,
+a script), several repositories at once, and watching them in one place.
+
+- **foreman, honcho, hivemind** run a `Procfile` and interleave the output. runr also starts
+  things in dependency order and waits until each is ready, and lets you restart, stop or
+  search one process while the rest keep running. `runr import` reads a `Procfile`.
+- **Overmind** runs a `Procfile` in tmux: you can connect to a process's terminal, restart
+  one, and run it as a daemon. runr needs no tmux (so it also runs on Windows), adds
+  dependencies and readiness checks, and shows everything in one view with search.
+- **mprocs** is a TUI with a list of processes and each one's output, configured per
+  directory in `mprocs.yaml`. runr adds dependencies and readiness checks, a combined log
+  of all processes with search and error jumps, git, detaching, and commands for scripts
+  and agents.
+- **process-compose** is the closest: a YAML file per project with `depends_on`, readiness
+  probes, a TUI, a REST API and `attach`. runr instead keeps one list of all your projects,
+  in any number of repositories, and starts any combination of them (`runr up api web`);
+  you manage it with commands and forms rather than by editing YAML. It also shows git
+  state, and lets you switch branches and pull.
+- **Docker Compose** runs containers. runr runs programs directly, and can run
+  `docker compose up` as one of its projects (`runr import` turns a compose file's services
+  into projects).
 
 ## Install
 
