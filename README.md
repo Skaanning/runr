@@ -72,27 +72,23 @@ why it failed:
 
 ## How it compares
 
-runr is for running your own programs as they are on your machine (`go run`, `npm run dev`,
-a script), several repositories at once, and watching them in one place.
+Tools for running a local dev stack mostly fall into three groups, and runr takes something
+from each:
 
-- **foreman, honcho, hivemind** run a `Procfile` and interleave the output. runr also starts
-  things in dependency order and waits until each is ready, and lets you restart, stop or
-  search one process while the rest keep running. `runr import` reads a `Procfile`.
-- **Overmind** runs a `Procfile` in tmux: you can connect to a process's terminal, restart
-  one, and run it as a daemon. runr needs no tmux (so it also runs on Windows), adds
-  dependencies and readiness checks, and shows everything in one view with search.
-- **mprocs** is a TUI with a list of processes and each one's output, configured per
-  directory in `mprocs.yaml`. runr adds dependencies and readiness checks, a combined log
-  of all processes with search and error jumps, git, detaching, and commands for scripts
-  and agents.
-- **process-compose** is the closest: a YAML file per project with `depends_on`, readiness
-  probes, a TUI, a REST API and `attach`. runr instead keeps one list of all your projects,
-  in any number of repositories, and starts any combination of them (`runr up api web`);
-  you manage it with commands and forms rather than by editing YAML. It also shows git
-  state, and lets you switch branches and pull.
-- **Docker Compose** runs containers. runr runs programs directly, and can run
-  `docker compose up` as one of its projects (`runr import` turns a compose file's services
-  into projects).
+- **Procfile runners** start everything listed in one file and interleave the output. runr
+  also starts things in dependency order, waits until each one is ready, and lets you
+  restart, stop or search one process while the others keep running. `runr import` reads a
+  `Procfile`.
+- **Terminal process managers** give each process a pane of its own, usually set up per
+  directory. runr keeps one list of projects across all your repositories and starts any
+  combination of them (`runr up api web`), with one log of everything, git state, and
+  sessions you can detach from and come back to.
+- **Container tools** run images. runr runs your programs the way you would in a terminal
+  (`go run`, `npm run dev`), and can run `docker compose up` as one of its projects, e.g.
+  for the database.
+
+On top of that, `runr status`, `runr logs` and `runr restart --wait` work on the session you
+are watching, so scripts and coding agents can use it too.
 
 ## Install
 
