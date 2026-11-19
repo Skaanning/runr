@@ -427,3 +427,57 @@ func TestHangup(t *testing.T) {
 		t.Error("hangup in the launcher didn't quit")
 	}
 }
+
+// The first view's Init refreshes git and ports: newAppModel's show already
+// started those refreshes, so asking the view for them again got nothing.
+func TestFirstViewRefreshesGitAndPorts(t *testing.T) {
+	sess := newPidRemote(4200)
+	app := newAppModel(LauncherSetup{
+		Config: launcherConfig(t), Git: &fakeGit{of: map[string]string{"db": "/repo"}},
+		First: &Attached{Session: sess, Config: testConfig(), Titles: []string{"backend"}},
+	}, newStyles(terminalTheme))
+	var got []string
+	for _, msg := range initMsgs(app.Init()) {
+		switch msg.(type) {
+		case gitMsg:
+			got = append(got, "git")
+		case portsMsg:
+			got = append(got, "ports")
+		}
+	}
+	slices.Sort(got)
+	if !slices.Equal(got, []string{"git", "ports"}) {
+		t.Errorf("Init refreshed %v, want git and ports", got)
+	}
+}
+
+// initMsgs runs the commands of an Init batch, each with a moment to return
+// (waiting for events doesn't), and returns their messages.
+func initMsgs(cmd tea.Cmd) []tea.Msg {
+	var cmds []tea.Cmd
+	var flatten func(tea.Cmd)
+	flatten = func(c tea.Cmd) {
+		if c == nil {
+			return
+		}
+		done := make(chan tea.Msg, 1)
+		go func() { done <- c() }()
+		select {
+		case msg := <-done:
+			if b, ok := msg.(tea.BatchMsg); ok {
+				for _, c := range b {
+					flatten(c)
+				}
+				return
+			}
+			cmds = append(cmds, func() tea.Msg { return msg })
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	flatten(cmd)
+	var msgs []tea.Msg
+	for _, c := range cmds {
+		msgs = append(msgs, c())
+	}
+	return msgs
+}

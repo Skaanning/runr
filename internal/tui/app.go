@@ -24,12 +24,15 @@ type appModel struct {
 	launcher *launcherModel
 	running  *runningModel
 	size     tea.WindowSizeMsg
-	detached []int // sessions detached from (d), by pid
+	detached []int   // sessions detached from (d), by pid
+	first    tea.Cmd // Init of the running view shown first (LauncherSetup.First)
 }
 
 func (a *appModel) Init() tea.Cmd {
 	if a.running != nil { // a session runr up or runr attach showed first
-		return a.running.Init()
+		// Not a.running.Init() again: its trackers are busy with the
+		// refreshes the first call started, and would wait for them forever.
+		return a.first
 	}
 	return a.launcher.Init()
 }
@@ -204,7 +207,7 @@ func newAppModel(s LauncherSetup, st *styles) *appModel {
 	a := &appModel{cfg: s.Config, start: s.Start, bg: s.Background, launcher: launcher}
 	switch {
 	case s.First != nil:
-		a.show(s.First.Session, s.First.Config, s.First.Titles, "")
+		a.first = a.show(s.First.Session, s.First.Config, s.First.Titles, "")
 		if s.Left != nil {
 			a.running.askLeftovers(s.Left)
 		}
