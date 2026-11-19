@@ -28,11 +28,14 @@ ready_log = "listening on IPv4"
 # container outlives a killed `docker compose up`.
 stop_cmd = "docker compose stop postgres"
 
-# One-shot jobs are fine too: a dependency that exits with code 0 counts as ready.
+# A one-shot task: with ready = "exit", api waits until it has exited with code 0
+# (a non-zero exit blocks api). Without it, a project counts as ready as soon as it
+# has started.
 [projects.migrate]
 dir = "~/code/api"
 cmd = "go run ./cmd/migrate up"
 depends_on = ["db"]
+ready = "exit"
 
 [projects.api]
 dir = "~/code/api"

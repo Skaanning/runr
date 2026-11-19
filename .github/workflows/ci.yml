@@ -1,8 +1,7 @@
 name: CI
 
-# Pushes to main and pull requests only: the repository is private, and
-# Windows and macOS runners count double and ten times against the free
-# minutes.
+# Pushes to main and pull requests; other branches are tested in their
+# pull requests.
 on:
   push:
     branches: [main]

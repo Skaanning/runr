@@ -27,7 +27,7 @@ Works on Linux, macOS and Windows.
 - **Detach and come back:** `d` leaves a session running in the background (or start it
   that way with `runr up -d`); `runr attach` or the launcher brings its running view back.
   `D` and `Q` detach or stop and go to the launcher instead of quitting. Closing the
-  terminal without `d` stops the session, as before.
+  terminal without `d` stops the session.
 - **From another terminal or an AI agent:** `runr status`, `runr logs api --errors` and
   `runr restart api --wait` show and change what a running session is doing, so scripts and
   coding agents can restart a service and read a crash without copy-paste (see
@@ -96,7 +96,8 @@ runr up web            # pulls in api and db automatically
 runr                   # or pick from a list in the launcher
 ```
 
-Press `q` to stop everything. See [examples/config.toml](examples/config.toml) for a
+Press `q` to stop everything, or `d` to leave it running in the background and come back
+with `runr attach`. See [examples/config.toml](examples/config.toml) for a
 complete config file.
 
 Already have a `Procfile` or `compose.yaml`? `runr import` registers all of it at once (see
@@ -111,7 +112,8 @@ The [guide](docs/guide.md) covers everything else:
   [sharing a config](docs/guide.md#sharing-a-config)
 - [The launcher](docs/guide.md#the-launcher) and [the running view](docs/guide.md#the-running-view), with all their keys,
   and [typing into a program](docs/guide.md#typing-into-a-program)
-- [Saving logs](docs/guide.md#saving-logs), [talking to a running session](docs/guide.md#talking-to-a-running-session),
+- [Saving logs](docs/guide.md#saving-logs), [detaching](docs/guide.md#detaching),
+  [talking to a running session](docs/guide.md#talking-to-a-running-session),
   [using runr from an AI coding agent](docs/guide.md#using-runr-from-an-ai-coding-agent)
   and [Git](docs/guide.md#git)
 - [How processes are run](docs/guide.md#how-processes-are-run),

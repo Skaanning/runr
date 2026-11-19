@@ -37,11 +37,11 @@ Everything about using runr. For a short introduction, see the [README](../READM
 | `runr group delete <group>` | Delete a group (its projects are kept) |
 | `runr group ls` | List groups |
 | `runr theme [name]` | List the color themes (the current one marked with `*`), or set one |
-| `runr status [--json]` | Show the runr sessions running in other terminals and their processes (see [Talking to a running session](#talking-to-a-running-session)) |
+| `runr status [--json]` | Show the runr sessions running in the background or in other terminals, and their processes (see [Talking to a running session](#talking-to-a-running-session)) |
 | `runr logs [name...] [-n N] [-f] [--errors]` | Print a running session's recent output, or keep following it |
 | `runr start\|stop\|restart <name...> [--wait]` | Start, stop or restart projects and groups in a running session; `--wait` reports how it went |
-| `runr down [--force]` | Stop a running session, as `q` does there |
-| `runr attach` | Open the running view of a session running in the background or in another terminal (see [Attaching to a session](#attaching-to-a-session)) |
+| `runr down [--force]` | Stop a running session, as `q` does there; `--force` kills its processes |
+| `runr attach [--session <pid>]` | Open the running view of a session running in the background or in another terminal (see [Attaching to a session](#attaching-to-a-session)) |
 | `runr cleanup [--yes]` | Stop processes left running by a runr that was killed (Linux, macOS), then run their projects' `stop_cmd`; asks first unless `--yes` |
 | `runr completion <shell>` | Shell completion script (bash, zsh, fish, powershell), completes project and group names |
 
@@ -191,14 +191,14 @@ saves the one you pick. `runr theme` lists them and `runr theme <name>` sets one
 | `ready_log` | no | Regular expression ([Go syntax](https://pkg.go.dev/regexp/syntax)); the project is ready once an output line matches. Colors are stripped before matching. |
 | `ready_port` | no | TCP port; the project is ready once a connection to it on `localhost` succeeds, e.g. `5432` for a database. |
 | `ready_url` | no | `http://` or `https://` URL; the project is ready once a GET answers with a 2xx or 3xx status (redirects aren't followed), e.g. `"http://localhost:8080/health"`. The probe's requests show up in the server's access log. |
-
-A project has at most one of `ready`, `ready_log`, `ready_port` and `ready_url`. Without
-any, it is ready as soon as it has started. Ports and URLs are tried every 250 ms (each try
-times out after 1 s) for as long as the process runs; there is no overall time limit.
 | `color` | no | Color of the name in the TUI: `black`, `red`, `green`, `yellow`, `blue`, `magenta`, `cyan`, `white`, their `bright-` variants (`bright-red`, …), an ANSI number `0`–`255`, or a hex code `#f80` / `#ff8800`. Projects without one get a color from a fixed palette, in name order, so a project has the same color in the launcher and every session. |
 | `display_name` | no | Label shown in the TUI instead of the project name |
 | `pty` | no | `true` runs the project on a pseudo-terminal, so it behaves as in a terminal: for programs that drop their colors or buffer their output otherwise. See [How processes are run](#how-processes-are-run). |
 | `stop_cmd` | no | A command that cleans up after the project when it didn't stop cleanly, e.g. `"docker compose down"`: run like `cmd` (same `dir` and environment) only after runr had to kill the project, or for a project left over by a runr that was killed. See [Cleaning up after a kill](#cleaning-up-after-a-kill). |
+
+A project has at most one of `ready`, `ready_log`, `ready_port` and `ready_url`. Without
+any, it is ready as soon as it has started. Ports and URLs are tried every 250 ms (each try
+times out after 1 s) for as long as the process runs; there is no overall time limit.
 
 Names of projects and groups may contain letters, digits, `.`, `_` and `-` (starting with a
 letter or digit), and share one namespace so `runr up <name>` is never ambiguous.
@@ -374,9 +374,9 @@ uppercase letter makes it case-sensitive.
 
 runr marks the lines of output that look like errors: those containing `error`, `panic`,
 `fatal`, `exception` or `traceback` as a word, in any case (`no errors` and `terror` don't
-count), and its own line when a process crashes or fails to start. A red `▌` sits left of each of them, and the process's second line in the sidebar
-says how many its current run printed, e.g. `3 errors`; the count starts again at every
-restart.
+count), and its own line when a process crashes or fails to start. A red `▌` sits left of
+each of them, and the process's second line in the sidebar says how many its current run
+printed, e.g. `3 errors`; the count starts again at every restart.
 
 `e` jumps to the next error line in the log you're looking at (all processes, or the
 selected one), `E` to the previous one, wrapping around at either end. The line jumped to
@@ -466,7 +466,7 @@ view talks to over the session's socket. It keeps a log of what goes wrong in `h
 runr's state directory, shown by `runr up` if the session can't start. If that process is
 killed, its projects are cleaned up like those of any killed runr (see
 [Cleaning up after a kill](#cleaning-up-after-a-kill)). Plain output (`runr up backend >
-file`) still runs in the runr you started, and `--plain` too.
+file`) still runs in the runr you started.
 
 ### Attaching to a session
 
@@ -488,8 +488,9 @@ The view uses the session's own config, as it was when the session started.
 
 Other terminals can ask a running session what it is doing, and tell it what to do: a
 second terminal, an editor task, a git hook, or a coding agent that should restart a service
-and read a crash's output itself instead of having it pasted in. This works for every session — `runr up`, the launcher and plain
-output (`runr up backend > /dev/null &`).
+and read a crash's output itself instead of having it pasted in. This works for every
+session: `runr up` (also with `-d`), the launcher, and plain output
+(`runr up backend > /dev/null &`).
 
 ```bash
 runr status                   # every running session and its processes
@@ -590,8 +591,8 @@ The services run under runr (https://github.com/Skaanning/runr), usually in a se
 the developer is watching. Don't start your own servers on the same ports.
 
 - See what runs: `runr status` (`--json` for details). Exit code 1: nothing runs; then
-  start it yourself with `runr up backend > /tmp/runr.log 2>&1 &` and stop it
-  with `runr down` when you're done.
+  start it yourself in the background with `runr up -d backend` and stop it with
+  `runr down` when you're done.
 - Read logs: `runr logs <project> -n 100`; only errors and crashes: `--errors`.
   Never use `runr logs -f`: it doesn't return.
 - After changing a service, restart it and check it came up:
@@ -647,8 +648,8 @@ is left to you:
   since they change too (in the launcher: any registered project; in the running view:
   projects in the session).
 - In the running view, git's output goes to the selected project's log, and a short summary
-  or error to the bottom line. In the launcher, git's output is shown when it fails. Running processes are not restarted; press `r` if your dev server doesn't
-  reload by itself.
+  or error to the bottom line. In the launcher, git's output is shown when it fails. Running
+  processes are not restarted; press `r` if your dev server doesn't reload by itself.
 
 `F` and `P` do the same for every repository at once — in the running view those of the
 session's projects; in the launcher `F` covers all registered projects and `P` the selection
@@ -687,22 +688,33 @@ session's projects; in the launcher `F` covers all registered projects and `P` t
 - **`pty = true`** (or `--pty`, or *Terminal* in the project form) runs a project on a
   pseudo-terminal instead, for tools that only color or flush their output on a terminal
   (`dotnet run`, `docker compose`, `ls --color=auto`, …). It gets `TERM=xterm-256color`
-  and a terminal as wide as the logs pane (resized with it) and 50 rows tall; stdout and
+  and a terminal 50 rows tall and as wide as the logs pane, resized with it; stdout and
   stderr arrive as one stream. The line it is writing shows as it changes, so a prompt
   (`branch: `) is visible before it ends; select the project and press `i` to attach and
-  type into it (see [Typing into a program](#typing-into-a-program)). Stopping works as without it (on Windows runr types Ctrl+C into the
-  project's console instead of sending CTRL_BREAK). On Windows the terminal is a pseudo
-  console (ConPTY), which redraws a screen rather than passing output through: runr keeps
-  the text and its colors and drops the rest of what it sends.
+  type into it (see [Typing into a program](#typing-into-a-program)). Stopping works as
+  without it (on Windows runr types Ctrl+C into the project's console instead of sending
+  CTRL_BREAK). On Windows the terminal is a pseudo console (ConPTY), which redraws a screen
+  rather than passing output through: runr keeps the text and its colors and drops the rest
+  of what it sends. A pseudo console that is resized redraws its whole screen into the
+  output, so on Windows a running project keeps the width it started with; it gets the new
+  width when it starts again.
 - **Stopping** (`s`, `r`, `q`): each process and everything it started gets SIGTERM
   (`CTRL_BREAK` on Windows) and `shutdown_timeout` to exit before it is killed. On quit,
   projects stop in reverse dependency order: dependents first, then what they depend on.
 - **Processes left behind.** If a command exits but something it started keeps running in
   the background, runr stops that too (on Unix it gets SIGTERM and `shutdown_timeout`
   first). Programs that fully detach themselves (daemons) are not affected.
+- **Ports** shown in the `processes` pane are the TCP ports the project's processes listen
+  on, including ones opened by programs it started (e.g. `npm run dev` → `node`). They are
+  checked every 2 seconds. On macOS this needs `lsof` (installed by default). Press `o` to
+  open one in the browser.
+- **Port conflicts.** When a project starts, runr checks the ports it is known to use — its
+  `ready_port`, the port of its `ready_url`, and ports it listened on earlier in the
+  session — and if another program already listens there, says so in its log and in a toast
+  (`port 3000 is in use by pid 4123 (python3)`). The project is started anyway.
 - runr never restarts a process on its own.
-- **If runr itself is killed** (`kill -9`, a crash, a closed terminal that doesn't send
-  SIGHUP), the programs it started keep running on Linux and macOS. runr keeps a small file
+- **If runr itself is killed** (`kill -9`, a crash), the programs it started keep running
+  on Linux and macOS. runr keeps a small file
   per session listing them (in `~/.local/state/runr/sessions`, or under `$XDG_STATE_HOME`; on
   macOS `~/Library/Caches/runr/sessions`), so the next `runr` or `runr up` asks first:
   `Kill 2 processes left over from a previous runr session? api (pid 4123), db (pid 4120)`.
@@ -743,14 +755,6 @@ a compose file sets `stop_cmd = "docker compose stop <service>"` for each servic
 
 On Windows, runr's programs end with runr itself, so after runr was killed there is nothing
 left to run a `stop_cmd` for (but containers may still be running).
-- **Ports** shown in the `processes` pane are the TCP ports the project's processes listen
-  on, including ones opened by programs it started (e.g. `npm run dev` → `node`). They are
-  checked every 2 seconds. On macOS this needs `lsof` (installed by default). Press `o` to
-  open one in the browser.
-- **Port conflicts.** When a project starts, runr checks the ports it is known to use — its
-  `ready_port`, the port of its `ready_url`, and ports it listened on earlier in the
-  session — and if another program already listens there, says so in its log and in a toast
-  (`port 3000 is in use by pid 4123 (python3)`). The project is started anyway.
 
 ## Troubleshooting
 
@@ -777,9 +781,10 @@ left to run a `stop_cmd` for (but containers may still be running).
   `printf '\e]110\a\e]111\a'`.
 - **A program waits for input:** without `pty = true` it gets none; with it, select the
   project and press `i` to type into it (see [Typing into a program](#typing-into-a-program)).
-- **A project's spinner keeps spinning:** it is waiting for a dependency, or its `ready_log` hasn't
-  matched, or its `ready_port`/`ready_url` doesn't answer (wrong port, or the server listens
-  on another address than `localhost`). Select it and press `tab` to see its log; runr's lines say what it's waiting for.
+- **A project's spinner keeps spinning:** it is waiting for a dependency, or its `ready_log`
+  hasn't matched, or its `ready_port`/`ready_url` doesn't answer (wrong port, or the server
+  listens on another address than `localhost`). Select it and press `tab` to see its log;
+  runr's lines say what it's waiting for.
 
 ## Building and releasing
 
@@ -794,5 +799,5 @@ Rename yours to `runr` (`runr.exe` on Windows), make it executable (`chmod +x ru
 it on your `PATH`. On macOS the binaries aren't signed: remove the quarantine flag with
 `xattr -d com.apple.quarantine runr`.
 
-To release, push a tag like `v0.1.0`: `.github/workflows/release.yml` builds the binaries
+Maintainers release by pushing a tag like `v0.1.0`: `.github/workflows/release.yml` builds the binaries
 with `make cross` and publishes them as a GitHub release.
