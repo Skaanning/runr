@@ -439,8 +439,9 @@ press `d` in the running view, and runr quits while the projects run on in the b
 Come back with `runr attach`, or from the launcher's **Running** section. `D` detaches too,
 but shows the launcher, with the session under **Running** and the cursor on it: `enter`
 shows it again, `q` quits to the shell. In the same way, `q` stops the session and quits,
-and `Q` stops it and shows the launcher. (`D` and `Q` aren't there when runr can't read its
-config, or with `--in-process`.)
+and `Q` stops it and shows the launcher. `D` and `Q` need the launcher, which needs your
+config: if runr can't read it, `runr attach` still shows the session (it sends its own
+config), but alone, without `D` and `Q`, and `d` just quits.
 
 ```
 $ runr up backend

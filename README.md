@@ -26,7 +26,8 @@ Works on Linux, macOS and Windows.
   config while everyone keeps their checkouts in a different place.
 - **Detach and come back:** `d` leaves a session running in the background (or start it
   that way with `runr up -d`); `runr attach` or the launcher brings its running view back.
-  Closing the terminal without `d` stops it, as before.
+  `D` and `Q` detach or stop and go to the launcher instead of quitting. Closing the
+  terminal without `d` stops the session, as before.
 - **From another terminal or an AI agent:** `runr status`, `runr logs api --errors` and
   `runr restart api --wait` show and change what a running session is doing, so scripts and
   coding agents can restart a service and read a crash without copy-paste (see
