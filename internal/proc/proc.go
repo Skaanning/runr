@@ -259,7 +259,9 @@ func Start(spec Spec, onLine func(Line)) (*Process, error) {
 }
 
 // Resize sets the size of the process's pseudo-terminal, which tells the
-// programs on it (SIGWINCH). It does nothing without one.
+// programs on it (SIGWINCH). It does nothing without one, and on Windows,
+// where a resized pseudo console repaints its screen into the output (see
+// conPTY.resize).
 func (p *Process) Resize(cols, rows int) error {
 	p.termMu.Lock()
 	defer p.termMu.Unlock()

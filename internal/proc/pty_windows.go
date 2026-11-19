@@ -185,13 +185,14 @@ func (t *conPTY) Write(b []byte) (int, error) { return t.in.Write(b) }
 // escape sequences (see consoleLine).
 func (t *conPTY) clean(line string) string { return consoleLine(line) }
 
+// resize does nothing: a pseudo console that is resized repaints its whole
+// screen into the output, which becomes lines in the log: about 50 blank ones
+// right after the start (the empty screen), the visible lines again later
+// (tried on windows-latest, also with PSEUDOCONSOLE_RESIZE_QUIRK, which this
+// Windows version ignores). A process keeps the size it started with; the
+// supervisor starts the next ones with the new size.
 func (t *conPTY) resize(cols, rows int) error {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if t.hpc == 0 {
-		return nil
-	}
-	return windows.ResizePseudoConsole(t.hpc, consoleSize(cols, rows))
+	return nil
 }
 
 // exited closes the console: its output pipe stays open until then, also

@@ -85,7 +85,9 @@ func TestPTYSize(t *testing.T) {
 	if err := p.Resize(80, 24); err != nil {
 		t.Fatal(err)
 	}
-	c.waitForPrefix(t, "size 80 24 <nil>")
+	if resizesLive {
+		c.waitForPrefix(t, "size 80 24 <nil>")
+	}
 
 	_ = p.Kill()
 	waitDone(t, p, 10*time.Second)

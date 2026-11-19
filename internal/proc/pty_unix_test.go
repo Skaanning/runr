@@ -79,3 +79,6 @@ func TestPTYProcessGroup(t *testing.T) {
 		t.Errorf("sid = %d, %v; pid %d", sid, err, p.Pid())
 	}
 }
+
+// resizesLive: Resize reaches a running process (SIGWINCH).
+const resizesLive = true

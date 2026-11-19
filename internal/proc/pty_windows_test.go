@@ -81,3 +81,66 @@ func TestPTYKillReachesWholeTree(t *testing.T) {
 		t.Fatalf("grandchild %d still alive after kill (wait result %d, %v)", childPid, ev, err)
 	}
 }
+
+// resizesLive: a running process keeps its size (see conPTY.resize).
+const resizesLive = false
+
+// TestPTYResizeNoRepaint: resizing doesn't put the pseudo console's screen
+// into the output, neither right after the start (blank lines, as a user
+// saw: runr resizes when a view lays out or attaches) nor at a prompt
+// (the screen's lines again).
+func TestPTYResizeNoRepaint(t *testing.T) {
+	for _, early := range []bool{true, false} {
+		var mu sync.Mutex
+		var lines []string
+		prompt, done := make(chan struct{}), make(chan struct{})
+		var once, finished sync.Once
+		p, err := Start(Spec{Command: "echo hello& set /p x=name: & echo done", PTY: true}, func(l Line) {
+			mu.Lock()
+			defer mu.Unlock()
+			if l.Partial {
+				if strings.Contains(l.Text, "name:") {
+					once.Do(func() { close(prompt) })
+				}
+				return
+			}
+			lines = append(lines, l.Text)
+			if strings.TrimSpace(l.Text) == "done" {
+				finished.Do(func() { close(done) })
+			}
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if early {
+			p.Resize(90, 50)
+		}
+		select {
+		case <-prompt:
+		case <-time.After(15 * time.Second):
+			t.Fatal("no prompt")
+		}
+		if !early {
+			p.Resize(90, 50)
+			time.Sleep(700 * time.Millisecond) // a repaint would come now
+		}
+		if _, err := p.Write([]byte("feature\r")); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-done:
+		case <-time.After(15 * time.Second):
+			t.Fatal("no end")
+		}
+		waitDone(t, p, 10*time.Second)
+		mu.Lock()
+		got := make([]string, len(lines))
+		for i, l := range lines {
+			got[i] = strings.TrimSpace(consoleLine(l))
+		}
+		mu.Unlock()
+		if want := []string{"hello", "name: feature", "done"}; strings.Join(got, "|") != strings.Join(want, "|") {
+			t.Errorf("early = %v: lines %q, want %q", early, got, want)
+		}
+	}
+}
