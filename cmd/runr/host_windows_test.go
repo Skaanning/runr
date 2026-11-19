@@ -15,14 +15,11 @@ import (
 	"github.com/Skaanning/runr/internal/supervisor"
 )
 
-// longCmd prints text, then runs for a minute (cmd.exe). ping takes
-// Ctrl+C, not Ctrl+Break (it prints its statistics and goes on).
-func longCmd(text string) string {
-	return "echo " + text + " & ping -n 60 127.0.0.1 >nul"
-}
-
 // sleeper is a project that prints text, then runs for a minute: the test
-// binary (sleepEnv), which Ctrl+Break ends.
+// binary (sleepEnv), which Ctrl+Break and Ctrl+C end. It prints the text
+// itself, so a stop that follows the text can't come before it is ready
+// for one (as with "echo text & ping …", where cmd.exe swallows a Ctrl+C
+// that comes before ping starts).
 func sleeper(t *testing.T, text string) *config.Project {
 	t.Helper()
 	exe, err := os.Executable()
@@ -136,5 +133,7 @@ func TestHostStopsGracefullyWindows(t *testing.T) {
 
 // ConPTY works in a host, and Ctrl+C reaches the project through it.
 func TestHostPTYWindows(t *testing.T) {
-	stopsGracefully(t, &config.Project{Cmd: longCmd("api up"), PTY: true})
+	p := sleeper(t, "api up")
+	p.PTY = true
+	stopsGracefully(t, p)
 }
