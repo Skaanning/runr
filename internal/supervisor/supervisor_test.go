@@ -410,8 +410,18 @@ func TestSetArgs(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitRuns("out:run", 1)
-	if info := r.waitState(t, "api", Exited); info.Args != "" {
-		t.Errorf("Args after clearing = %q", info.Args)
+	// The recorder may still have the last run's Exited, with its args:
+	// states come through events, behind the logs.
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(5 * time.Millisecond) {
+		r.mu.Lock()
+		info := r.latest["api"]
+		r.mu.Unlock()
+		if info.State == Exited && info.Args == "" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no Exited without args; last %v with Args %q", info.State, info.Args)
+		}
 	}
 }
 
