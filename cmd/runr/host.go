@@ -198,11 +198,12 @@ func pruneHostLogs(logs string) {
 
 // host is a session host this runr started.
 type host struct {
-	pid    int
-	path   string // of its control socket
-	log    string // its stderr
-	exited chan struct{}
-	err    error // how it ended, once exited is closed
+	pid     int
+	process *os.Process
+	path    string // of its control socket
+	log     string // its stderr
+	exited  chan struct{}
+	err     error // how it ended, once exited is closed
 }
 
 // hostOptions are what a host is started with besides the names.
@@ -250,19 +251,26 @@ func startHost(names []string, o hostOptions) (*host, error) {
 	argv = append(argv, names...)
 
 	// The log is named after the host's pid once it is known.
-	f, err := os.CreateTemp(logs, "starting-*.log")
+	f, err := createHostLog(logs)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	c := exec.Command(exe, argv...)
-	c.Stderr = f // stdin and stdout: the null device
-	c.SysProcAttr = hostAttr()
-	if err := c.Start(); err != nil {
+	var c *exec.Cmd
+	for _, attr := range hostAttrs() {
+		c = exec.Command(exe, argv...)
+		c.Stderr = f // stdin and stdout: the null device
+		c.SysProcAttr = attr
+		if err = c.Start(); err == nil {
+			break
+		}
+	}
+	if err != nil {
+		f.Close()
 		os.Remove(f.Name())
 		return nil, err
 	}
-	h := &host{pid: c.Process.Pid, log: hostLogPath(logs, c.Process.Pid), exited: make(chan struct{})}
+	h := &host{pid: c.Process.Pid, process: c.Process, log: hostLogPath(logs, c.Process.Pid), exited: make(chan struct{})}
 	if os.Rename(f.Name(), h.log) != nil {
 		h.log = f.Name()
 	}

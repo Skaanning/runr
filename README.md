@@ -24,8 +24,9 @@ Works on Linux, macOS and Windows.
   answer its prompts, e.g. a script that asks for a branch name.
 - **Shared configs:** write project directories as `$RUNR_ROOT/api`, so a team can share one
   config while everyone keeps their checkouts in a different place.
-- **Attach from anywhere:** `runr attach` opens the running view of a session in another
-  terminal or in the background; `d` leaves it running.
+- **Detach and come back:** `d` leaves a session running in the background (or start it
+  that way with `runr up -d`); `runr attach` or the launcher brings its running view back.
+  Closing the terminal without `d` stops it, as before.
 - **From another terminal or an AI agent:** `runr status`, `runr logs api --errors` and
   `runr restart api --wait` show and change what a running session is doing, so scripts and
   coding agents can restart a service and read a crash without copy-paste (see

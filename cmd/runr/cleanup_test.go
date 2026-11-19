@@ -23,15 +23,9 @@ import (
 // killed.
 const recordEnv = "RUNR_TEST_RECORD"
 
-// mainEnv makes the test binary act like runr itself, e.g. as a session
-// host started by the code under test (os.Executable).
-const mainEnv = "RUNR_TEST_MAIN"
-
-func TestMain(m *testing.M) {
-	if os.Getenv(mainEnv) != "" {
-		main()
-		os.Exit(0)
-	}
+// testHelpers lets the test binary act as the helpers of these tests,
+// see TestMain.
+func testHelpers() {
 	if os.Getenv(fakeDockerEnv) != "" {
 		fakeDocker()
 	}
@@ -51,7 +45,6 @@ func TestMain(m *testing.M) {
 		fmt.Println("child", child.Process.Pid)
 		time.Sleep(time.Hour)
 	}
-	os.Exit(m.Run())
 }
 
 // killedSession runs a recording session, kills it with SIGKILL, and

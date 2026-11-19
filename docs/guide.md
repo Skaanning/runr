@@ -9,7 +9,8 @@ Everything about using runr. For a short introduction, see the [README](../READM
 - [The launcher](#the-launcher)
 - [The running view](#the-running-view): [errors](#errors), [typing into a program](#typing-into-a-program)
 - [Saving logs](#saving-logs)
-- [Talking to a running session](#talking-to-a-running-session): [attaching](#attaching-to-a-session)
+- [Detaching](#detaching): [attaching again](#attaching-to-a-session)
+- [Talking to a running session](#talking-to-a-running-session)
 - [Using runr from an AI coding agent](#using-runr-from-an-ai-coding-agent)
 - [Git](#git)
 - [How processes are run](#how-processes-are-run): [cleaning up after a kill](#cleaning-up-after-a-kill)
@@ -22,6 +23,7 @@ Everything about using runr. For a short introduction, see the [README](../READM
 |---|---|
 | `runr` | Open the launcher |
 | `runr up <name...> [--log-dir <dir>]` | Start groups and/or projects (plus their dependencies) and open the running view; `--log-dir` also saves each project's output to `<dir>/<project>.log` (see [Saving logs](#saving-logs)) |
+| `runr up -d <name...>` | Start them in the background without opening the running view; `runr attach` shows it (see [Detaching](#detaching)). Works without a terminal |
 | `runr up --last` | Start what the last session started (including what you started later from the running view), with the same extra arguments. Projects or groups since removed are skipped with a warning |
 | `runr add <name> [flags] -- <cmd>` | Register a project |
 | `runr edit <name> [flags] [-- <cmd>]` | Change a project; only the given flags change |
@@ -39,7 +41,7 @@ Everything about using runr. For a short introduction, see the [README](../READM
 | `runr logs [name...] [-n N] [-f] [--errors]` | Print a running session's recent output, or keep following it |
 | `runr start\|stop\|restart <name...> [--wait]` | Start, stop or restart projects and groups in a running session; `--wait` reports how it went |
 | `runr down [--force]` | Stop a running session, as `q` does there |
-| `runr attach` | Open the running view of a session running in another terminal or in the background (see [Attaching to a session](#attaching-to-a-session)) |
+| `runr attach` | Open the running view of a session running in the background or in another terminal (see [Attaching to a session](#attaching-to-a-session)) |
 | `runr cleanup [--yes]` | Stop processes left running by a runr that was killed (Linux, macOS), then run their projects' `stop_cmd`; asks first unless `--yes` |
 | `runr completion <shell>` | Shell completion script (bash, zsh, fish, powershell), completes project and group names |
 
@@ -251,7 +253,9 @@ runr checks the config when it loads it and before every save:
 ## The launcher
 
 `runr` without arguments lists your groups and projects. Select some and press `enter` to
-start them in the running view, or manage the registry with in-TUI forms. Groups are shown as
+start them in the running view, or manage the registry with in-TUI forms. Sessions already
+running (in the background or in other terminals) are listed above the groups, under
+**Running**, to go back to. Groups are shown as
 cards with a colored dot per member, side by side as far as the terminal is wide; projects
 are listed below them with their color, directory, branch, command and dependencies.
 
@@ -263,13 +267,14 @@ branch. On terminals shorter than 20 rows the `runr` mark makes room for the lis
 
 | Key | Action |
 |---|---|
-| `↑` `↓`, `home` `end` | Move: through the group cards row by row, then down the project list |
+| `↑` `↓`, `home` `end` | Move: through the running sessions, the group cards row by row, then down the project list |
 | `←` `→` | Move between the group cards in a row |
 | `space` | Select / unselect; on a group, selects all its projects (or unselects them if all are selected) |
-| `enter` | Start the selection, or the item under the cursor if nothing is selected |
+| `enter` | Start the selection, or the item under the cursor if nothing is selected. On a running session: open its running view (`d` there comes back to the launcher) |
+| `x` | On a running session: stop it, after confirming, as `runr down` does |
 | `l` | Start the last session again, like `runr up --last`. Under the `runr` mark the launcher shows what that is: `l  last session: backend, web` |
 | `R` | Start with extra arguments: like `enter`, but first a form with a field per project that will start, dependencies included. What you type is added to the end of the project's command, e.g. `--port 3001` makes `go run .` run as `go run . --port 3001`. The fields start with what you typed last, also in an earlier session. `shift+enter` does the same in terminals that report it (kitty, ghostty, WezTerm, foot, recent Windows Terminal) |
-| `/` | Jump: every group and project shows a letter (`a`–`z`, then `A`–`Z`). A group's letter starts that group; a project's letter selects or unselects it and stays in jump mode, so you can pick several and press `enter` to start them. `esc` or `/` leaves |
+| `/` | Jump: every group and project shows a letter (`a`–`z`, then `A`–`Z`). A group's letter starts that group; a project's letter selects or unselects it and stays in jump mode, so you can pick several and press `enter` to start them. Running sessions show `1`–`9`, which open them. `esc` or `/` leaves |
 | `n` | New project |
 | `e` | Edit the project (or group) under the cursor; changing the name renames it |
 | `g` | On a group: edit it. On a project: create a group, preselecting the selected projects |
@@ -358,7 +363,7 @@ so for 5 seconds.
 | `w` | Save the output on screen (all of it, or the selected process's) to a file in the current directory (see [Saving logs](#saving-logs)) |
 | `c` | Copy the command line that starts the selected project the way runr does (with its extra arguments, if it has any): `cd` to its directory, runr's default variables, its `env_file` and `env`, then the command, e.g. `cd ~/code/api && env FORCE_COLOR=1 … PORT=8080 /bin/sh -c 'go run .'` (`cmd.exe` syntax on Windows). It goes to the clipboard through the terminal (OSC 52; in tmux, `set-clipboard on`) and is shown on the bottom line |
 | `q`, `Ctrl+C` | Stop everything and quit; a second `Ctrl+C` kills everything immediately |
-| `d` | In a view opened with `runr attach`: leave, and let the session run on (see [Attaching to a session](#attaching-to-a-session)) |
+| `d` | Detach: close the view and let the session run on in the background (see [Detaching](#detaching)); in a view opened from the launcher, back to the launcher |
 
 Search is plain text (no regex) and smart-case: an all-lowercase query ignores case, any
 uppercase letter makes it case-sensitive.
@@ -425,6 +430,53 @@ Both are plain text without colors, one line per output line:
 
 Saved combined logs put the project's name before `│` / `»`; `»` marks runr's own lines.
 
+## Detaching
+
+Every session started in a terminal (`runr up`, or from the launcher) can be left running:
+press `d` in the running view, and the view closes while the projects run on in the
+background. Come back to it with `runr attach`, or from the launcher's **Running** section.
+
+```
+$ runr up backend
+  …                                   # d
+runr: detached from session 48211; runr attach to come back
+$ runr attach
+```
+
+- **Closing the terminal without `d` stops the session**, as `q` would: what you started in
+  a terminal ends with it unless you detached first. That also holds for a view opened with
+  `runr attach`: closing the last view of a session without `d` stops it.
+- **`runr up -d backend`** starts a session in the background right away, without a view:
+  `started session 48211 · runr attach to watch it`. It runs until `runr down`, `q` in a
+  view, or until a view opened later is closed without `d`. It doesn't need a terminal, so
+  scripts and coding agents can use it.
+- **`runr status`** shows how many views each session has (`attached: 0` for a detached one);
+  `runr logs`, `start`, `stop`, `restart` and `down` work on background sessions like on any
+  other.
+
+The session runs in a background runr process of its own (`runr host`), which the running
+view talks to over the session's socket. It keeps a log of what goes wrong in `hosts/` in
+runr's state directory, shown by `runr up` if the session can't start. If that process is
+killed, its projects are cleaned up like those of any killed runr (see
+[Cleaning up after a kill](#cleaning-up-after-a-kill)). Plain output (`runr up backend >
+file`) still runs in the runr you started, and `--plain` too.
+
+### Attaching to a session
+
+`runr attach` opens the running view of a session that runs elsewhere: a detached one, one
+started with `runr up -d`, or one running in another terminal. It shows everything the
+session still has in memory and follows it live, with the usual keys: restart, stop, start,
+search, git, typing into `pty = true` projects.
+
+- **`d` detaches** again; **`q` stops the session**, as in its own terminal (a session in
+  another terminal quits there too).
+- **Closing the view's terminal** stops a background session when it was its last view; a
+  session in another terminal runs on.
+- Several views can watch one session at the same time. With several sessions running,
+  choose one with `--session <pid>`.
+
+The view uses the session's own config, as it was when the session started.
+
 ## Talking to a running session
 
 Other terminals can ask a running session what it is doing, and tell it what to do: a
@@ -442,7 +494,7 @@ runr logs -f api web          # keep printing new lines until Ctrl+C or the sess
 ```
 
 ```
-session 48211 · backend, web · started 10:42
+session 48211 · backend, web · started 10:42 · attached: 1
 NAME  STATE                  UPTIME  PID    PORTS   ERRORS  RESTARTS
 db    running                12m03s  48230  :55432  0       0
 api   crashed (exit code 1)  -       -      -       3       1
@@ -491,22 +543,6 @@ session ends; one left by a runr that was killed is removed by the next `runr st
 `runr logs`. Socket paths are limited to about 100 characters, so a very long
 `$RUNR_STATE_DIR` turns this off (`runr status` says so).
 
-### Attaching to a session
-
-`runr attach` opens the running view of a session that runs elsewhere: one in another
-terminal, or one started in the background (`runr up backend > /tmp/runr.log 2>&1 &`). It
-shows everything the session still has in memory and follows it live, with the usual keys:
-restart, stop, start, search, git, typing into `pty = true` projects.
-
-- **`d` detaches:** the view closes and the session runs on; `runr attach` again later.
-- **`q` stops the session**, as `q` does in its own terminal: a session in another
-  terminal quits there too, a background one ends.
-- **Closing the view's terminal** only closes the view; the session runs on.
-- Several views can watch one session at the same time. With several sessions running,
-  choose one with `--session <pid>`.
-
-The view uses the session's own config, as it was when the session started.
-
 ## Using runr from an AI coding agent
 
 Coding agents (Claude Code, Codex, Cursor and the like) run commands in a terminal of their
@@ -524,7 +560,7 @@ The commands an agent needs:
 | `runr logs api -n 200` | The context around them |
 | `runr restart api --wait` | Restarts api after a change; exit code 0 once it is ready, 1 with its last 20 lines if it crashes, is blocked or isn't ready within `--timeout` (default 1m) |
 | `runr start worker --wait` | Starts a project (and what it needs) in your session |
-| `runr up backend > /tmp/runr.log 2>&1 &` | A session of its own, when none runs; `runr down` stops it afterwards |
+| `runr up -d backend` | A session of its own in the background, when none runs; `runr down` stops it afterwards |
 
 Things to tell an agent, or to keep in mind when it uses runr:
 
