@@ -21,6 +21,9 @@ const (
 	pipeClosing               = 4  // FILE_PIPE_CLOSING_STATE: the other end is closed
 )
 
+// ignoreBrokenPipe does nothing: a write to a closed pipe fails on Windows.
+func ignoreBrokenPipe() {}
+
 // readerGone reports whether f is a pipe whose other end is closed. It asks
 // for the pipe's state rather than writing, so it works while nothing is
 // written; anonymous pipes (cmd.exe, PowerShell) and Git Bash's pipes are

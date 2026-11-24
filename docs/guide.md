@@ -523,8 +523,9 @@ hot reload, a background job or a request without polling. It exits 1 if no line
 matched within `--timeout` (default 1m, `0` waits for ever) or the session ends first. Only
 lines that arrive after `runr logs` starts count, never the ones it printed first, so a line
 from an earlier run can't end the wait. The expression is matched against a line's text,
-without the time and label, and runr's own lines count too: `--until '^(exited|crashed)'`
-waits until a project's current run is over.
+without the time and label, and runr's own lines count too:
+`--until '^(exited|crashed|stopped|failed to start)'` waits until a project's current run is
+over.
 
 ```bash
 runr restart api --wait       # restart api; wait until it is ready again

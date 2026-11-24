@@ -24,8 +24,9 @@ func watchOutput(ctx context.Context, w io.Writer, gone func()) {
 	if !ok {
 		return
 	}
+	every := goneEvery // not read in the goroutine, which may outlive the command
 	go func() {
-		t := time.NewTicker(goneEvery)
+		t := time.NewTicker(every)
 		defer t.Stop()
 		for {
 			select {

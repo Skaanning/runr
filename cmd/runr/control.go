@@ -261,7 +261,8 @@ func newLogsCmd() *cobra.Command {
 			"that arrive after runr logs starts count, not the ones printed before them,\n" +
 			"so an earlier run's line can't match. The expression is matched against a\n" +
 			"line's text, without the time and label; runr's own lines count too, e.g.\n" +
-			"--until '^(exited|crashed)' to wait until a job is done.",
+			"--until '^(exited|crashed|stopped|failed to start)' to wait until a job is\n" +
+			"done.",
 		ValidArgsFunction: completeProjectsAndGroups,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if lines < 0 {
@@ -277,6 +278,7 @@ func newLogsCmd() *cobra.Command {
 			} else if cmd.Flags().Changed("timeout") {
 				return errors.New("--timeout needs --until")
 			}
+			ignoreBrokenPipe()
 			since := time.Now()
 			names := expandGroups(args)
 			sess, err := control.Pick(runningSessions(cmd.ErrOrStderr()), names, pid)

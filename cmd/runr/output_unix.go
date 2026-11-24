@@ -4,9 +4,15 @@ package main
 
 import (
 	"os"
+	"os/signal"
 
 	"golang.org/x/sys/unix"
 )
+
+// ignoreBrokenPipe makes a write to a pipe nobody reads fail with EPIPE,
+// which outputError turns into a quiet end, rather than kill runr with
+// SIGPIPE, as Go does for stdout.
+func ignoreBrokenPipe() { signal.Ignore(unix.SIGPIPE) }
 
 // readerGone reports whether f is a pipe (or socket) whose other end is
 // closed: poll says so with POLLERR (Linux) or POLLHUP (macOS).
